@@ -53,7 +53,7 @@ export function Board() {
   ];
   return html`<div data-v=${docVersion}>
     <${BoardHead} counts=${c} />
-    <div class="tabbar"><div class="tabs" role="tablist">
+    <div class="tabbar"><div class="tabs" role="tablist" data-pad-tabs>
       ${TABS.map(([k, l]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l}
         ${k === 'live' && warn.length > 0 ? html`<span class="count">${warn.length}</span>` : ''}${k === 'graves' && c.dead > 0 ? html`<span class="count">${c.dead}</span>` : ''}</button>`)}
       </div>

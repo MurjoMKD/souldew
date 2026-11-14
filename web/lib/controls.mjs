@@ -256,3 +256,17 @@ export function pickPad(pads, wanted = null) {
   }
   return bestScore >= 0 ? best : null;
 }
+
+// ---- the app's own screens ----------------------------------------------------------------------------------------
+/**
+ * Does the app use the controller right now (web/lib/padnav.mjs: the game is paused, in the corner or a menu is open
+ * over it)? The game frames ask with their own window and then ignore the game buttons – never the turbo / pause
+ * hotkeys, so ZL / Home still resume the game. False outside the app (a frame of its own, another origin).
+ */
+export function appHasPad(win = globalThis) {
+  try {
+    return win.parent !== win && !!win.parent?.__souldewPad?.mute;
+  } catch {
+    return false;
+  }
+}

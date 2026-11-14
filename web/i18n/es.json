@@ -1136,6 +1136,8 @@
   "pad.title": "Mando",
   "pad.turbo": "{button}: turbo sí / no.",
   "pad.xbox": "Disposición Xbox (A abajo)",
+  "pad.nav": "Usar la app con un mando",
+  "pad.navHint": "La cruceta o el stick izquierdo pasan de un botón a otro, A pulsa, B vuelve atrás, L y R cambian de sección o de pestaña, Start salta a la barra lateral y el stick derecho desplaza. Mientras un juego está en marcha, el mando es del juego: ponlo en pausa ({button} o Home) para usar los menús.",
   "pairs.boxed": "en la caja",
   "pairs.boxedShort": "caja",
   "pairs.empty": "Las parejas vinculadas aparecen aquí en cuanto capturéis algo.",

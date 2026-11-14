@@ -1413,6 +1413,9 @@
       // EmulatorJS looks a device up by its position in its own list with the browser's index – wrong as soon as an
       // index is skipped (a controller left), which also stopped its polling with an error. Hand it the position.
       const forward = (e) => {
+        // the app's menus have the controller (lib/padnav.mjs): no new presses – releases still go through, so
+        // nothing stays held
+        if (c.appHasPad() && (e.type === 'buttondown' || (e.type === 'axischanged' && e.value))) return;
         const list = g.gamepads || [];
         const pos = list.findIndex((p) => p && p.index === e.gamepadIndex);
         const p = list[pos];
@@ -1430,12 +1433,16 @@
       }
     };
     const HOT = { 7: 'turbo', 6: 'pause', 16: 'pause' };
+    let wasMuted = false;
     setInterval(() => {
       route(); // as soon as EmulatorJS is there – a controller may appear before the game runs
       if (!window.__emu?.ready || document.visibilityState === 'hidden') return;
       const pad = choose();
       if (!pad) return;
-      const [x = 0, y = 0] = pad.axes;
+      const muted = c.appHasPad();
+      if (muted && !wasMuted) release(); // what the game held when the app took the controller
+      wasMuted = muted;
+      const [x = 0, y = 0] = muted ? [] : pad.axes;
       set('left', x < -0.5);
       set('right', x > 0.5);
       set('up', y < -0.5);

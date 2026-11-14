@@ -11,6 +11,7 @@ import { play } from './lib/sound.mjs';
 import { Ctx, Toasts, Led, Modal, openExternal } from './lib/ui.mjs';
 import { LINKS } from './lib/links.mjs';
 import { groupArrowKeys } from './lib/a11y.mjs';
+import { startPadNav } from './lib/padnav.mjs';
 import { AppMark, NavIcon, Icon } from './lib/icons.mjs';
 import { BootScreen } from './views/boot.mjs';
 import { Onboarding } from './views/onboarding.mjs';
@@ -200,6 +201,10 @@ function App() {
   const inboxKey = useRef('');
   const [route, navigate] = useRoute();
   const streamer = useStreamer();
+  // controller navigation of the app's screens (lib/padnav.mjs) – it reads the latest settings through the ref
+  const statusRef = useRef(null);
+  statusRef.current = status;
+  useEffect(() => startPadNav({ config: () => statusRef.current?.config || {} }), []);
   // the coffee button's little Pokémon moments – never while a game runs (full or in the corner), in the game's
   // fullscreen, during boot or onboarding (fxBusy is set further down, once those are known)
   const fxBusy = useRef(true);

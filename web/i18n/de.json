@@ -1136,6 +1136,8 @@
   "pad.title": "Controller",
   "pad.turbo": "{button}: Turbo an / aus.",
   "pad.xbox": "Xbox-Anordnung (A unten)",
+  "pad.nav": "Die App mit dem Controller bedienen",
+  "pad.navHint": "Steuerkreuz oder linker Stick wechseln zwischen den Schaltflächen, A drückt, B geht zurück, L und R wechseln Bereiche oder Tabs, Start springt in die Seitenleiste, der rechte Stick scrollt. Während ein Spiel läuft, gehört der Controller dem Spiel – pausiere es ({button} oder Home), um die Menüs zu bedienen.",
   "pairs.boxed": "in der Box",
   "pairs.boxedShort": "Box",
   "pairs.empty": "Verlinkte Paare erscheinen hier, sobald ihr etwas fangt.",

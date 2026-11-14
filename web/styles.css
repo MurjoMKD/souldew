@@ -1457,3 +1457,24 @@ dialog.nag[open] { animation: nag-in .16s steps(3, end); }
 .live-runs .live-code { width: 11ch; font-family: var(--font-mono); font-size: 16px; letter-spacing: .12em; text-transform: uppercase; }
 .live-runs .live-linked { gap: 8px 12px; align-items: center; }
 .modal-foot > .btn.live-share, .modal-foot > .live-share-done { margin-right: auto; }
+
+/* Controller navigation (web/lib/padnav.mjs): a clear ring around the focused control – only while the controller
+   was the last input; the mouse or a key takes it away again. Focused controls keep clear of the page edges. */
+html.pad-nav * { scroll-margin: 64px 28px; }
+html.pad-nav :focus:not(iframe, dialog, [tabindex="-1"], label.check > input, .cart) {
+  outline: 3px solid var(--focus); outline-offset: 3px;
+  box-shadow: 0 0 0 7px color-mix(in srgb, var(--focus) 22%, transparent), 0 0 18px color-mix(in srgb, var(--focus) 35%, transparent);
+  transition: outline-offset .12s ease, box-shadow .12s ease;
+}
+html.pad-nav .nav a:focus { border-radius: 10px; outline-offset: 1px; }
+html.pad-nav input:focus, html.pad-nav select:focus, html.pad-nav textarea:focus { border-color: var(--focus); }
+/* a checkbox: the whole row with its text */
+html.pad-nav label.check > input:focus { outline: none; }
+html.pad-nav label.check:has(> input:focus) { outline: 3px solid var(--focus); outline-offset: 4px; border-radius: 8px; background: color-mix(in srgb, var(--focus) 8%, transparent); }
+/* a game cartridge lifts like on hover and glows along its cut-corner shape (the body is clipped, so no outline
+   there); the ring goes around cartridge and title */
+html.pad-nav .cart:focus { outline: 3px solid var(--focus); outline-offset: 8px; border-radius: 10px; }
+html.pad-nav .cart:focus .cart-body { transform: translateY(-4px) rotate(-0.6deg); }
+html.pad-nav .cart:focus .cart-slot { filter: drop-shadow(0 0 2px var(--focus)) drop-shadow(0 0 12px color-mix(in srgb, var(--focus) 70%, transparent)) drop-shadow(0 8px 12px #0008); }
+html.pad-nav .cart:focus .cart-title { color: var(--focus); }
+@media (prefers-reduced-motion: reduce) { html.pad-nav :focus { transition: none; } }

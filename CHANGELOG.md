@@ -63,6 +63,15 @@
   area, so version exclusives need no special rule. Randomized and patched runs still need the exact same release – and
   a ROM that was patched before it was added to the library now counts as patched, too. Thanks to @Never-lab for the
   first version of this in #54.
+- **Use souldew with a controller** (#33 – thanks for the request): library, boards, runs, settings, dialogs and menus
+  now work with just a gamepad – on the couch or in Steam Deck game mode. The D-pad or left stick moves between
+  buttons (held, it repeats), A presses, B goes back (closes the open dialog or menu first), L and R switch the page's
+  tabs or the sections of the sidebar, Start jumps into the sidebar and the right stick scrolls; a select steps
+  through its options with A (X goes back one). The buttons follow Settings › Controller. A clear ring shows where you
+  are while the controller is in use and goes away when you touch the mouse or keyboard. While a game runs the
+  controller stays the game's alone – pause it (ZL/LT/L2 or Home), open a menu over it or leave it in the corner, and
+  the controller moves to souldew's menus; resuming hands it back once you let go of the button. Turn it off in
+  Settings › Controller › "Navigate the app with a controller".
 
 ## 2.6.3
 

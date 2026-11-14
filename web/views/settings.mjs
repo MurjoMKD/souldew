@@ -12,6 +12,7 @@ import { UpdateSection } from './update.mjs';
 import { PLATFORM } from '../lib/platform.mjs';
 import { gpuBackends } from '/shared/gpu.mjs';
 import { LiveRunsSettings } from './liveshare.mjs';
+import { suspendPadNav } from '../lib/padnav.mjs';
 
 const SYSTEMS = [['gb', 'Game Boy'], ['gbc', 'Game Boy Color'], ['gba', 'Game Boy Advance'], ['nds', 'Nintendo DS'], ['3ds', 'Nintendo 3DS']];
 /** Systems the built-in player runs only with an extra part: 3DS needs souldew's 3DS host (status.ctr). */
@@ -172,7 +173,7 @@ function PadPicker({ pads, saved, pad, onPick }) {
       : t('pad.autoHint', 'Automatic picks a real controller and skips microphones, headsets and other devices the system lists as controllers.')}</span></div>`;
 }
 
-function PadSection({ saved, save }) {
+function PadSection({ saved, save, nav, saveNav }) {
   const pads = usePads();
   const pad = pickPad(pads, saved?.device);
   const odd = !pad && pads.length ? pads : null; // only devices that don't look like a controller
@@ -206,7 +207,12 @@ function PadSection({ saved, save }) {
     if (!listen) return undefined;
     const esc = (e) => e.key === 'Escape' && (setListen(null), (before.current = null));
     addEventListener('keydown', esc);
-    return () => removeEventListener('keydown', esc);
+    // the next button pressed is the new one – it must not also move the focus (lib/padnav.mjs)
+    const resume = suspendPadNav();
+    return () => {
+      removeEventListener('keydown', esc);
+      resume();
+    };
   }, [listen]);
   const pick = (id) => { setListen(null); setMsg(null); save({ pads: { preset: id, ...keep } }); };
   const choose = (device) => {
@@ -224,6 +230,8 @@ function PadSection({ saved, save }) {
         : html`<span class="small">${t('pad.none', 'No controller found. Connect one and press any button on it.')}</span>`}
     </div>
     <${PadPicker} pads=${pads} saved=${saved} pad=${pad} onPick=${choose} />
+    <label class="check"><input type="checkbox" checked=${nav} onChange=${(e) => saveNav(e.target.checked)} /><span>${t('pad.nav', 'Navigate the app with a controller')}
+      <span class="hint">${t('pad.navHint', 'D-pad or left stick moves between buttons, A presses, B goes back, L and R switch sections or tabs, Start jumps to the sidebar, the right stick scrolls. While a game runs, the controller belongs to the game – pause it ({button} or Home) to use the menus.', { button: padLabel('LEFT_BOTTOM_SHOULDER', family) })}</span></span></label>
     <div class="row">
       <div class="seg" role="group" aria-label=${t('pad.layouts', 'Button layout')}>
         ${PAD_PRESETS.map((p) => html`<button type="button" class=${!custom && preset.id === p.id ? 'on' : ''} aria-pressed=${!custom && preset.id === p.id} onClick=${() => pick(p.id)}>${p.id === 'nintendo' ? t('pad.nintendo', 'Nintendo layout (A right)') : t('pad.xbox', 'Xbox layout (A bottom)')}</button>`)}
@@ -336,7 +344,8 @@ export function SettingsView() {
     </section>
 
     <${ControlsSection} saved=${cfg.controls || null} save=${(p) => save(p).catch((e) => toast({ kind: 'death', title: t('set.controls', 'Controls'), text: e.message }))} />
-    <${PadSection} saved=${cfg.pads || null} save=${(p) => save(p).catch((e) => toast({ kind: 'death', title: t('pad.title', 'Controller'), text: e.message }))} />
+    <${PadSection} saved=${cfg.pads || null} save=${(p) => save(p).catch((e) => toast({ kind: 'death', title: t('pad.title', 'Controller'), text: e.message }))}
+      nav=${cfg.padNav !== false} saveNav=${(on) => save({ padNav: on })} />
 
     <section class="panel stack">
       <h2>${t('set.emulators', 'Emulators')}</h2>

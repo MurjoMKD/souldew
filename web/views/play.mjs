@@ -28,6 +28,7 @@ import { SlowWatch, slowTips } from '../lib/slowdown.mjs';
 import { gpuBackends } from '/shared/gpu.mjs';
 import { GPU_LABELS } from './settings.mjs';
 import { CTR_LAYOUTS, ctrLayoutAspect } from '/shared/ctrlayout.mjs';
+import { claimPad } from '../lib/padnav.mjs';
 
 let TABLES = null;
 async function liveTables() {
@@ -149,9 +150,9 @@ function CtrFailed({ fail, target, onClose }) {
       ${!noAzahar && html`<span class="small muted">${t('ctr.failedHint', 'Some graphics cards and drivers can’t run souldew’s built-in 3DS player yet. Azahar, the free 3DS emulator, plays the same games – with live tracking. You can switch back any time in Settings › Emulators.')}</span>`}
     </div>
     <div class="row">
-      ${!noAzahar && html`<button class="btn small primary" disabled=${busy} onClick=${toAzahar}>${t('ctr.useAzahar', 'Play 3DS games in Azahar')}</button>`}
+      ${!noAzahar && html`<button class="btn small primary" data-pad-first disabled=${busy} onClick=${toAzahar}>${t('ctr.useAzahar', 'Play 3DS games in Azahar')}</button>`}
       <button class="btn small ghost" onClick=${() => saveDiagnostics({ ctrFailed: fail })}><${Icon} name="save" size=${14} />${t('play.diag', 'Save diagnostics')}</button>
-      <button class="btn small ghost" onClick=${onClose}>${t('play.close', 'Close game')}</button>
+      <button class="btn small ghost" data-pad-back onClick=${onClose}>${t('play.close', 'Close game')}</button>
     </div>
   </div>`;
 }
@@ -1186,6 +1187,18 @@ export function GameSession({ session, mode }) {
   // progress since the last in-game save → "not saved" warning on close / quit, age in the header
   const guard = useSaveGuard({ id: target.stateId, label: target.label, party: mine, badges: myLive?.badges, running: phase === 'running', paused });
   const focusGame = () => frame.current?.contentWindow?.focus();
+  // Controller navigation (lib/padnav.mjs): the game owns the controller while it fills the page and plays; pausing it
+  // or opening anything over it (a menu, a panel, a prompt on the screen) hands it to the app.
+  const padRef = useRef(null);
+  // (also the 3DS screen-layout menu and the message that the 3DS player stopped – CtrFailed)
+  padRef.current = { phase, overlay: !!(rulesOpen || statesOpen || soundOpen || cheatOpen || layoutOpen || ctrFail || confirmReset || pendingLoad || confirmCheat || missed) };
+  useEffect(() => claimPad(() => ({
+    mode: modeRef.current,
+    playing: padRef.current.phase !== 'error',
+    paused: !!emu()?.paused?.(),
+    overlay: padRef.current.overlay,
+    focus: focusGame,
+  })), []);
   useScreenShare(isRun ? link : null, emu, { system: target.system, enabled: isRun && phase === 'running' && status?.config?.shareScreen !== false });
   const btn = (name, title, onClick, extra = {}) => html`<button class="btn icon" title=${title} aria-label=${title} onClick=${onClick} ...${extra}><${Icon} name=${name} size=${14} /></button>`;
 
@@ -1255,24 +1268,24 @@ export function GameSession({ session, mode }) {
               <span class="grow">${pendingLoad.slot <= 4 ? t('play.loadConfirm', 'Load state {n}? Progress since then is lost. Press {n} again or click Load.', { n: pendingLoad.slot })
                 : t('states.loadConfirm', 'Load “{name}”? Progress since then is lost.', { name: slotName(pendingLoad.slot) })}</span>
               <button class="btn small primary" onClick=${() => { actions.confirmLoad(); focusGame(); }}>${t('play.loadConfirmYes', 'Load')}</button>
-              <button class="btn small ghost" onClick=${() => { actions.cancelLoad(); focusGame(); }}>${t('common.cancel', 'Cancel')}</button>
+              <button class="btn small ghost" data-pad-back onClick=${() => { actions.cancelLoad(); focusGame(); }}>${t('common.cancel', 'Cancel')}</button>
             </div>`}
             ${missed && mode === 'full' && !pendingLoad && !confirmReset && html`<${MissedPrompt} missed=${missed} here=${here} onDone=${() => { setMissed(null); focusGame(); }} />`}
             ${confirmReset && html`<div class="screen-confirm" role="alertdialog" aria-live="assertive">
               <span class="grow">${t('play.resetConfirm', 'Reset the game? Unsaved progress is lost.')}</span>
               <button class="btn small primary" onClick=${() => { setConfirmReset(false); emu()?.restart(); focusGame(); }}>${t('play.resetYes', 'Reset')}</button>
-              <button class="btn small ghost" onClick=${() => { setConfirmReset(false); focusGame(); }}>${t('common.cancel', 'Cancel')}</button>
+              <button class="btn small ghost" data-pad-back onClick=${() => { setConfirmReset(false); focusGame(); }}>${t('common.cancel', 'Cancel')}</button>
             </div>`}
             ${confirmCheat && !confirmReset && !pendingLoad && html`<div class="screen-confirm" role="alertdialog" aria-live="assertive">
               <span class="grow">${t('cheat.confirm', 'Add 99 Rare Candies to your bag?')} ${isRun && !solo ? t('cheat.confirmRun', 'Everyone in the run sees it in the log.') : isRun ? t('cheat.confirmSolo', 'It goes into the run’s log.') : ''}</span>
               <button class="btn small primary" onClick=${doCheat}>${t('cheat.add', 'Add')}</button>
-              <button class="btn small ghost" onClick=${() => { setConfirmCheat(false); focusGame(); }}>${t('common.cancel', 'Cancel')}</button>
+              <button class="btn small ghost" data-pad-back onClick=${() => { setConfirmCheat(false); focusGame(); }}>${t('common.cancel', 'Cancel')}</button>
             </div>`}
             ${ctrFail && html`<${CtrFailed} fail=${ctrFail} target=${target} onClose=${actions.close} />`}
           </div>
         </div>
         <div class="session-bar" role="toolbar" aria-label=${t('play.controls', 'Game controls')}>
-          ${btn(paused ? 'resume' : 'pause', t('keys.pause', 'Pause / resume') + ' (P)', actions.pause)}
+          ${btn(paused ? 'resume' : 'pause', t('keys.pause', 'Pause / resume') + ' (P)', actions.pause, { 'data-pad-first': '' })}
           ${btn('reset', t('keys.reset', 'Reset the game (asks first)') + ' (R)', actions.reset)}
           <span class="sep"></span>
           <button class="btn icon" title=${t('play.slower', 'Slower')} aria-label=${t('play.slower', 'Slower')} onClick=${actions.slower}><span aria-hidden="true">–</span></button>
@@ -1426,7 +1439,7 @@ function MissedPrompt({ missed, here, onDone }) {
     markMissed(doc, manifest, key, me, { species: missed.species, by: me });
     onDone();
   };
-  return html`<div class="screen-confirm" role="group" aria-live="polite" aria-label=${t('play.missedAria', 'Missed encounter')}>
+  return html`<div class="screen-confirm" role="group" data-pad-layer aria-live="polite" aria-label=${t('play.missedAria', 'Missed encounter')}>
     <span>${t('play.missedAsk', 'Wild {species} not caught – mark an area as spent?', { species: speciesName(missed.species) })}</span>
     <select value=${area} aria-label=${t('play.missedArea', 'Area')} onChange=${(e) => setArea(e.target.value)}>
       ${areas.length > 0 && html`<optgroup label=${t('play.missedOpen', 'Open areas')}>${areas.map((a) => html`<option value=${a.key}>${a.name}</option>`)}</optgroup>`}
@@ -1436,7 +1449,7 @@ function MissedPrompt({ missed, here, onDone }) {
     ${area === 'new' && html`<input type="text" maxLength="40" value=${name} placeholder=${t('play.missedName', 'Name of the area')} aria-label=${t('play.missedName', 'Name of the area')}
       onInput=${(e) => setName(e.target.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && name.trim()) mark(); }} />`}
     <button class="btn small primary" disabled=${!area || (area === 'new' && !name.trim())} onClick=${mark}>${t('play.missedMark', 'Mark as spent')}</button>
-    <button class="btn small ghost" onClick=${onDone}>${t('play.missedNo', 'No – doesn’t count')}</button>
+    <button class="btn small ghost" data-pad-back onClick=${onDone}>${t('play.missedNo', 'No – doesn’t count')}</button>
   </div>`;
 }
 

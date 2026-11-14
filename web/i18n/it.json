@@ -1136,6 +1136,8 @@
   "pad.title": "Controller",
   "pad.turbo": "{button}: turbo sì / no.",
   "pad.xbox": "Disposizione Xbox (A in basso)",
+  "pad.nav": "Usa l’app con un controller",
+  "pad.navHint": "La croce direzionale o la levetta sinistra passano da un pulsante all’altro, A preme, B torna indietro, L e R cambiano sezione o scheda, Start va alla barra laterale, la levetta destra scorre. Mentre un gioco è in corso, il controller appartiene al gioco: mettilo in pausa ({button} o Home) per usare i menu.",
   "pairs.boxed": "nel box",
   "pairs.boxedShort": "box",
   "pairs.empty": "Le coppie collegate compaiono qui appena catturate qualcosa.",

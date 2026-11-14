@@ -851,6 +851,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
         gpuFallback: fallbackNotice(config.gpuFallback),
         nag: config.nag || null,
         nagOff: config.nagOff === true,
+        padNav: config.padNav !== false,
       },
     };
   });
@@ -860,7 +861,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const allowed = {};
     // No path-like keys here: emulatorPaths decides which program /launch runs, libraryFolders which folders are
     // scanned (set via /api/library/folders). Neither may be writable by a plain config POST.
-    for (const k of ['lang', 'onboarded', 'playerName', 'emulatorFor', 'lastRun', 'bootAnimation', 'sounds', 'shareScreen', 'shortcuts', 'controls', 'theme', 'pads', 'speedGuard', 'turboMax', 'fullTurbo', 'nativeCore', 'gpuBackend', 'gpuFallback', 'nag', 'nagOff']) {
+    for (const k of ['lang', 'onboarded', 'playerName', 'emulatorFor', 'lastRun', 'bootAnimation', 'sounds', 'shareScreen', 'shortcuts', 'controls', 'theme', 'pads', 'speedGuard', 'turboMax', 'fullTurbo', 'nativeCore', 'gpuBackend', 'gpuFallback', 'nag', 'nagOff', 'padNav']) {
       if (k in body) allowed[k] = body[k];
     }
     // the joke license window (web/lib/nag.mjs): launch count + when it last showed, and its off switch
@@ -881,6 +882,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     if ('turboMax' in allowed) allowed.turboMax = allowed.turboMax === true;
     if ('fullTurbo' in allowed) allowed.fullTurbo = allowed.fullTurbo !== false; // on unless switched off
     if ('nativeCore' in allowed) allowed.nativeCore = allowed.nativeCore !== false; // the fast player: on unless switched off
+    if ('padNav' in allowed) allowed.padNav = allowed.padNav !== false; // controller navigation (web/lib/padnav.mjs): on unless switched off
     // the graphics backend electron/main.mjs applies at the next start; the fallback notice can only be dismissed
     if ('gpuBackend' in allowed) {
       if (gpuBackends(process.platform).includes(allowed.gpuBackend)) allowed.gpuStart = null; // a new choice starts counting afresh
