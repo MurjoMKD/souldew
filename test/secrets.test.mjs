@@ -56,8 +56,11 @@ test('no credentials anywhere in the app, the scripts or the tests', () => {
 });
 
 test('Live runs: the bot’s address is one public constant, the app has no secret of its own', () => {
-  const holders = files().filter((f) => readFileSync(f, 'utf8').includes(['souldew-discord-bot', 'sweeparena'].join('.')));
-  assert.deepEqual(holders.map(rel), ['server/lib/liveruns.mjs']);
+  // (both of its addresses: the bot's own domain, and the workers.dev one it falls back to)
+  for (const host of [['souldew-discord-bot', 'sweeparena'].join('.'), ['api', 'souldew', 'app'].join('.')]) {
+    const holders = files().filter((f) => readFileSync(f, 'utf8').includes(host));
+    assert.deepEqual(holders.map(rel), ['server/lib/liveruns.mjs'], host);
+  }
   for (const f of ['server/lib/liveruns.mjs', 'shared/liveruns.mjs', 'web/lib/liveshare.mjs', 'web/lib/livecard.mjs', 'web/views/liveshare.mjs']) {
     const src = readFileSync(join(ROOT, f), 'utf8');
     // no signing of requests with a key baked into the app – the per-player token and the bot's limits are the security

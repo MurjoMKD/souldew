@@ -152,16 +152,17 @@ test('the base URL: the bot by default, SOULDEW_LIVE_URL only as https or on thi
 
 // ---------------------------------------------------------------------------------------------------------------
 // The card model from a run doc (the fixtures scripts/render-live-cards.mjs paints)
-test('the base URL: api.souldew.app first, the workers.dev address only as the fallback, never for SOULDEW_LIVE_URL', async () => {
+test('the base URL: the bot’s own domain first, the workers.dev address only as the fallback, never for SOULDEW_LIVE_URL', async () => {
   const { liveBases, LIVE_RUNS_URL, LIVE_RUNS_FALLBACK_URL } = await import('../server/lib/liveruns.mjs');
-  assert.equal(LIVE_RUNS_URL, 'https://api.souldew.app');
-  assert.equal(LIVE_RUNS_FALLBACK_URL, 'https://souldew-discord-bot.sweeparena.workers.dev');
+  assert.equal(LIVE_RUNS_URL, `https://${['api', 'souldew', 'app'].join('.')}`);
+  // (the addresses are built here, so that server/lib/liveruns.mjs stays the only file naming them – test/secrets.test.mjs)
+  assert.equal(LIVE_RUNS_FALLBACK_URL, `https://${['souldew-discord-bot', 'sweeparena', 'workers', 'dev'].join('.')}`);
   assert.deepEqual(liveBases({}), [LIVE_RUNS_URL, LIVE_RUNS_FALLBACK_URL]);
   assert.deepEqual(liveBases({ SOULDEW_LIVE_URL: 'http://evil.example' }), [LIVE_RUNS_URL, LIVE_RUNS_FALLBACK_URL]);
   assert.deepEqual(liveBases({ SOULDEW_LIVE_URL: 'http://127.0.0.1:5555/' }), ['http://127.0.0.1:5555'], 'a mock bot alone');
 });
 
-test('the fallback: only when api.souldew.app gives no answer at all – same request, still no redirects', async () => {
+test('the fallback: only when the bot’s own domain gives no answer at all – same request, still no redirects', async () => {
   const { link, unlink, status, LIVE_RUNS_URL, LIVE_RUNS_FALLBACK_URL } = await import('../server/lib/liveruns.mjs');
   const token = 'ab'.repeat(32);
   const reply = (code, body) => ({ status: code, json: async () => body });
@@ -187,7 +188,7 @@ test('the fallback: only when api.souldew.app gives no answer at all – same re
     assert.equal(c.init.redirect, 'error');
     assert.equal(JSON.parse(c.body).code, 'ABC-234');
   }
-  // 2. api.souldew.app answers – also with an error status: that's the bot's answer, no second request
+  // 2. the bot's own domain answers – also with an error status: that's the bot's answer, no second request
   const down = mock(() => reply(503, {}));
   const st = await status({ fetchImpl: down.fetchImpl, env });
   assert.equal(down.calls.length, 1);
