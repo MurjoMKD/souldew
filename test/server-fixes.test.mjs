@@ -13,8 +13,16 @@ process.env.SLS_DATA_DIR = DATA;
 const { listRuns, readManifest, runSummary, mergeDocEntries, DOC_MAX_SKEW_MS, buildRun } = await import('../server/lib/build.mjs');
 const { RunDoc } = await import('../web/lib/doc.mjs');
 const { uploadTarget, scanLibrary, resolveId } = await import('../server/lib/library.mjs');
-const { readDoc, streamToFile } = await import('../server/app.mjs');
+const { readDoc, streamToFile, errorBody } = await import('../server/app.mjs');
 test.after(() => rmSync(DATA, { recursive: true, force: true }));
+
+test('an error answer carries message and code, never the tool output behind it (#43)', () => {
+  const e = new Error('Randomizer-Fehler: Exit-Code 1');
+  e.details = { code: 1, stdout: '', stderr: 'java.io.FileNotFoundException: /Users/someone/Games/HeartGold.nds' };
+  assert.deepEqual(JSON.parse(JSON.stringify(errorBody(e))), { error: 'Randomizer-Fehler: Exit-Code 1' });
+  const known = Object.assign(new Error('Run not found'), { status: 404, code: 'runNotFound', vars: { id: 'x' } });
+  assert.deepEqual(errorBody(known), { error: 'Run not found', code: 'runNotFound', vars: { id: 'x' } });
+});
 
 const quiet = async (fn) => {
   const warn = console.warn;

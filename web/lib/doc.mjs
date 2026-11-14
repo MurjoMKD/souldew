@@ -29,6 +29,16 @@ const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 /** Remote timestamps are clamped to now + 1 day (the server's merge of uploads, mergeDocEntries in
  *  server/lib/build.mjs, uses the same bounds). */
 const MAX_SKEW = 86400000;
+/** Changes are written (browser copy and server) this long after the last one – live HP changes several times a
+ *  second in a battle, and each write turns the whole doc into JSON. */
+const PERSIST_MS = 600;
+
+/** Docs with changes not in the browser copy yet: written right away when the page goes (reload, closing). */
+const unsaved = new Set();
+export function persistLocalNow() {
+  for (const d of unsaved) d._persistLocal();
+}
+if (typeof addEventListener === 'function') addEventListener('pagehide', persistLocalNow);
 
 export class RunDoc {
   constructor(runId) {
@@ -119,13 +129,22 @@ export class RunDoc {
   }
 
   _persistSoon() {
+    unsaved.add(this);
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      this._persistLocal();
+      this._saveToServer();
+    }, PERSIST_MS);
+  }
+
+  /** The browser's copy of the doc (kept when the server can't be reached). */
+  _persistLocal() {
+    unsaved.delete(this);
     try {
       localStorage.setItem(`sl-doc-${this.runId}`, JSON.stringify(this.entries));
     } catch {
       // quota / private mode — server copy still works
     }
-    clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => this._saveToServer(), 600);
   }
 
   /**

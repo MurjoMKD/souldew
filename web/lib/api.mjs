@@ -12,7 +12,6 @@ async function request(method, url, body) {
   if (!res.ok) {
     const err = new Error(serverErrorText(data && typeof data === 'object' ? data : {}, res.status));
     err.code = data?.code;
-    err.details = data?.details;
     throw err;
   }
   return data;

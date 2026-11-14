@@ -102,6 +102,16 @@ export function v1AccessError(req, url, { token = '', open = false, localPages =
   return localPages ? null : apiError('localPage');
 }
 
+/**
+ * May a preflight grant Chrome's Private Network Access (a page from the internet asking for this computer)? Only
+ * where the request itself can get through: with a token set (the request then still has to carry it), for the
+ * public assets, and for the origins that may read without a token – not for a website that would be turned away.
+ */
+export function privateNetworkAllowed(req, { token = '', open = false, localPages = false } = {}) {
+  if (token || open) return true;
+  return !v1AccessError(req, null, { localPages });
+}
+
 /** CORS headers for an answer: the asking origin (or *), never credentials. */
 export function corsHeaders(req) {
   const origin = req.headers?.origin;
@@ -305,18 +315,20 @@ export function createStreamHub(deps) {
   async function handle(req, res, path, url) {
     if (path !== API_PREFIX && !path.startsWith(`${API_PREFIX}/`)) return false;
     const sub = path.slice(API_PREFIX.length).replace(/\/+$/, '') || '/';
+    const sprite = sub.match(/^\/sprites\/([a-z0-9]+)\/([a-z-]+)\/(\d{1,4})\.(png|gif)$/);
+    const open = !!sprite || sub === '/coffee/qr.svg' || sub === '/legendaries';
+    const s = settings();
     if (req.method === 'OPTIONS') {
-      // CORS preflight (a custom header such as Authorization) – and Chrome's Private Network Access check
-      res.writeHead(204, { ...corsHeaders(req), ...(req.headers['access-control-request-private-network'] ? { 'Access-Control-Allow-Private-Network': 'true' } : {}) });
+      // CORS preflight (a custom header such as Authorization) – and Chrome's Private Network Access check, granted
+      // only where the request itself may get through
+      const pna = req.headers['access-control-request-private-network'] && privateNetworkAllowed(req, { token: s.token, open, localPages: s.localPages });
+      res.writeHead(204, { ...corsHeaders(req), ...(pna ? { 'Access-Control-Allow-Private-Network': 'true' } : {}) });
       res.end();
       return true;
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return fail(req, res, 'readOnly', { Allow: 'GET, HEAD, OPTIONS' });
     }
-    const sprite = sub.match(/^\/sprites\/([a-z0-9]+)\/([a-z-]+)\/(\d{1,4})\.(png|gif)$/);
-    const open = !!sprite || sub === '/coffee/qr.svg' || sub === '/legendaries';
-    const s = settings();
     const denied = v1AccessError(req, url, { token: s.token, open, localPages: s.localPages });
     if (denied) {
       return json(req, res, denied.status, { error: denied.error, code: denied.code });
