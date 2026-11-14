@@ -2418,5 +2418,18 @@
   "lib.ownPatchText": "Ein ROM-Hack, der nicht in souldews Liste steht – souldew wendet deine Patch-Datei auf dein eigenes ROM an, wie bei den bekannten Hacks.",
   "lib.patchNoBase": "Der Patch verrät nicht, welches ROM er braucht – wähle das Spiel beim Start eines Runs.",
   "lib.patchUnreadable": "Diese Patch-Datei lässt sich nicht lesen: {error}",
-  "lib.patchVersion": "Version {v}"
+  "lib.patchVersion": "Version {v}",
+  "lib.unpacking": "{name} wird entpackt …",
+  "lib.unpackingText": "{pct} % von {size} – souldew entpackt 3DS-Spiele einmal in deine Bibliothek",
+  "lib.zippedTitle": "Gezipptes 3DS-Spiel|Gezippte 3DS-Spiele",
+  "lib.zippedText": "souldew spielt 3DS-Spiele aus der entpackten Datei. Entpacke es einmal in deine Bibliothek – das Zip bleibt, wo es ist.|souldew spielt 3DS-Spiele aus der entpackten Datei. Entpacke sie einmal in deine Bibliothek – die Zips bleiben, wo sie sind.",
+  "lib.unpack": "Entpacken",
+  "lib.unpackBusy": "Wird entpackt …",
+  "lib.unpackFailed": "{name} ließ sich nicht entpacken",
+  "disc.zipped": "gezippt – wird beim Hinzufügen in deine Bibliothek entpackt",
+  "err.diskFull": "Nicht genug freier Speicherplatz für {name}: nötig sind {need}, frei sind {free}. Schaffe etwas Platz und versuche es noch einmal.",
+  "err.zipEntryUnsafe": "Das Zip enthält eine Datei mit unsicherem Namen ({name}) – nichts wurde entpackt",
+  "err.zipDamaged": "{name} ist im Zip beschädigt (die Prüfsumme stimmt nicht) – lade es noch einmal herunter",
+  "err.zipMethod": "{name} ist so gepackt, dass souldew es nicht entpacken kann (verschlüsselt oder kein normales Zip) – entpacke es selbst und füge die Datei hinzu",
+  "err.unpackFailed": "{name} ließ sich nicht entpacken: {why}"
 }

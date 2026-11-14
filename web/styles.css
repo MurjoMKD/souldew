@@ -1150,6 +1150,8 @@ tr.pad-lit .kbd { border-color: var(--tri); color: var(--ink); }
 .disc-cover.none { display: grid; place-items: center; font-family: var(--font-pixel); font-size: 11px; color: var(--ink-2); }
 .disc-body { display: grid; gap: 2px; min-width: 0; }
 .disc-body .tiny { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zipped-games .disc-item > .row { flex-wrap: nowrap; padding: 8px 10px; border-radius: var(--r-m); background: var(--shell-3); border: 1px solid var(--edge); }
+.zipped-games .disc-body { flex: 1; }
 html[data-theme='contrast'] .rail { background: #050507; border-right-color: var(--edge); }
 
 /* ---------- side navigation: a quiet list, a light that follows the pointer ----------

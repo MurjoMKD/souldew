@@ -2,6 +2,19 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **Zipped 3DS games show up in the library.** Adding a zip with a Nintendo 3DS game in it ("Pokemon Sun (USA).zip",
+  2.6 GB) said the library was updated, but the game never appeared: souldew only looked for Game Boy, GBA and DS
+  ROMs inside zips, and could only unpack up to 600 MB. Now the game is unpacked into your library folder as a normal
+  file – whether you add the zip with "Add files", drop it into the library or pick it in "Search my Mac / PC" – and it
+  is on the shelf like any 3DS game. The zip itself isn't copied into the library. Unpacking streams the game to disk
+  (no matter how big), checks its checksum, checks the free disk space first and leaves nothing half-written behind
+  if something goes wrong; a toast shows how far it is ("Unpacking Pokémon Sun … 40 % of 4.0 GB").
+- **Zips with 3DS games in your library folders** are no longer passed over in silence: the library lists them under
+  "Zipped 3DS games" with an "Unpack" button that puts the game into your library (the zip stays where it is).
+- 3DS games and zips can be dropped into the library up to 8 GB (it was 600 MB, too small for most 3DS games).
+
 ## 2.6.3
 
 - **A newer version of a ROM hack's patch is the one that's used.** Adding an update next to the old file

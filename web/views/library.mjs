@@ -2,14 +2,14 @@ import { html, useState, useMemo, useEffect } from '/vendor/htm-preact.mjs';
 import { useApp, Modal } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, currentLang } from '../lib/i18n.mjs';
-import { api } from '../lib/api.mjs';
+import { api, events } from '../lib/api.mjs';
 import { serverErrorText } from '../lib/errors.mjs';
 import { catalog, gameTitle } from '../lib/data.mjs';
 import { romFeatures, FEATURES } from '/shared/live/features.mjs';
 import { gymCapsFamily } from '/shared/routes.mjs';
 import { FirstSteps } from './firststeps.mjs';
 import { IS_MAC, IS_WIN, shortPath } from '../lib/platform.mjs';
-import { addedToLibrary, addedMessage } from '../lib/libadded.mjs';
+import { addedToLibrary, addedMessage, unpackToast } from '../lib/libadded.mjs';
 import { patchTitle } from '/shared/patchname.mjs';
 
 const SYS = { gb: 'GB', gbc: 'GBC', gba: 'GBA', nds: 'DS', '3ds': '3DS' };
@@ -29,7 +29,10 @@ export function DiscoverModal({ onClose }) {
   const [error, setError] = useState(null);
   const [pick, setPick] = useState({});
   const [busy, setBusy] = useState(false);
+  const [unpacking, setUnpacking] = useState(null); // a zipped 3DS game being unpacked: the toast's text, shown here
   const cat = catalog();
+  // (the app's toasts sit behind this modal – a multi-GB unpack shows its progress in the modal itself)
+  useEffect(() => (busy ? events({ unpack: (p) => setUnpacking(unpackToast(p, cat)) }) : undefined), [busy]);
   useEffect(() => {
     let off = false;
     api.post('/api/library/discover', {}).then((r) => {
@@ -53,6 +56,8 @@ export function DiscoverModal({ onClose }) {
       onClose();
     } catch (e) {
       toast({ kind: 'death', title: t('disc.failed', 'Could not add the games'), text: e.message });
+      setError(`${t('disc.failed', 'Could not add the games')}: ${e.message}`); // (the toast is behind the modal)
+      setUnpacking(null);
       setBusy(false);
     }
   };
@@ -65,6 +70,8 @@ export function DiscoverModal({ onClose }) {
       <p class="small muted">${IS_MAC ? t('disc.privacy', 'Only file names and the first bytes of game files are read – nothing leaves your Mac. macOS may ask once whether souldew may look into these folders.')
         : t('disc.privacyPc', 'Only file names and the first bytes of game files are read – nothing leaves your PC.')}</p></div></div>`}
     ${error && html`<div class="warning error" role="alert">${error}</div>`}
+    ${busy && unpacking?.title && html`<div class="disc-search" role="status"><span class="disc-spin" aria-hidden="true"></span>
+      <div><b>${unpacking.title}</b><p class="small muted">${unpacking.text}</p></div></div>`}
     ${res && !res.found.length && html`<div class="note">${t('disc.none', 'No games found in the usual places. Add them by hand – or drop the files into the library.')}</div>`}
     ${res && res.found.length > 0 && html`<ul class="disc-list">
       ${res.found.map((f) => {
@@ -73,13 +80,53 @@ export function DiscoverModal({ onClose }) {
           <input type="checkbox" checked=${!!pick[key(f)]} disabled=${f.inLibrary || busy} onChange=${(e) => setPick({ ...pick, [key(f)]: e.target.checked })} />
           ${g ? html`<img class="disc-cover pixel" src=${`/covers/${g.id}.png`} alt="" loading="lazy" />` : html`<span class="disc-cover none">${SYS[f.system] || '?'}</span>`}
           <span class="disc-body"><b>${g ? gameTitle(g) : f.name}</b>
-            <span class="tiny muted">${[SYS[f.system], g ? f.name : t('disc.unknown', 'not in the catalog (ROM hack or other version)'), home(f.entry ? `${f.path} › ${f.entry}` : f.path)].filter(Boolean).join(' · ')}</span></span>
+            <span class="tiny muted">${[SYS[f.system], g ? f.name : t('disc.unknown', 'not in the catalog (ROM hack or other version)'), home(f.entry ? `${f.path} › ${f.entry}` : f.path),
+              f.zipped && t('disc.zipped', 'zipped – unpacked into your library when you add it')].filter(Boolean).join(' · ')}</span></span>
           ${f.inLibrary ? html`<span class="chip">${t('disc.have', 'already in the library')}</span>` : g ? html`<span class="chip ok">${t('disc.known', 'recognised')}</span>` : ''}
         </label></li>`;
       })}
     </ul>`}
     ${res?.truncated && html`<p class="tiny faint">${t('disc.truncated', 'Very large folders were only searched in part. Games deeper inside: add them by hand.')}</p>`}
   <//>`;
+}
+
+/**
+ * 3DS games the scan found inside zips in your library folders (scanLibrary().zipped): souldew plays 3DS games from
+ * the unpacked file, so they are offered for unpacking here instead of sitting on the shelf unplayable. Unpacking puts
+ * the game into the library folder (the zip stays where it is); the progress shows as a toast (web/app.mjs).
+ */
+function ZippedGames({ zipped }) {
+  const { library, reloadLibrary, toast } = useApp();
+  const [busy, setBusy] = useState(null);
+  const cat = catalog();
+  if (!zipped?.length) return null;
+  const nameOf = (z) => {
+    const g = z.gameId ? (cat.games || []).find((x) => x.id === z.gameId) : null;
+    return g ? gameTitle(g) : z.title || z.name;
+  };
+  const unpack = async (z) => {
+    setBusy(z.id);
+    try {
+      const r = await api.post('/api/library/unpack', { id: z.id });
+      const after = await reloadLibrary();
+      toast(library && after ? addedMessage(addedToLibrary(library, after, r.added))
+        : { kind: 'ok', title: t('lib.added', 'Library updated'), text: t('lib.addedText', 'New games are on the shelf.') });
+    } catch (e) {
+      toast({ kind: 'death', title: t('lib.unpackFailed', 'Couldn’t unpack {name}', { name: nameOf(z) }), text: e.message });
+    } finally {
+      setBusy(null);
+    }
+  };
+  return html`<div class="panel flat zipped-games" style="margin-bottom:22px">
+    <div class="panel-head"><h2>${t('lib.zippedTitle', 'Zipped 3DS game|Zipped 3DS games', { count: zipped.length })}</h2>
+      <p>${t('lib.zippedText', 'souldew plays 3DS games from the unpacked file. Unpack it once into your library – the zip stays where it is.|souldew plays 3DS games from the unpacked file. Unpack them once into your library – the zips stay where they are.', { count: zipped.length })}</p></div>
+    <ul class="disc-list">${zipped.map((z) => html`<li class="disc-item" key=${z.id}><div class="row">
+      ${z.gameId ? html`<img class="disc-cover pixel" src=${coverOf(library, { gameId: z.gameId })} alt="" loading="lazy" />` : html`<span class="disc-cover none">3DS</span>`}
+      <span class="disc-body grow"><b>${nameOf(z)}</b>
+        <span class="tiny muted">${['3DS', z.name, shortPath(`${z.file} › ${z.entry || z.name}`)].join(' · ')}</span></span>
+      <button class="btn small" disabled=${!!busy} onClick=${() => unpack(z)}><${Icon} name="plus" size=${14} />${busy === z.id ? t('lib.unpackBusy', 'Unpacking …') : t('lib.unpack', 'Unpack')}</button>
+    </div></li>`)}</ul>
+  </div>`;
 }
 
 export async function addGamesFlow({ reloadLibrary, folder = false, toast } = {}) {
@@ -392,6 +439,7 @@ export function LibraryView() {
     </section>`}
 
     ${roms.length === 0 && html`<div class="stack" style="margin-bottom:26px"><${DropZone} onAdded=${reloadLibrary} /></div>`}
+    ${filter !== 'hacks' && html`<${ZippedGames} zipped=${library?.zipped} />`}
 
     <div class="lib-head">
       <div class="seg" role="tablist" aria-label=${t('lib.filterSystem', 'Filter by system')}>

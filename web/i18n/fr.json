@@ -2418,5 +2418,18 @@
   "lib.ownPatchText": "Un ROM hack absent de la liste de souldew – souldew applique ton fichier patch à ta propre ROM, comme pour les hacks qu’il connaît.",
   "lib.patchNoBase": "Le patch n’indique pas de quelle ROM il a besoin – choisis le jeu en lançant une partie.",
   "lib.patchUnreadable": "Ce fichier patch est illisible : {error}",
-  "lib.patchVersion": "Version {v}"
+  "lib.patchVersion": "Version {v}",
+  "lib.unpacking": "Décompression de {name} …",
+  "lib.unpackingText": "{pct} % sur {size} – souldew décompresse les jeux 3DS une seule fois dans ta bibliothèque",
+  "lib.zippedTitle": "Jeu 3DS zippé|Jeux 3DS zippés",
+  "lib.zippedText": "souldew lance les jeux 3DS depuis le fichier décompressé. Décompresse-le une fois dans ta bibliothèque – le zip reste où il est.|souldew lance les jeux 3DS depuis le fichier décompressé. Décompresse-les une fois dans ta bibliothèque – les zips restent où ils sont.",
+  "lib.unpack": "Décompresser",
+  "lib.unpackBusy": "Décompression …",
+  "lib.unpackFailed": "Impossible de décompresser {name}",
+  "disc.zipped": "zippé – décompressé dans ta bibliothèque quand tu l’ajoutes",
+  "err.diskFull": "Pas assez d’espace disque libre pour {name} : il faut {need}, {free} sont libres. Libère de la place et réessaie.",
+  "err.zipEntryUnsafe": "Le zip contient un fichier au nom dangereux ({name}) – rien n’a été décompressé",
+  "err.zipDamaged": "{name} est endommagé dans le zip (la somme de contrôle ne correspond pas) – télécharge-le à nouveau",
+  "err.zipMethod": "{name} est compressé d’une façon que souldew ne sait pas décompresser (chiffré ou zip inhabituel) – décompresse-le toi-même et ajoute le fichier",
+  "err.unpackFailed": "Impossible de décompresser {name} : {why}"
 }

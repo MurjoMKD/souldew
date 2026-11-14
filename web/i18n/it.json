@@ -2418,5 +2418,18 @@
   "lib.ownPatchText": "Una ROM hack che non è nell’elenco di souldew: souldew applica il tuo file patch alla tua ROM, come per le hack che conosce.",
   "lib.patchNoBase": "La patch non dice di quale ROM ha bisogno: scegli il gioco quando avvii una partita.",
   "lib.patchUnreadable": "Impossibile leggere questo file patch: {error}",
-  "lib.patchVersion": "Versione {v}"
+  "lib.patchVersion": "Versione {v}",
+  "lib.unpacking": "Estrazione di {name} …",
+  "lib.unpackingText": "{pct} % di {size} – souldew estrae i giochi 3DS una volta sola nella tua libreria",
+  "lib.zippedTitle": "Gioco 3DS compresso|Giochi 3DS compressi",
+  "lib.zippedText": "souldew avvia i giochi 3DS dal file estratto. Estrailo una volta nella tua libreria – lo zip resta dov’è.|souldew avvia i giochi 3DS dal file estratto. Estraili una volta nella tua libreria – gli zip restano dove sono.",
+  "lib.unpack": "Estrai",
+  "lib.unpackBusy": "Estrazione …",
+  "lib.unpackFailed": "Impossibile estrarre {name}",
+  "disc.zipped": "compresso – viene estratto nella tua libreria quando lo aggiungi",
+  "err.diskFull": "Spazio libero insufficiente per {name}: servono {need}, ne sono liberi {free}. Libera un po’ di spazio e riprova.",
+  "err.zipEntryUnsafe": "Lo zip contiene un file con un nome non sicuro ({name}) – non è stato estratto nulla",
+  "err.zipDamaged": "{name} è danneggiato nello zip (il checksum non corrisponde) – scaricalo di nuovo",
+  "err.zipMethod": "{name} è compresso in un modo che souldew non sa estrarre (cifrato o zip non standard) – estrailo tu e aggiungi il file",
+  "err.unpackFailed": "Impossibile estrarre {name}: {why}"
 }

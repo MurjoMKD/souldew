@@ -2418,5 +2418,18 @@
   "upd.updatedTitle": "Updated",
   "upd.version": "Version {version}",
   "upd.whatsNew": "What’s new",
-  "upd.youHave": "You have {version}."
+  "upd.youHave": "You have {version}.",
+  "lib.unpacking": "Unpacking {name} …",
+  "lib.unpackingText": "{pct} % of {size} – souldew unpacks 3DS games into your library once",
+  "lib.zippedTitle": "Zipped 3DS game|Zipped 3DS games",
+  "lib.zippedText": "souldew plays 3DS games from the unpacked file. Unpack it once into your library – the zip stays where it is.|souldew plays 3DS games from the unpacked file. Unpack them once into your library – the zips stay where they are.",
+  "lib.unpack": "Unpack",
+  "lib.unpackBusy": "Unpacking …",
+  "lib.unpackFailed": "Couldn’t unpack {name}",
+  "disc.zipped": "zipped – unpacked into your library when you add it",
+  "err.diskFull": "Not enough free disk space for {name}: it needs {need}, {free} are free. Free up some space and try again.",
+  "err.zipEntryUnsafe": "The zip holds a file with an unsafe name ({name}) – nothing was unpacked",
+  "err.zipDamaged": "{name} is damaged in the zip (its checksum doesn’t match) – download it again",
+  "err.zipMethod": "{name} is packed in a way souldew can’t unpack (encrypted, or not a normal zip) – unpack it yourself and add the file",
+  "err.unpackFailed": "{name} couldn’t be unpacked: {why}"
 }

@@ -15,6 +15,7 @@ import { AppMark, NavIcon, Icon } from './lib/icons.mjs';
 import { BootScreen } from './views/boot.mjs';
 import { Onboarding } from './views/onboarding.mjs';
 import { LibraryView } from './views/library.mjs';
+import { unpackToast } from './lib/libadded.mjs';
 import { SoulLinkView, NuzlockeView } from './views/soullink.mjs';
 import { PlayView, GameSession, ExternalFeed } from './views/play.mjs';
 import { unsavedProgress, unsavedTexts } from './views/savestates.mjs';
@@ -229,10 +230,21 @@ function App() {
     return () => removeEventListener('souldew:nag', open);
   }, [status]);
 
+  // A toast with a `key` replaces the one shown with that key (progress: "Unpacking … 40 %"); `{ key, remove: true }`
+  // takes it away.
+  const toastTimers = useRef({});
   const toast = useCallback((x) => {
-    const id = Math.random().toString(36).slice(2);
-    setToasts((ts) => [...ts.slice(-4), { id, ...x }]);
-    setTimeout(() => setToasts((ts) => ts.filter((y) => y.id !== id)), x.ttl || (x.kind === 'death' ? 12000 : 6000));
+    const id = x.key ? `key:${x.key}` : Math.random().toString(36).slice(2);
+    clearTimeout(toastTimers.current[id]);
+    if (x.remove) {
+      setToasts((ts) => ts.filter((y) => y.id !== id));
+      return;
+    }
+    setToasts((ts) => [...ts.filter((y) => y.id !== id).slice(-4), { id, ...x }]);
+    toastTimers.current[id] = setTimeout(() => {
+      delete toastTimers.current[id];
+      setToasts((ts) => ts.filter((y) => y.id !== id));
+    }, x.ttl || (x.kind === 'death' ? 12000 : 6000));
   }, []);
 
   const reloadStatus = useCallback(async () => {
@@ -509,6 +521,9 @@ function App() {
     live: (frame) => setLiveInfo({ ...frame, at: Date.now() }),
     'live-status': (s) => setLiveInfo((x) => ({ ...(x || {}), status: s })),
     'save-error': (p) => p.runId === runId && toast({ kind: 'death', title: t('toast.saveError', 'Save file unreadable'), text: p.error }),
+    // a zipped 3DS game being unpacked into the library (server/lib/library.mjs unpackZipGames) – what came of it is
+    // told by the page that added it (web/lib/libadded.mjs addedMessage, or the error)
+    unpack: (p) => toast(unpackToast(p)),
   }), [runId]);
 
   // ---- live link -----------------------------------------------------------------

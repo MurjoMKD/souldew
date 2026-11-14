@@ -10,9 +10,10 @@ import { WEB_DIR, SHARED_DIR, CACHE_DIR, DATA_DIR, CONFIG_PATH, NODE_MODULES, DE
 import { writeFileAtomic, httpError, safeFileName, safeJoin, realInside } from './lib/fsutil.mjs';
 import { detectJava, uprStatus, installUpr, runBridge } from './lib/toolchain.mjs';
 import { preparePatchedRom, KNOWN_PATCHES } from './lib/roms.mjs';
-import { ROM_EXTENSIONS, PATCH_EXTENSIONS } from '../shared/romid.mjs';
+import { ROM_EXTENSIONS, PATCH_EXTENSIONS, isCtrExt } from '../shared/romid.mjs';
 import { ALL_SLOTS, slotsOf, runMode } from '../shared/slots.mjs';
-import { scanLibrary, catalog, loadFile, importFiles, uploadTarget, resolveId, discoverRoms, approvedFolder } from './lib/library.mjs';
+import { scanLibrary, catalog, loadFile, importFiles, uploadTarget, resolveId, discoverRoms, approvedFolder, placeUploadedZip, unpackLibraryZip, MAX_CTR_BYTES } from './lib/library.mjs';
+import { freeBytes } from './lib/zip.mjs';
 import { saveCover, deleteCover, coverFile, customCovers, coverUrl, COVER_LIMIT } from './lib/covers.mjs';
 import { buildRun, listRuns, readManifest, writeManifest, runDir, runPack, runSummary, trashRun, checkPack, stripLocalRules, isDiscordWebhook, mergeDocEntries, renamePlayers } from './lib/build.mjs';
 import { SaveWatcher } from './lib/savewatch.mjs';
@@ -116,6 +117,11 @@ async function readRaw(req, limit = 512 * 1024 * 1024) {
 }
 
 const UPLOAD_LIMIT = 600 * 1024 * 1024; // the biggest DS ROMs are 512 MB
+/** 3DS games (1–4 GB) and zips (which may hold one) may be as big as library.mjs lets a 3DS game be. */
+const uploadLimitFor = (name) => {
+  const ext = extname(String(name)).slice(1).toLowerCase();
+  return isCtrExt(ext) || ext === 'zip' ? MAX_CTR_BYTES : UPLOAD_LIMIT;
+};
 
 /** Write a request body to `target` via a temp file (renamed at the end) – never more than `limit` bytes. */
 export async function streamToFile(req, target, limit) {
@@ -130,7 +136,11 @@ export async function streamToFile(req, target, limit) {
       size += c.length;
       if (size > limit) throw httpError(413, 'Datei zu groß', 'fileTooLarge');
       if (failed) throw failed;
-      if (!out.write(c)) await Promise.race([once(out, 'drain'), once(out, 'close')]);
+      if (!out.write(c)) {
+        // (the listener that didn't fire is taken off again – a multi-GB upload waits here thousands of times)
+        const ac = new AbortController();
+        await Promise.race([once(out, 'drain', { signal: ac.signal }), once(out, 'close', { signal: ac.signal })]).finally(() => ac.abort());
+      }
     }
     if (!size) throw httpError(400, 'Leere Datei', 'emptyFile');
     out.end();
@@ -915,18 +925,39 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
   route('GET', /^\/api\/library$/, () => withCustomCovers(scanLibrary(loadConfig())));
   // Paths from the page only from approved places (library.mjs approvedImportPath): "Search my Mac / PC"'s folders,
   // the library's folders, and files / folders picked in the native dialog this session (electron/main.mjs).
+  // A zipped 3DS game is unpacked into the library (library.mjs unpackZipGames) – the page shows its progress from the
+  // "unpack" events.
+  const onUnpack = (p) => emit('unpack', p);
   route('POST', /^\/api\/library\/import$/, async (req) => {
     const { paths } = await readBody(req);
-    return { added: importFiles(paths || [], loadConfig()) };
+    return { added: await importFiles(paths || [], loadConfig(), { onUnpack }) };
+  });
+  // a zipped 3DS game in a library folder (scanLibrary().zipped): unpacked into the library folder, the zip stays
+  route('POST', /^\/api\/library\/unpack$/, async (req) => {
+    const { id } = await readBody(req);
+    return { added: await unpackLibraryZip(id, loadConfig(), { onUnpack }) };
   });
   // Search this Mac / PC for ROMs (the usual folders) – the import below then copies the ones the player picked.
   route('POST', /^\/api\/library\/discover$/, () => discoverRoms({ known: scanLibrary(loadConfig()).roms }));
   route('POST', /^\/api\/library\/upload$/, async (req, m, url) => {
     // name checked first (a wrong file type is refused before its bytes are read), then streamed to disk:
     // a 512 MB DS ROM must not be held in memory twice
-    const target = uploadTarget(url.searchParams.get('name') || 'rom.bin');
-    await streamToFile(req, target, UPLOAD_LIMIT);
-    return { added: [target] };
+    const name = url.searchParams.get('name') || 'rom.bin';
+    const target = uploadTarget(name);
+    const limit = uploadLimitFor(target);
+    const free = freeBytes(dirname(target));
+    const len = Number(req.headers['content-length']);
+    if (free !== null && Number.isFinite(len) && len <= limit && len > free - 64 * 1024 * 1024) {
+      throw httpError(507, `Nicht genug Speicherplatz für ${basename(target)}`, 'diskFull', { name: basename(target), need: `${(len / 1024 ** 3).toFixed(1)} GB`, free: `${(free / 1024 ** 3).toFixed(1)} GB` });
+    }
+    if (extname(target).toLowerCase() !== '.zip') {
+      await streamToFile(req, target, limit);
+      return { added: [target] };
+    }
+    // a zip: to a hidden file first (the scan skips it) – a 3DS game in it is unpacked, the zip itself not kept
+    const tmp = join(dirname(target), `.upload-${process.pid}-${randomBytes(4).toString('hex')}.zip`);
+    await streamToFile(req, tmp, limit);
+    return { added: await placeUploadedZip(tmp, target, { onUnpack }) };
   });
   // The player's own picture for an entry without a cover (id: game:<id> | hack:<id> | rom:<CRC32>, covers.mjs).
   // GET is served below, next to the other file responses.

@@ -1,15 +1,15 @@
 // Game library: scans the library folder(s) for ROMs and patches (also inside .zip files),
 // identifies them by header + CRC32 and matches them to the catalog. Results are cached.
-import { readdirSync, statSync, readFileSync, existsSync, mkdirSync, copyFileSync, openSync, readSync, closeSync, realpathSync } from 'node:fs';
+import { readdirSync, statSync, readFileSync, existsSync, mkdirSync, copyFileSync, openSync, readSync, closeSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { join, extname, basename, resolve, dirname, isAbsolute, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { listZip, readZipEntry } from './zip.mjs';
+import { listZip, readZipEntry, extractZipEntry, entryFileName, freeBytes } from './zip.mjs';
 import { APP_ROOT, DATA_DIR, DEV, LIBRARY_DIR, SHARED_DIR } from './paths.mjs';
 import { crc32Hex } from '../../shared/checksum.mjs';
 import { writeFileAtomic, httpError, safeFileName, isInside, samePath } from './fsutil.mjs';
 import { identifyRom, matchCatalog, ROM_EXTENSIONS, PATCH_EXTENSIONS, CTR_EXTENSIONS, isCtrExt } from '../../shared/romid.mjs';
-import { identifyCtr } from '../../shared/ctr.mjs';
+import { identifyCtr, identifyCtrBytes } from '../../shared/ctr.mjs';
 import { wasPicked, insideAny } from './grants.mjs';
 import { describePatch, detectPatchFormat } from '../../shared/patchers.mjs';
 import { nameVersion, compareVersions, patchFamily } from '../../shared/patchname.mjs';
@@ -108,13 +108,120 @@ export function ctrInfo(path, ext) {
       return new Uint8Array(b.buffer, b.byteOffset, got);
     };
     const info = identifyCtr(readAt, ext);
-    if (!info || ['update', 'dlc', 'system'].includes(info.kind)) return null;
+    if (!info || notPlayable(info)) return null;
     return { ...info, crc: null };
   } catch {
     return null;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+/** Updates, DLC and system titles: installed in Azahar, not played from the library. */
+const notPlayable = (info) => ['update', 'dlc', 'system'].includes(info?.kind);
+
+/** How much of a zipped 3DS game is inflated to identify it: its NCSD header and the game's NCCH header (at 0x4000). */
+const CTR_HEAD = 0x10000;
+
+/**
+ * The 3DS games inside a zip (a 3DS game is 1–4 GB – only its first 64 KB are inflated): [{ entry, ext, info }], info as
+ * ctrInfo gives it. Updates / DLC, entries that aren't 3DS files and entries souldew can't unpack are left out.
+ */
+export function zipCtrGames(path, entries = null) {
+  if (!entries) {
+    try {
+      entries = listZip(path);
+    } catch {
+      return [];
+    }
+  }
+  const out = [];
+  for (const e of entries) {
+    const ext = extname(e.name).slice(1).toLowerCase();
+    if (junkEntry(e.name) || !isCtrExt(ext) || (e.flags & 1) || ![0, 8].includes(e.method)) continue;
+    try {
+      const head = readZipEntry(path, e, { prefix: CTR_HEAD });
+      const info = identifyCtrBytes(new Uint8Array(head.buffer, head.byteOffset, head.length), ext);
+      if (info && !notPlayable(info)) out.push({ entry: e, ext, info: { ...info, crc: null } });
+    } catch {
+      // damaged entry – not offered
+    }
+  }
+  return out;
+}
+
+/** Does a zip hold anything besides 3DS games that the library reads from the zip itself (ROMs, patches)? */
+const zipHasOther = (entries) => entries.some((e) => !junkEntry(e.name) && [...ROM_EXTENSIONS, ...PATCH_EXTENSIONS].includes(extname(e.name).slice(1).toLowerCase()));
+
+const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`;
+/** Room left on the disk after unpacking (the library index, saves …). */
+const SPACE_MARGIN = 256 * 1024 * 1024;
+let unpackQueue = Promise.resolve();
+
+/**
+ * Unpack the 3DS games of a zip into the library folder (`dir`) as normal files – the 3DS player needs the file, and
+ * a 4 GB game can't be inflated in memory. One unpack at a time (two would race for the disk). Each game: its name
+ * checked (no path parts), free space checked first, streamed with its CRC32 checked, nothing left behind when it fails
+ * (zip.mjs extractZipEntry). A game unpacked before (same name and size) isn't unpacked again. `onUnpack({ state:
+ * 'start'|'progress'|'done'|'failed', name, gameId, size, done })` follows it (the page shows it as a toast).
+ * → the library files, one per game. Throws httpErrors with codes for the player's message.
+ */
+export function unpackZipGames(zipPath, { games = null, onUnpack = null, dir = LIBRARY_DIR } = {}) {
+  const run = unpackQueue.then(async () => {
+    const added = [];
+    for (const g of games || zipCtrGames(zipPath)) added.push(await unpackOne(zipPath, g, onUnpack, dir));
+    return added;
+  });
+  unpackQueue = run.catch(() => {});
+  return run;
+}
+
+async function unpackOne(zipPath, { entry, info }, onUnpack, dir) {
+  let base;
+  try {
+    base = entryFileName(entry.name);
+  } catch {
+    throw httpError(400, `Unsicherer Dateiname im Zip: ${entry.name}`, 'zipEntryUnsafe', { name: entry.name });
+  }
+  let safe = safeFileName(base, { fallback: 'game.3ds', maxBytes: 200 });
+  if (safe.startsWith('.')) safe = `_${safe.slice(1)}`; // hidden files are skipped by the library scan
+  mkdirSync(dir, { recursive: true });
+  const ext = extname(safe);
+  let dest = join(dir, safe);
+  for (let i = 2; existsSync(dest); i++) {
+    if (statSync(dest).size === entry.uncompSize) return dest; // unpacked before
+    dest = join(dir, `${safe.slice(0, safe.length - ext.length)} (${i})${ext}`);
+  }
+  const free = freeBytes(dir);
+  if (free !== null && free < entry.uncompSize + SPACE_MARGIN) {
+    throw httpError(507, `Nicht genug Speicherplatz für ${base}: ${gb(entry.uncompSize)} nötig, ${gb(free)} frei`, 'diskFull', { name: base, need: gb(entry.uncompSize), free: gb(free) });
+  }
+  const ev = { name: base.replace(/\.[^.]+$/, ''), gameId: matchCatalog(info, catalog())?.game?.id || null, size: entry.uncompSize };
+  onUnpack?.({ state: 'start', done: 0, ...ev });
+  let last = Date.now();
+  const onProgress = (done) => {
+    const now = Date.now();
+    if (now - last < 1000) return;
+    last = now;
+    onUnpack?.({ state: 'progress', done, ...ev });
+  };
+  try {
+    await extractZipEntry(zipPath, entry, dest, { maxSize: MAX_CTR_BYTES, onProgress });
+  } catch (e) {
+    onUnpack?.({ state: 'failed', ...ev });
+    throw unpackError(e, base, entry.uncompSize, dir);
+  }
+  onUnpack?.({ state: 'done', done: entry.uncompSize, ...ev });
+  return dest;
+}
+
+/** A failed unpack as the httpError the page translates (web/lib/errors.mjs). */
+function unpackError(e, name, size, dir) {
+  if (e.zipCode === 'damaged') return httpError(422, `${name} ist im Zip beschädigt (${e.message})`, 'zipDamaged', { name });
+  if (e.zipCode === 'method') return httpError(415, `${name}: ${e.message}`, 'zipMethod', { name });
+  if (e.zipCode === 'tooLarge') return httpError(413, `Datei zu groß: ${name}`, 'fileTooLarge');
+  if (e.code === 'ENOSPC') return httpError(507, `Nicht genug Speicherplatz für ${name}`, 'diskFull', { name, need: gb(size), free: gb(freeBytes(dir) || 0) });
+  return httpError(500, `${name} konnte nicht entpackt werden: ${e.message}`, 'unpackFailed', { name, why: e.message });
 }
 
 function describeRom(info, cat) {
@@ -132,6 +239,7 @@ export function scanLibrary(config = {}) {
   const nextIndex = {};
   const roms = [];
   const patches = [];
+  const zipped = []; // 3DS games inside zips – played once unpacked (unpackZipGames)
   const seen = new Set(); // nested / overlapping library folders would list files twice
   const patchTime = new Map(); // patch → mtime of its file (or zip), to tell which of two versions came later
 
@@ -193,8 +301,9 @@ export function scanLibrary(config = {}) {
         patches.push(p);
       } else if (ext === 'zip') {
         let cached = index[cacheKey];
-        if (!cached || cached.patches?.some((x) => !('resultCrc' in x))) {
-          cached = { roms: [], patches: [], notes: [] };
+        // (indexes before 2.6.4 didn't look for 3DS games: no `ctr`)
+        if (!cached || !cached.ctr || cached.patches?.some((x) => !('resultCrc' in x))) {
+          cached = { roms: [], patches: [], notes: [], ctr: [] };
           let entries = [];
           try {
             entries = listZip(path);
@@ -219,9 +328,11 @@ export function scanLibrary(config = {}) {
               // ignore this entry
             }
           }
+          cached.ctr = zipCtrGames(path, entries).map(({ entry, info }) => ({ entry: entry.name, size: entry.uncompSize, ...info }));
         }
         nextIndex[cacheKey] = cached;
         for (const r of cached.roms) if (!junkEntry(r.entry)) roms.push(describeRom({ id: makeId(path, r.entry), name: entryBase(r.entry), file: path, container: name, ...r }, cat));
+        for (const r of cached.ctr) zipped.push(describeRom({ id: makeId(path, r.entry), name: entryBase(r.entry), file: path, container: name, zipped: true, ...r }, cat));
         for (const p of cached.patches) {
           if (junkEntry(p.entry)) continue; // (indexes from older versions may still list them)
           const note = cached.notes[0];
@@ -235,6 +346,9 @@ export function scanLibrary(config = {}) {
   };
   for (const root of libraryRoots(config)) visit(root, 0);
   saveIndex(nextIndex);
+  // a zipped 3DS game that is unpacked already (the same game, the same size) isn't offered again
+  const ctrKey = (r) => `${r.titleId || r.code || r.title}|${r.size}`;
+  const unpacked = new Set(roms.filter((r) => r.system === '3ds').map(ctrKey));
 
   // Link patches to hacks / base games
   for (const p of patches) {
@@ -251,7 +365,7 @@ export function scanLibrary(config = {}) {
     // a hack the catalog doesn't know: its versions are told together by the file name ("Crest v1.bps", "Crest v2.bps")
     if (!p.hackId) p.family = patchFamily(p.name);
   }
-  return { roms, patches: newestFirst(patches, patchTime), roots: libraryRoots(config), libraryDir: LIBRARY_DIR };
+  return { roms, patches: newestFirst(patches, patchTime), zipped: zipped.filter((z) => !unpacked.has(ctrKey(z))), roots: libraryRoots(config), libraryDir: LIBRARY_DIR };
 }
 
 /**
@@ -285,7 +399,7 @@ function newestFirst(patches, time = new Map()) {
 const DISCOVER_SKIP = /^(node_modules|Library|Applications|Pictures|Music|Movies|Videos|AppData|\$Recycle\.Bin|System Volume Information|WindowsApps|\.Trash|Caches?|DerivedData|Pods|venv|site-packages|__pycache__|target|vendor)$|\.(app|photoslibrary|bundle|framework|xcodeproj|xcworkspace|git|lproj)$/i;
 const MAX_ROM_BYTES = 600 * 1024 * 1024;
 /** 3DS cartridges are up to 4 GB (8 GB images exist for a handful of games). */
-const MAX_CTR_BYTES = 8 * 1024 * 1024 * 1024;
+export const MAX_CTR_BYTES = 8 * 1024 * 1024 * 1024;
 
 /**
  * The real folders behind the Downloads / Desktop / Documents shortcuts – the desktop app passes them in
@@ -434,7 +548,8 @@ export function discoverRoms({ roots = discoverRoots(), known = [], maxDepth = 4
   };
   const look = (path, name, st) => {
     const ext = extname(name).slice(1).toLowerCase();
-    if (!st.isFile() || st.size > (isCtrExt(ext) ? MAX_CTR_BYTES : MAX_ROM_BYTES) || onlineOnly(st)) return;
+    // (a zip may hold a 3DS game: 1–4 GB)
+    if (!st.isFile() || st.size > (isCtrExt(ext) || ext === 'zip' ? MAX_CTR_BYTES : MAX_ROM_BYTES) || onlineOnly(st)) return;
     try {
       if (isCtrExt(ext)) {
         const info = ctrInfo(path, ext);
@@ -442,13 +557,16 @@ export function discoverRoms({ roots = discoverRoots(), known = [], maxDepth = 4
       } else if (ROM_EXTENSIONS.includes(ext)) {
         add({ path, name, size: st.size, ...identifyRom(headOf(path), ext) });
       } else if (ext === 'zip') {
-        for (const e of listZip(path)) {
+        const entries = listZip(path);
+        for (const e of entries) {
           const eext = extname(e.name).slice(1).toLowerCase();
           if (junkEntry(e.name) || !ROM_EXTENSIONS.includes(eext)) continue;
           const head = readZipEntry(path, e, { prefix: 0x200 });
           add({ path, entry: e.name, name: entryBase(e.name), size: e.uncompSize, crc: e.crc.toString(16).toUpperCase().padStart(8, '0'),
             ...identifyRom(new Uint8Array(head.subarray(0, 0x200)), eext) });
         }
+        // a zipped 3DS game: importing the zip unpacks it into the library
+        for (const { entry, info } of zipCtrGames(path, entries)) add({ path, entry: entry.name, name: entryBase(entry.name), size: entry.uncompSize, zipped: true, ...info });
       }
     } catch {
       // unreadable or damaged file – skip it
@@ -520,22 +638,75 @@ export function approvedFolder(p, config = {}) {
 
 /**
  * Copy files into the library folder (the user's originals stay untouched). Every path must be approved
- * (approvedImportPath) – checked for all of them before the first one is copied.
+ * (approvedImportPath) – checked for all of them before the first one is copied: a refused batch throws right away.
+ * A zip with a 3DS game in it isn't copied: the game is unpacked into the library instead (unpackZipGames, `onUnpack`
+ * follows it) – the zip itself only when it holds other ROMs or patches too. → a Promise of the library files added.
  */
-export function importFiles(paths, config = {}, { roots } = {}) {
+export function importFiles(paths, config = {}, { roots, onUnpack = null } = {}) {
   if (!Array.isArray(paths)) throw httpError(400, 'Ungültiger Pfad', 'badPath');
   const allowedRoots = roots || importRoots(config);
   const files = paths.map((p) => approvedImportPath(p, config, { roots: allowedRoots }));
-  mkdirSync(LIBRARY_DIR, { recursive: true });
-  const added = [];
-  for (const p of files) {
-    const ext = extname(p).slice(1).toLowerCase();
-    if (![...ROM_EXTENSIONS, ...CTR_EXTENSIONS, ...PATCH_EXTENSIONS, 'zip'].includes(ext)) continue;
-    const target = join(LIBRARY_DIR, basename(p));
-    if (resolve(p) !== resolve(target)) copyFileSync(p, target);
-    added.push(target);
+  return (async () => {
+    mkdirSync(LIBRARY_DIR, { recursive: true });
+    const added = [];
+    for (const p of files) {
+      const ext = extname(p).slice(1).toLowerCase();
+      if (![...ROM_EXTENSIONS, ...CTR_EXTENSIONS, ...PATCH_EXTENSIONS, 'zip'].includes(ext)) continue;
+      if (ext === 'zip') {
+        let entries = [];
+        try {
+          entries = listZip(p);
+        } catch {
+          // not readable as a zip: copied as before, the scan skips it
+        }
+        const games = zipCtrGames(p, entries);
+        if (games.length) {
+          added.push(...await unpackZipGames(p, { games, onUnpack }));
+          if (!zipHasOther(entries)) continue;
+        }
+      }
+      const target = join(LIBRARY_DIR, basename(p));
+      if (resolve(p) !== resolve(target)) copyFileSync(p, target);
+      added.push(target);
+    }
+    return added;
+  })();
+}
+
+/**
+ * An uploaded zip (streamed to the hidden `tmp` in the library folder): its 3DS games are unpacked into the library and
+ * the zip goes away – kept as `target` only when it holds other ROMs or patches (or no 3DS game at all, as before).
+ * → the library files added.
+ */
+export async function placeUploadedZip(tmp, target, { onUnpack = null } = {}) {
+  try {
+    let entries = [];
+    try {
+      entries = listZip(tmp);
+    } catch {
+      // not readable as a zip: kept as it came, the scan skips it
+    }
+    const games = zipCtrGames(tmp, entries);
+    const added = games.length ? await unpackZipGames(tmp, { games, onUnpack }) : [];
+    if (!games.length || zipHasOther(entries)) {
+      renameSync(tmp, target);
+      added.push(target);
+    }
+    return added;
+  } finally {
+    rmSync(tmp, { force: true });
   }
-  return added;
+}
+
+/** A zipped 3DS game the library scan found (scanLibrary().zipped, id "zip::entry"): unpacked into the library folder. */
+export async function unpackLibraryZip(id, config = {}, { onUnpack = null } = {}) {
+  const { abs, entry } = resolveId(id, config);
+  if (!entry) throw httpError(400, 'Kein Zip-Eintrag angegeben', 'noFile');
+  const e = listZip(abs).find((x) => x.name === entry);
+  if (!e) throw httpError(404, `"${entry}" nicht im Archiv gefunden`, 'notInArchive', { entry });
+  const games = zipCtrGames(abs, [e]);
+  if (!games.length) throw httpError(400, 'Kein 3DS-Spiel', 'notCtr');
+  return unpackZipGames(abs, { games, onUnpack });
 }
 
 /**
