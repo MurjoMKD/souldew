@@ -4,7 +4,7 @@ import { readdirSync, statSync, readFileSync, existsSync, mkdirSync, copyFileSyn
 import { join, extname, basename, resolve, dirname, isAbsolute, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { listZip, readZipEntry, extractZipEntry, entryFileName, freeBytes } from './zip.mjs';
+import { listZip, readZipEntry, extractZipEntry, entryFileName, freeBytes, inflateRatioTooHigh } from './zip.mjs';
 import { APP_ROOT, DATA_DIR, DEV, LIBRARY_DIR, SHARED_DIR } from './paths.mjs';
 import { crc32Hex } from '../../shared/checksum.mjs';
 import { writeFileAtomic, httpError, safeFileName, isInside, samePath } from './fsutil.mjs';
@@ -139,7 +139,7 @@ export function zipCtrGames(path, entries = null) {
   const out = [];
   for (const e of entries) {
     const ext = extname(e.name).slice(1).toLowerCase();
-    if (junkEntry(e.name) || !isCtrExt(ext) || (e.flags & 1) || ![0, 8].includes(e.method)) continue;
+    if (junkEntry(e.name) || !isCtrExt(ext) || (e.flags & 1) || ![0, 8].includes(e.method) || inflateRatioTooHigh(e)) continue;
     try {
       const head = readZipEntry(path, e, { prefix: CTR_HEAD });
       const info = identifyCtrBytes(new Uint8Array(head.buffer, head.byteOffset, head.length), ext);
