@@ -28,11 +28,13 @@ If port 47390 is taken, souldew picks another one – the Stream page always sho
     existing layouts keep working; a new install starts with it off. Switch it off once your layouts run in OBS or
     use the token.
 - **Optional token.** Switch on **Require a token** on the Stream page: then every data request needs it – from
-  anywhere, which also lets a layout hosted on a website read the API. Pass it as `?token=…` (the only way for
-  `EventSource` and `<img>`), `Authorization: Bearer …` or `X-Souldew-Token: …`. The token is covered in streamer
-  mode. Sprites, the QR code and the legendary list are public pictures/data and never need it.
-- **CORS** is on: answers carry `Access-Control-Allow-Origin` for the asking page; preflights (and Chrome's
-  Private Network Access check) are answered.
+  anywhere, which also lets a layout hosted on a website read the API. Pass it as `Authorization: Bearer …` or
+  `X-Souldew-Token: …` where you can (`fetch`), or as `?token=…` (the only way for `EventSource`). Keep it in your
+  layout's script, not in the address of a page you host. The token is covered in streamer mode. Sprites, the QR
+  code and the legendary list are public pictures/data and never need it.
+- **CORS** is on: answers carry `Access-Control-Allow-Origin` for the asking page; preflights are answered. Chrome's
+  Private Network Access check (a website asking for this computer) is allowed only where the request itself can
+  be: with a token set, for the public pictures/data, and for the pages that may read without a token.
 
 ## Versioning
 
@@ -128,6 +130,8 @@ Field notes:
   player's Pokémon (`null` if none). In a Nuzlocke a link has one member.
 - `encounters[]`: every area with any result, in the order they happened. `state`: `alive`, `dead`, `failed`
   (someone missed) or `waiting` (not everyone has a result yet). `results[slot].outcome`: `caught` or `missed`.
+  With the rule "a missed encounter costs the whole pair/group" off (`run.rules.failKillsPair: false`), the
+  others' catches of a `failed` area stay usable – `results` shows whose they are.
 - `graveyard[]`: dead links, newest first, with the killer when souldew saw the battle.
 - `feed[]`: the 20 newest log entries (`catch`, `death`, `badge`, `evolve`, …).
 - Times are milliseconds since 1970 (`Date.now()`).

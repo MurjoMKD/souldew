@@ -434,6 +434,14 @@ function handleExport(req, res, path, url) {
 }
 
 /**
+ * The JSON answer for an error a handler threw: message, and the code/vars the app translates. A tool's output
+ * (the randomizer's stderr in `details`, full of local paths) goes to the server's log, never into the answer.
+ */
+export function errorBody(e) {
+  return { error: e.message, code: e.status ? e.code : undefined, vars: e.status ? e.vars : undefined };
+}
+
+/**
  * Start the server.
  * @param {{port?: number, host?: string, onReady?: (url:string)=>void}} opts
  */
@@ -1617,8 +1625,9 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       return f ? serveFile(res, f, pageHeaders(f)) : send(res, 400, 'bad path'); // CSP for .html pages
     } catch (e) {
       console.error(`[${req.method} ${path}]`, e.message);
+      if (e.details?.stderr) console.error(String(e.details.stderr).slice(-4000));
       if (res.headersSent) return res.destroy();
-      return send(res, e.status || 500, { error: e.message, code: e.status ? e.code : undefined, vars: e.status ? e.vars : undefined, details: e.details ? { stderr: String(e.details.stderr || '').slice(0, 4000) } : undefined });
+      return send(res, e.status || 500, errorBody(e));
     }
   });
 

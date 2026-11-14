@@ -98,6 +98,23 @@ test('blackout "box" waits until nothing alive is left; "off" never ends the run
   bonus.set('extra:p1:shiny', { species: 25, at: 1 });
   assert.equal(snap(bonus, [mon({ hp: 0 })]).failed, null, 'a bonus shiny in the box is still alive');
 
+  // a living catch not filed yet (auto-assign off: it waits in "From your game") is still alive (#36)
+  const inbox = mkDoc({ blackout: 'box' });
+  snap(inbox, [mon()]);
+  inbox.set('rules', { ...inbox.get('rules'), autoAssign: false });
+  const res = snap(inbox, [mon({ hp: 0 }), pidgey()]);
+  assert.equal(inbox.get('pair:starter').state, 'dead');
+  assert.deepEqual(res.inbox.map((i) => i.mon.key), ['k2'], 'Pidgey is not filed');
+  assert.equal(res.failed, null, 'Pidgey lives');
+  assert.equal(R.blackout(inbox, SOLO), false);
+  assert.equal(snap(inbox, [mon({ hp: 0 }), pidgey({ hp: 0 })]).failed, 'blackout', 'once it is down, too');
+  // … but not one the player set aside (ignored), an egg or a dead Pokémon still carried
+  const ign = mkDoc({ blackout: 'box' });
+  snap(ign, [mon()]);
+  ign.set('rules', { ...ign.get('rules'), autoAssign: false });
+  ign.set('ign:p1:k2', { at: 1 });
+  assert.equal(snap(ign, [mon({ hp: 0 }), pidgey(), mon({ key: 'egg', species: 175, isEgg: true, hp: 0, maxHp: 0 })]).failed, 'blackout');
+
   const off = mkDoc({ blackout: 'off' });
   snap(off, [mon()]);
   assert.equal(snap(off, [mon({ hp: 0 })]).failed, null);

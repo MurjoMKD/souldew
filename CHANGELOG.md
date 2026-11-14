@@ -2,6 +2,34 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **Undoing a death in a deathless Nuzlocke only reopens the run when no other death stands** (#35). When a second
+  Pokémon had died after the run ended and you undid the first death, the run went on with a dead Pokémon on the
+  board; now the remaining death becomes the reason the run ended, and the run reopens once no death is left.
+- **A bonus Pokémon's death counts like any other** (#37): marking a kept shiny or gift as died on the Routes page
+  ends a deathless Nuzlocke, and undoing it reopens the run – also after a "box" blackout.
+- **"Box" blackout waits for Pokémon you haven't filed yet** (#36): a living Pokémon in your team that still waits in
+  "From your game" (a held shiny, a gift, a catch while auto-assign is off) now keeps the run going.
+- With auto-death on, a new catch that is already knocked out when it is first read is marked dead right away (#39),
+  like any Pokémon tracked before – instead of only asking.
+- With "a missed encounter costs the whole pair/group" off, the partner's catch from that area now counts for the
+  type rule like every other Pokémon in the team (#38). The stream API docs explain what `failed` means then.
+- The browser copy of a run is written once changes settle instead of on every change – live HP in battles no longer
+  writes the whole run each time (#44).
+
+### Security
+
+Hardening found in a code review and reported by @Never-lab – thank you:
+
+- **The stream API answers Chrome's "private network" check only where the request itself may get through** (#41):
+  with a token set, for the public sprites and data, and for the pages allowed without a token. A website that would
+  be turned away anyway no longer gets that permission ahead of the request.
+- **Error answers no longer carry the randomizer's raw output** (#43), which is full of local file paths; it goes to
+  the app's log instead.
+- The stream API docs recommend sending the token as a header from `fetch` and keeping it out of page addresses
+  (#42).
+
 ## 2.6.1
 
 - **Joining a SoulLink works with another release of the same game.** A normal run (no randomizer, no ROM hack) used

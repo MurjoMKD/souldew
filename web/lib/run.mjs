@@ -412,7 +412,12 @@ export function blackout(doc, manifest, slot = 'p1') {
       if (p?.state === 'dead') last = Math.max(last, p.diedAt || 0);
       else alive++;
     }
-    alive += Object.values(doc.scan(`extra:${slot}:`)).filter((x) => x && !x.dead).length;
+    const extras = doc.scan(`extra:${slot}:`);
+    alive += Object.values(extras).filter((x) => x && !x.dead).length;
+    // A living team member that isn't filed yet (still in "From your game": a held shiny, a gift, a catch while
+    // auto-assign is off) is the player's to decide about – it keeps the run going until it's filed or falls.
+    const ignored = doc.scan(`ign:${slot}:`);
+    alive += (live(doc, slot)?.party || []).filter((m) => !m.area && !m.egg && !extras[m.key] && !ignored[m.key] && m.maxHp > 0 && m.hp > 0).length;
     return caught > 0 && alive === 0 && last > resumed;
   }
   return false;
@@ -424,6 +429,8 @@ export function blackout(doc, manifest, slot = 'p1') {
  * null. `slots`: whose teams to look at (or the run's manifest); slots without live data are skipped. A wipe the
  * players already waved off ("continue anyway", `run:resumed`) counts again only after a newer death.
  * With the manifest (2nd or 3rd argument) a Nuzlocke follows its blackout rule instead.
+ * 0 HP alone is no death: with auto-death off the player confirms each one ("From your game" asks), and the wipe
+ * counts from that confirmation on.
  */
 export function wipedSlot(doc, slots = ALL_SLOTS, manifest = Array.isArray(slots) ? null : slots) {
   // A Nuzlocke ends by its own blackout rule (applySnapshot fails it right away).
@@ -441,13 +448,14 @@ export function wipedSlot(doc, slots = ALL_SLOTS, manifest = Array.isArray(slots
 
 /**
  * End the run as failed (once – an existing status wins). `reason`: 'wipe' (a team was wiped), 'blackout'
- * or 'deathless' (Nuzlocke rules); it is kept in `run:status.reason`. `area`: the death that ended a deathless
- * run; a blackout keeps which rule it went by (`rule`) – revive() reopens a run whose cause it undoes.
+ * or 'deathless' (Nuzlocke rules); it is kept in `run:status.reason`. `area` (or `extra`, a bonus Pokémon's
+ * `slot:key`): the death that ended a deathless run; a blackout keeps which rule it went by (`rule`) – revive()
+ * and markExtraDead() reopen a run whose cause they undo.
  */
-export function failRun(doc, manifest, slot, reason = 'wipe', { area = null } = {}) {
+export function failRun(doc, manifest, slot, reason = 'wipe', { area = null, extra = null } = {}) {
   if (doc.get('run:status')) return false;
   const rule = reason === 'blackout' && runMode(manifest) === 'nuzlocke' ? rules(doc, manifest).blackout : null;
-  doc.set('run:status', { state: 'failed', at: Date.now(), by: slot, auto: true, note: null, reason, ...(area ? { area } : {}), ...(rule ? { rule } : {}) });
+  doc.set('run:status', { state: 'failed', at: Date.now(), by: slot, auto: true, note: null, reason, ...(area ? { area } : extra ? { extra } : {}), ...(rule ? { rule } : {}) });
   const name = players(doc, manifest)[slot]?.name || slot.toUpperCase();
   const solo = runMode(manifest) === 'nuzlocke';
   feedMsg(doc, manifest, { type: 'run', slot, msg: reason === 'deathless'
@@ -464,19 +472,57 @@ export function resumeRun(doc, slot) {
   feed(doc, { type: 'run', slot, msg: msg('feed.runResumed', 'reopened the run'), text: t('feed.runResumed', 'reopened the run') });
 }
 
+/** The deaths that still stand – dead areas and dead bonus Pokémon – oldest first: [{ area } | { extra: 'slot:key' }]. */
+function standingDeaths(doc) {
+  const out = [];
+  for (const [area, p] of Object.entries(doc.scan('pair:'))) if (p?.state === 'dead') out.push({ area, at: p.diedAt || 0 });
+  for (const [extra, x] of Object.entries(doc.scan('extra:'))) if (x?.dead) out.push({ extra, at: x.diedAt || 0 });
+  return out.sort((a, b) => a.at - b.at);
+}
+
 /**
- * Undo a death. When that death is what ended the run – the first death of a deathless Nuzlocke, or the last one
- * of a "box" blackout (nothing alive was left; now something is) – the run goes on, too. A wipe or a "party"
+ * A death was undone (`cause`: { area } or { extra }). When it is what ended the run – the death of a deathless
+ * Nuzlocke, or the last one of a "box" blackout (nothing alive was left; now something is) – the run goes on, too.
+ * A deathless run with another death still standing stays failed: that death is its cause now.
+ */
+function undoneDeath(doc, cause) {
+  const st = doc.get('run:status', null);
+  if (st?.state !== 'failed' || !st.auto) return;
+  if (st.reason === 'deathless') {
+    if (cause.area ? st.area !== cause.area : st.extra !== cause.extra) return;
+    const next = standingDeaths(doc)[0];
+    if (next) {
+      const { area, extra, ...rest } = st; // eslint-disable-line no-unused-vars
+      doc.set('run:status', { ...rest, ...(next.area ? { area: next.area } : { extra: next.extra }) });
+      return;
+    }
+  } else if (!(st.reason === 'blackout' && st.rule === 'box')) return;
+  doc.set('run:status', null);
+  feed(doc, { type: 'run', slot: st.by, msg: msg('feed.runResumed', 'reopened the run'), text: t('feed.runResumed', 'reopened the run') });
+}
+
+/**
+ * Undo a death. When that death is what ended the run the run goes on, too (see undoneDeath). A wipe or a "party"
  * blackout went by the team's HP, not by the death mark: those stay ended ("play on" is still there).
  */
 export function revive(doc, area) {
   const p = doc.get(`pair:${area}`) || {};
   doc.set(`pair:${area}`, { ...p, state: 'alive', diedAt: null, cause: '' });
-  const st = doc.get('run:status', null);
-  if (st?.state === 'failed' && st.auto && ((st.reason === 'deathless' && st.area === area) || (st.reason === 'blackout' && st.rule === 'box'))) {
-    doc.set('run:status', null);
-    feed(doc, { type: 'run', slot: st.by, msg: msg('feed.runResumed', 'reopened the run'), text: t('feed.runResumed', 'reopened the run') });
-  }
+  undoneDeath(doc, { area });
+}
+
+/**
+ * A bonus Pokémon (`extra:<slot>:<key>` – a kept shiny or gift) died, or that death is undone (`dead` false). It
+ * counts like any other death: in a deathless Nuzlocke it ends the run, and undoing it reopens the run it ended.
+ * false when there is no such bonus Pokémon or nothing changes.
+ */
+export function markExtraDead(doc, manifest, slot, key, dead = true) {
+  const x = doc.get(`extra:${slot}:${key}`, null);
+  if (!x || !!x.dead === !!dead) return false;
+  doc.set(`extra:${slot}:${key}`, { ...x, dead: !!dead, diedAt: dead ? Date.now() : null });
+  if (!dead) undoneDeath(doc, { extra: `${slot}:${key}` });
+  else if (runMode(manifest) === 'nuzlocke' && rules(doc, manifest).deathless) failRun(doc, manifest, slot, 'deathless', { extra: `${slot}:${key}` });
+  return true;
 }
 
 export const party = (doc, slot) => doc.get(`party:${slot}`, []);
@@ -595,9 +641,11 @@ export function checks(doc, manifest, rd) {
       const seen = new Map();
       for (const slot of group) {
         for (const area of parties[slot]) {
-          if (!['linked', 'waiting'].includes(stateOf(area))) continue;
+          // (a partner's miss with "a missed encounter costs the whole pair" off: this catch stays usable – and counts)
+          const st = stateOf(area);
+          if (!(st === 'linked' || st === 'waiting' || (st === 'failed' && r.failKillsPair === false))) continue;
           const e = encounter(doc, area, slot);
-          if (!e?.species) continue;
+          if (e?.outcome !== 'caught' || !e.species) continue;
           const type = rd.types(e.species, slot)[0];
           if (!type) continue;
           const prev = seen.get(type);
@@ -814,6 +862,20 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
   if (snap.source === 'live' && battle?.enemy?.species) battles.set(slot, { battle, at: Date.now() });
   const recent = battles.get(slot);
   const fight = battle || (snap.source === 'live' && recent && Date.now() - recent.at < BATTLE_GRACE ? recent.battle : null);
+  // auto-death: `m` (filed under `area`) fell – with the opponent of the battle as its cause
+  const autoDead = (area, m) => {
+    const name = m.nickname || { species: m.species };
+    const foe = fight?.enemy?.species ? fight.enemy : null;
+    const kind = fight?.kind === 'trainer' ? msg('cause.trainer', 'trainer battle') : msg('cause.wild', 'wild battle');
+    const cause = foe
+      ? msg('feed.faintedBy', '{name} fainted against {enemy} (Lv. {lv}, {kind})', { name, enemy: { species: foe.species }, lv: foe.level ?? '?', kind })
+      : msg('feed.faintedCause', '{name} fainted', { name });
+    const killer = foe ? { species: foe.species, level: foe.level ?? null, kind: fight.kind || null } : null;
+    // where it fell: the place sign read with this snapshot (play view → snap.here)
+    if (markDead(doc, manifest, area, { slot, cause, level: m.level ?? null, killer, place: snap.here || null })) deaths.push(area);
+  };
+  const autoDeath = auto && r.autoDeath && snap.source === 'live';
+  const fellOnCatch = []; // new catches already at 0 HP: they die once their encounter is written
 
   for (const m of all) {
     if (m.isEgg || !m.species) continue;
@@ -832,17 +894,8 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
       if (m.nickname && m.nickname !== k.enc.nickname) patch.nickname = m.nickname;
       if (Object.keys(patch).length) writes[`enc:${k.area}:${slot}`] = { ...k.enc, ...patch };
       if (m.inParty && m.hp === 0 && m.maxHp > 0 && pairState(doc, k.area).state !== 'dead') {
-        if (auto && r.autoDeath && snap.source === 'live') {
-          const name = m.nickname || { species: m.species };
-          const foe = fight?.enemy?.species ? fight.enemy : null;
-          const kind = fight?.kind === 'trainer' ? msg('cause.trainer', 'trainer battle') : msg('cause.wild', 'wild battle');
-          const cause = foe
-            ? msg('feed.faintedBy', '{name} fainted against {enemy} (Lv. {lv}, {kind})', { name, enemy: { species: foe.species }, lv: foe.level ?? '?', kind })
-            : msg('feed.faintedCause', '{name} fainted', { name });
-          const killer = foe ? { species: foe.species, level: foe.level ?? null, kind: fight.kind || null } : null;
-          // where it fell: the place sign read with this snapshot (play view → snap.here)
-          if (markDead(doc, manifest, k.area, { slot, cause, level: m.level ?? null, killer, place: snap.here || null })) deaths.push(k.area);
-        } else alerts.push({ type: 'fainted', area: k.area, mon: m });
+        if (autoDeath) autoDead(k.area, m);
+        else alerts.push({ type: 'fainted', area: k.area, mon: m });
       }
       continue;
     }
@@ -884,7 +937,10 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
       known.set(m.key, { area: guess, enc });
       newCatches.push(guess);
       feedMsg(doc, manifest, { type: 'catch', slot, area: guess, species: m.species, msg: msg('feed.autoCaught', '{area}: {name} (Lv. {lv}) caught', { area: { area: guess }, name: { species: m.species }, lv: m.level || m.metLevel || '?' }) });
-      if (m.inParty && m.hp === 0 && m.maxHp > 0) alerts.push({ type: 'fainted', area: guess, mon: m });
+      if (m.inParty && m.hp === 0 && m.maxHp > 0) {
+        if (autoDeath) fellOnCatch.push([guess, m]);
+        else alerts.push({ type: 'fainted', area: guess, mon: m });
+      }
     } else {
       inbox.push({ mon: m, guess, occupied: !!occupied, reason: !guess ? (hatched ? 'egg' : special ? 'special' : 'unknown') : occupied ? 'occupied' : shinyHold ? 'shiny' : dupe ? 'dupe' : 'manual',
         ...(dupe ? { dupeArea: dupe.area } : {}),
@@ -959,6 +1015,7 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
     writes[`live:${slot}`] = { ...nextLive, at: Date.now() };
   }
   if (Object.keys(writes).length) doc.batch(writes);
+  for (const [area, m] of fellOnCatch) if (pairState(doc, area).state !== 'dead') autoDead(area, m);
   let failed = null;
   if (solo && auto && !statusBefore) {
     if (doc.get('run:status', null)?.reason === 'deathless') failed = 'deathless';

@@ -320,6 +320,58 @@ test('"a missed encounter costs the whole pair" off: the partner’s catch is no
   assert.equal(failed(d), true);
   d.set('rules', { ...R.rules(d), failKillsPair: false });
   assert.equal(failed(d), false);
+  // the row still says what happened – someone missed – and the stream API agrees (#38)
+  assert.equal(R.pairState(d, 'route-29', ['p1', 'p2']).state, 'failed');
+});
+
+test('"a missed encounter costs the whole pair" off: the usable catch counts for the type clause (#38)', () => {
+  const d = mkDoc();
+  d.set('enc:route-29:p1', { outcome: 'missed', species: 19 }); // the one that got away
+  d.set('enc:route-29:p2', { outcome: 'caught', species: 16, key: 'b' });
+  d.set('enc:route-30:p1', { outcome: 'caught', species: 19, key: 'c' });
+  d.set('enc:route-30:p2', { outcome: 'caught', species: 21, key: 'd' });
+  d.set('party:p1', ['route-30']);
+  d.set('party:p2', ['route-29', 'route-30']);
+  const rd = { types: () => ['normal'], familyRoot: (id) => id };
+  const typeWarn = (doc) => R.checks(doc, HG, rd).filter((c) => c.level === 'warn' && /type/i.test(c.text));
+  d.set('rules', { typeClause: 'player' });
+  assert.equal(typeWarn(d).length, 0, 'rule on: the catch may not be used at all (an error, not a type warning)');
+  d.set('rules', { typeClause: 'player', failKillsPair: false });
+  assert.equal(typeWarn(d).length, 1, 'rule off: Pidgey is in the team and shares Spearow\'s type');
+  assert.equal(R.checks(d, HG, rd).some((c) => c.level === 'warn' && /partner|group/i.test(c.text) && c.area === 'route-29'), false, 'nobody is asked to add the missed one');
+});
+
+test('auto-death: a new catch already at 0 HP dies in the same pass (#39)', () => {
+  const d = mkDoc();
+  const SOLO = { ...HG, mode: 'nuzlocke', players: { p1: { name: 'Lou' } } };
+  d.set('rules', { blackout: 'off' });
+  R.applySnapshot(d, SOLO, 4, 'p1', { source: 'live', party: [mon()] });
+  const res = R.applySnapshot(d, SOLO, 4, 'p1', { source: 'live', party: [mon(), mon({ key: 'k2', species: 16, metLocation: 177, level: 3, metLevel: 3, hp: 0 })] },
+    { battle: { kind: 'wild', enemy: { species: 19, level: 4 } } });
+  assert.deepEqual(res.newCatches, ['route-29']);
+  assert.deepEqual(res.deaths, ['route-29']);
+  assert.equal(res.alerts.length, 0);
+  assert.equal(d.get('enc:route-29:p1').species, 16);
+  assert.deepEqual([d.get('pair:route-29').state, d.get('pair:route-29').killer?.species], ['dead', 19]);
+  // auto-death off: the player is asked, as for a Pokémon tracked before
+  const m = mkDoc();
+  m.set('rules', { autoDeath: false });
+  R.applySnapshot(m, SOLO, 4, 'p1', { source: 'live', party: [mon()] });
+  const r2 = R.applySnapshot(m, SOLO, 4, 'p1', { source: 'live', party: [mon(), mon({ key: 'k2', species: 16, metLocation: 177, hp: 0 })] });
+  assert.deepEqual([r2.deaths, r2.alerts.map((a) => [a.type, a.area])], [[], [['fainted', 'route-29']]]);
+  assert.notEqual(m.get('pair:route-29', null)?.state, 'dead');
+});
+
+test('SoulLink with auto-death off: 0 HP is no death – the wipe counts once the player confirms one (#40)', () => {
+  const d = mkDoc();
+  d.set('rules', { autoDeath: false });
+  const M = { ...HG, players: { p1: { name: 'Lou' }, p2: { name: 'Robin' } } };
+  R.applySnapshot(d, M, 4, 'p1', { source: 'live', party: [mon(), mon({ key: 'k2', species: 16, metLocation: 177 })] });
+  const res = R.applySnapshot(d, M, 4, 'p1', { source: 'live', party: [mon({ hp: 0 }), mon({ key: 'k2', species: 16, metLocation: 177, hp: 0 })] });
+  assert.deepEqual(res.alerts.map((a) => a.type), ['fainted', 'fainted'], 'the player is asked about each one');
+  assert.equal(R.wipedSlot(d, ['p1'], M), null);
+  R.markDead(d, M, 'starter', { slot: 'p1' });
+  assert.equal(R.wipedSlot(d, ['p1'], M), 'p1');
 });
 
 test('a catch read before the game wrote its met data is not filed under "Mystery Zone"', () => {

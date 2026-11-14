@@ -73,6 +73,62 @@ test('deathless: undoing the death that ended the run reopens it; another death 
   assert.equal(g.get('run:status').state, 'failed');
 });
 
+test('deathless: undoing the death that ended the run while another still stands keeps it failed (#35)', () => {
+  const d = mkDoc({ deathless: true, blackout: 'off', autoDeath: false });
+  snap(d, [mon(), pidgey()]);
+  later(-2000, () => R.markDead(d, SOLO, 'starter', { slot: 'p1' }));
+  assert.equal(d.get('run:status').area, 'starter');
+  R.markDead(d, SOLO, 'route-29', { slot: 'p1' }); // marked on the board after the run had ended
+  assert.equal(d.get('run:status').area, 'starter', 'the first death stays the cause');
+  const at = d.get('run:status').at;
+  R.revive(d, 'starter');
+  assert.equal(d.get('run:status').state, 'failed', 'Route 29 is still dead');
+  assert.equal(d.get('run:status').area, 'route-29', 'the death still standing is the cause now');
+  assert.equal(d.get('run:status').at, at);
+  R.revive(d, 'route-29');
+  assert.equal(d.get('run:status', null), null, 'no death left – the run goes on');
+});
+
+test('a bonus Pokémon\'s death counts: it ends a deathless run, undoing it reopens it (#37)', () => {
+  const d = mkDoc({ deathless: true, blackout: 'off', autoDeath: false });
+  snap(d, [mon()]);
+  d.set('extra:p1:gift', { species: 133, at: 1, reason: 'gift' });
+  assert.equal(R.markExtraDead(d, SOLO, 'p1', 'nope'), false, 'no such bonus Pokémon');
+  assert.equal(R.markExtraDead(d, SOLO, 'p1', 'gift'), true);
+  assert.equal(R.markExtraDead(d, SOLO, 'p1', 'gift'), false, 'already dead');
+  assert.equal(d.get('extra:p1:gift').dead, true);
+  assert.ok(d.get('extra:p1:gift').diedAt);
+  assert.deepEqual([d.get('run:status').reason, d.get('run:status').extra, d.get('run:status').area], ['deathless', 'p1:gift', undefined]);
+  // an area death on top, then the bonus death undone: the area death is the cause now
+  R.markDead(d, SOLO, 'starter', { slot: 'p1' });
+  R.markExtraDead(d, SOLO, 'p1', 'gift', false);
+  assert.deepEqual([d.get('extra:p1:gift').dead, d.get('extra:p1:gift').diedAt], [false, null]);
+  assert.deepEqual([d.get('run:status').state, d.get('run:status').area, d.get('run:status').extra], ['failed', 'starter', undefined]);
+  R.revive(d, 'starter');
+  assert.equal(d.get('run:status', null), null);
+  // the other way round: an area death undone while a bonus Pokémon is still dead
+  R.markDead(d, SOLO, 'starter', { slot: 'p1' });
+  R.markExtraDead(d, SOLO, 'p1', 'gift');
+  R.revive(d, 'starter');
+  assert.equal(d.get('run:status').extra, 'p1:gift');
+  R.markExtraDead(d, SOLO, 'p1', 'gift', false);
+  assert.equal(d.get('run:status', null), null);
+  // without the rule (or in a SoulLink) a bonus death ends nothing
+  const n = mkDoc({ blackout: 'off' });
+  n.set('extra:p1:gift', { species: 133, at: 1 });
+  R.markExtraDead(n, SOLO, 'p1', 'gift');
+  assert.equal(n.get('run:status', null), null);
+  // "box" blackout: undoing the bonus death that left nothing alive reopens the run, like an area death
+  const b = mkDoc({ blackout: 'box', autoDeath: false });
+  snap(b, [mon()]);
+  b.set('extra:p1:gift', { species: 133, at: 1 });
+  R.markDead(b, SOLO, 'starter', { slot: 'p1' });
+  R.markExtraDead(b, SOLO, 'p1', 'gift');
+  assert.equal(snap(b, [mon({ hp: 0 })]).failed, 'blackout');
+  R.markExtraDead(b, SOLO, 'p1', 'gift', false);
+  assert.equal(b.get('run:status', null), null);
+});
+
 test('blackout "box": undoing a death after nothing was left alive reopens the run', () => {
   const d = mkDoc({ blackout: 'box' });
   snap(d, [mon(), pidgey()]);
