@@ -3,6 +3,7 @@
 // web/lib/restart.mjs gathers the inputs and sends it to POST /api/runs/build.
 import { randomSeed } from './randomizer-options.mjs';
 import { slotsOf, runMode, defaultRunName } from './slots.mjs';
+import { pairMate } from './pair-titles.mjs';
 
 /** "Lou & Noa" → "Lou & Noa #2" if that name is taken ("… #2" counts up from its base name). */
 export function numberedName(base, runs) {
@@ -16,30 +17,61 @@ export function numberedName(base, runs) {
  * The library ROMs a run (manifest or invite pack) is built from: those with its base ROM's CRC32. A 3DS game has no
  * CRC32 (the files are 1–4 GB, never read whole – its `base.crc` is null): the same game by its catalog id, else by its
  * game code – never just any 3DS file (every one of them has the CRC null).
+ * With `rootOf` (joining a run) a plain run also takes another release of the game and then the other title of its
+ * pair (shared/pair-titles.mjs) – in that order, the exact release first.
  */
 export function baseRomsFor(m, roms, rootOf = null) {
   const crc = String(m?.base?.crc || '').toUpperCase();
+  const plainJoin = !!(rootOf && m?.game?.id && !needsIdenticalRom(m));
+  const host = plainJoin ? rootOf(m.game.id) : null;
+  const mate = host ? pairMate(host) : null;
+  // (not a hack: neither recognised by its checksum nor marked in the library – r.hackId / r.customHack)
+  const unpatched = (r) => !r.hackId && !r.customHack && r.gameId;
   if (crc) {
     const exact = (roms || []).filter((r) => String(r.crc || '').toUpperCase() === crc);
     // Everybody plays their own game, so a plain run (no randomizer, no patch) works with any release of it: Rev 0 or
-    // Rev 1, another region or language. Only randomized or patched runs need byte-identical ROMs. The exact release
-    // still comes first. rootOf maps a library ROM's catalog id to its main game (variants → their base).
-    if (!rootOf || needsIdenticalRom(m) || !m?.game?.id) return exact;
-    const same = (roms || []).filter((r) => !exact.includes(r) && !r.hackId && r.gameId && rootOf(r.gameId) === m.game.id);
-    return [...exact, ...same];
+    // Rev 1, another region or language – and with the other title of a pair (HeartGold for a SoulSilver run). Only
+    // randomized or patched runs need byte-identical ROMs. rootOf maps a library ROM's catalog id to its main game
+    // (variants → their base).
+    if (!plainJoin) return exact;
+    const same = (roms || []).filter((r) => !exact.includes(r) && unpatched(r) && rootOf(r.gameId) === host);
+    const paired = mate ? (roms || []).filter((r) => !exact.includes(r) && unpatched(r) && rootOf(r.gameId) === mate) : [];
+    return [...exact, ...same, ...paired];
   }
   if (m?.game?.system !== '3ds') return [];
   const id = m.game.id;
   const code = String(m.game.code || '').toUpperCase();
-  return (roms || []).filter((r) => r.system === '3ds' && (id ? r.gameId === id : !!code && String(r.code || '').toUpperCase() === code));
+  const fits = (roms || []).filter((r) => r.system === '3ds' && (id ? r.gameId === id : !!code && String(r.code || '').toUpperCase() === code));
+  if (!mate) return fits;
+  return [...fits, ...(roms || []).filter((r) => r.system === '3ds' && !fits.includes(r) && unpatched(r) && rootOf(r.gameId) === mate)];
 }
 
 /**
- * Randomized or patched runs – also a ROM hack played from an already-patched ROM (game.hackId / game.hackName, no
- * patch file) –: every player must play the same bytes, so only the exact base release fits.
+ * Randomized or patched runs: every player must build the same bytes, so only the exact base release fits. That
+ * includes a ROM hack played from an already-patched ROM – no patch file, only the catalog hack (game.hackId) or the
+ * name of a hack the catalog doesn't know (game.hackName, library "This is a ROM hack…").
  */
 export function needsIdenticalRom(m) {
   return !!(m?.randomizer?.enabled || m?.patch || m?.game?.hackId || m?.game?.hackName);
+}
+
+/**
+ * Joining with the other title of the run's pair (SoulSilver for the host's HeartGold): { host, yours } as catalog
+ * ids of the main games, else null – the same title (any release) or a randomized/patched run is no pair join.
+ */
+export function pairJoin(m, rom, rootOf) {
+  if (!rom?.gameId || rom.hackId || rom.customHack || !m?.game?.id || needsIdenticalRom(m)) return null;
+  const host = rootOf(m.game.id);
+  const yours = rootOf(rom.gameId);
+  return yours !== host && pairMate(host) === yours ? { host, yours } : null;
+}
+
+/**
+ * The catalog id a joining player's run is built for: their own title on a pair join (live tracking, cover, trophies
+ * and the file name are then those of the game they play), else the host's, as before.
+ */
+export function joinGameId(m, rom, rootOf) {
+  return pairJoin(m, rom, rootOf)?.yours || m?.game?.id || null;
 }
 
 /** The old run's base name without a "#n" suffix. */

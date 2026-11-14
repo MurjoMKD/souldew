@@ -242,7 +242,7 @@ No. The apps find each other through public relays and connect directly; the fal
 <details>
 <summary><b>Do my friends need the same ROM?</b></summary>
 
-Everyone uses their own copy of the same game – a different language version works too. For randomized runs everyone builds the same game from the same seed; souldew compares the checksums so all players end up with byte-identical games.
+Everyone uses their own copy of the game – a different language or release works too, and so does the other edition of a pair: one player on HeartGold, the other on SoulSilver (likewise Red/Blue, Gold/Silver, Ruby/Sapphire, FireRed/LeafGreen, Diamond/Pearl, Black/White, Black 2/White 2, X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon and Ultra Sun/Ultra Moon). Every player catches in their own game; the encounters stay linked by area. For randomized runs and ROM hacks everyone builds the same game from the same seed; souldew compares the checksums so all players end up with byte-identical games – there, everyone needs the same release of the same edition.
 </details>
 
 <details>

@@ -12,6 +12,8 @@ import { diffRoms } from '../../shared/nds.mjs';
 import { catalog } from './library.mjs';
 import { writeFileAtomic, httpError } from './fsutil.mjs';
 import { ALL_SLOTS, MODES, slotsOf, defaultRunName } from '../../shared/slots.mjs';
+import { needsIdenticalRom } from '../../shared/restart.mjs';
+import { pairMate } from '../../shared/pair-titles.mjs';
 
 /** Runs from before 1–4 players were always a pair – the default where no slots are passed (shared/slots.mjs). */
 const PAIR = ['p1', 'p2'];
@@ -400,6 +402,8 @@ async function buildInto(opts, onLog, onProgress, bridge) {
   mkdirSync(dir, { recursive: true });
   const now = new Date().toISOString();
 
+  // a player who joined with the other title of the pair (the imported invite still names the host's game)
+  const pairedWithHost = !!(existing?.game?.id && opts.gameId && pairMate(existing.game.id) === opts.gameId);
   const patched = preparePatchedRom(opts.romId, opts.patchId || null, onLog, opts.config || {});
   // 3DS: without the randomizer the game file is linked/copied as it is (1–4 GB); randomized, UPR ZX rebuilds it as
   // one .cxi per player (server/lib/ctrrando.mjs)
@@ -520,12 +524,14 @@ async function buildInto(opts, onLog, onProgress, bridge) {
     };
     if (manifest.outputs[slot].expectedSha1) {
       manifest.outputs[slot].matchesFriend = manifest.outputs[slot].expectedSha1 === sha1;
-      // Only randomized or patched runs need byte-identical ROMs – a plain run may use another release of the game.
-      const mustMatch = !!(manifest.randomizer?.enabled || manifest.patch);
+      // Only randomized or patched runs need byte-identical ROMs – a plain run may use another release of the game,
+      // or the other title of its pair (SoulSilver in a HeartGold run).
+      const mustMatch = needsIdenticalRom(manifest);
       onLog(manifest.outputs[slot].matchesFriend
         ? `✔ ROM für ${player.name} ist byte-identisch mit dem deines Freundes`
         : mustMatch ? `⚠ ROM für ${player.name} weicht vom Run-Paket ab (anderes Basis-ROM/Version?)`
-          : `ℹ ROM für ${player.name} ist eine andere Fassung des Spiels als beim Host – passt, jeder spielt seine eigene Kopie`);
+          : pairedWithHost ? `ℹ ${player.name} spielt die andere Edition des Spielepaars als der Host – passt, jeder spielt seine eigene Kopie`
+            : `ℹ ROM für ${player.name} ist eine andere Fassung des Spiels als beim Host – passt, jeder spielt seine eigene Kopie`);
     }
   }
 

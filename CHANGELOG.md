@@ -55,6 +55,14 @@
   SoulLink join compares the games as before; with "Same world for everyone" the game is built once. A decrypted dump is
   needed – souldew decrypts nothing and says so when a file is encrypted. About 3 GB and well under a minute per game on
   an SSD. Playing in the Azahar app? Remove the game's update there for the run, it would replace parts of it.
+- **Both editions of a pair can share one SoulLink** (#18). In a run without randomizer or ROM hack one player can
+  play HeartGold and the other SoulSilver – likewise Red/Blue, Gold/Silver, Ruby/Sapphire, FireRed/LeafGreen,
+  Diamond/Pearl, Black/White, Black 2/White 2, X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon and Ultra Sun/Ultra Moon.
+  Joining says so ("You play SoulSilver, the host plays HeartGold – that's fine"), the host's run setup mentions it,
+  and each player's live tracking, cover and trophies follow the edition they actually play. Encounters stay linked by
+  area, so version exclusives need no special rule. Randomized and patched runs still need the exact same release – and
+  a ROM that was patched before it was added to the library now counts as patched, too. Thanks to @Never-lab for the
+  first version of this in #54.
 
 ## 2.6.3
 
