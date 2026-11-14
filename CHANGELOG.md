@@ -2,6 +2,17 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **Both editions of a pair can share one SoulLink** (#18). In a run without randomizer or ROM hack one player can
+  play HeartGold and the other SoulSilver – likewise Red/Blue, Gold/Silver, Ruby/Sapphire, FireRed/LeafGreen,
+  Diamond/Pearl, Black/White, Black 2/White 2, X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon and Ultra Sun/Ultra Moon.
+  Joining says so ("You play SoulSilver, the host plays HeartGold – that's fine"), the host's run setup mentions it,
+  and each player's live tracking, cover and trophies follow the edition they actually play. Encounters stay linked by
+  area, so version exclusives need no special rule. Randomized and patched runs still need the exact same release – and
+  a ROM that was patched before it was added to the library now counts as patched, too. Thanks to @Never-lab for the
+  first version of this in #54.
+
 ## 2.6.3
 
 - **A newer version of a ROM hack's patch is the one that's used.** Adding an update next to the old file
