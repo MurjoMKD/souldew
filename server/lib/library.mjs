@@ -130,6 +130,7 @@ export function scanLibrary(config = {}) {
   const roms = [];
   const patches = [];
   const seen = new Set(); // nested / overlapping library folders would list files twice
+  const patchTime = new Map(); // patch → mtime of its file (or zip), to tell which of two versions came later
 
   const visit = (dir, depth) => {
     if (seen.has(dir)) return;
@@ -184,7 +185,9 @@ export function scanLibrary(config = {}) {
           info = patchInfo(buf);
         }
         nextIndex[cacheKey] = info;
-        patches.push({ id: makeId(path), name, file: path, size: st.size, container: null, ...info });
+        const p = { id: makeId(path), name, file: path, size: st.size, container: null, ...info };
+        patchTime.set(p, st.mtimeMs);
+        patches.push(p);
       } else if (ext === 'zip') {
         let cached = index[cacheKey];
         if (!cached || cached.patches?.some((x) => !('resultCrc' in x))) {
@@ -219,8 +222,10 @@ export function scanLibrary(config = {}) {
         for (const p of cached.patches) {
           if (junkEntry(p.entry)) continue; // (indexes from older versions may still list them)
           const note = cached.notes[0];
-          patches.push({ id: makeId(path, p.entry), name: entryBase(p.entry), file: path, container: name, readme: note?.text || null, ...p,
-            expectedCrc: p.expectedCrc || parseReadmeCrc(note?.text || '') });
+          const patch = { id: makeId(path, p.entry), name: entryBase(p.entry), file: path, container: name, readme: note?.text || null, ...p,
+            expectedCrc: p.expectedCrc || parseReadmeCrc(note?.text || '') };
+          patchTime.set(patch, st.mtimeMs);
+          patches.push(patch);
         }
       }
     }
@@ -241,7 +246,50 @@ export function scanLibrary(config = {}) {
     if (!p.expectedCrc && hack?.baseCrc32) p.expectedCrc = String(hack.baseCrc32).toUpperCase();
     p.baseRomId = roms.find((r) => p.expectedCrc && r.crc === p.expectedCrc)?.id || null;
   }
-  return { roms, patches, roots: libraryRoots(config), libraryDir: LIBRARY_DIR };
+  return { roms, patches: newestFirst(patches, patchTime), roots: libraryRoots(config), libraryDir: LIBRARY_DIR };
+}
+
+/**
+ * The version numbers in a patch's file name, as number lists: "Pokemon Run&Bun 1.08.bps" → [[1, 8]],
+ * "Too Many Types 2 v1.5.3.ips" → [[2], [1, 5, 3]], "RenegadePlatinumV130" → [[130]].
+ */
+export function nameVersion(name) {
+  const stem = String(name || '').replace(/\.(xdelta3?|vcdiff|bps|ups|ips)$/i, '');
+  return (stem.match(/\d+(?:\.\d+)*/g) || []).map((v) => v.split('.').map(Number));
+}
+
+/** > 0 when version a is the later one (number lists from nameVersion), 0 when they can't be told apart. */
+export function compareVersions(a, b) {
+  if (!a.length || !b.length) return 0;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] || [];
+    const y = b[i] || [];
+    for (let j = 0; j < Math.max(x.length, y.length); j++) {
+      const d = (x[j] ?? -1) - (y[j] ?? -1);
+      if (d) return d;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Several patches of one hack (an update added next to the old version): the newest first – the version in the file
+ * name, else the file added later –, because the library and the new-run wizard use the first patch of a hack.
+ * Patches of different hacks keep their order; the older versions get `olderVersion: true` (still selectable).
+ */
+function newestFirst(patches, time = new Map()) {
+  const groups = new Map();
+  for (const p of patches) if (p.hackId) groups.set(p.hackId, [...(groups.get(p.hackId) || []), p]);
+  const order = new Map();
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const sorted = [...list].sort((a, b) => compareVersions(nameVersion(b.name), nameVersion(a.name)) || (time.get(b) || 0) - (time.get(a) || 0));
+    sorted.forEach((p, i) => {
+      p.olderVersion = i > 0;
+      order.set(list[i], p);
+    });
+  }
+  return patches.map((p) => order.get(p) || p);
 }
 
 // ---- finding games elsewhere on this computer -----------------------------------------------------------------

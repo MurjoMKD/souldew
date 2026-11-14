@@ -578,7 +578,10 @@ function HackDetail({ id, onClose, openGame }) {
   const { library, reloadLibrary, toast } = useApp();
   const cat = catalog();
   const h = cat.hacks.find((x) => x.id === id);
-  const patch = library?.patches?.find((p) => p.hackId === id);
+  // every patch of this hack – an update added next to the old file is listed newest first (server/lib/library.mjs)
+  const versions = (library?.patches || []).filter((p) => p.hackId === id);
+  const [pick, setPick] = useState(null);
+  const patch = versions.find((p) => p.id === pick) || versions[0];
   // a ROM that was patched before it was added (its CRC32 is a known version of the hack): played as it is
   const ready = !patch ? library?.roms?.find((r) => r.hackId === id) : null;
   const baseRom = patch?.baseRomId ? library.roms.find((r) => r.id === patch.baseRomId) : library?.roms?.find((r) => !r.hackId && r.gameId === h?.baseGameId);
@@ -604,7 +607,10 @@ function HackDetail({ id, onClose, openGame }) {
           ${h.live && html`<dt>${t('lib.live', 'Live tracking')}</dt><dd>${liveLabel(h.live)}${h.liveNote && html`<div class="small muted">${liveNote(h.liveNote)}</div>`}</dd>`}
           ${(ready || canPatch) && html`<${ReadsLine} src=${ready ? `/api/library/rom?id=${encodeURIComponent(ready.id)}` : `/api/library/patched?romId=${encodeURIComponent(baseRom.id)}&patchId=${encodeURIComponent(patch.id)}`} />`}
           ${ready ? html`<dt>${t('lib.patchedRom', 'Your ROM')}</dt><dd><span class="mono small">${ready.name}</span><div class="small muted">${t('lib.patchedRomHint', 'Already patched – recognised by its checksum.')}</div></dd>` : html`
-          <dt>${t('lib.patch', 'Patch')}</dt><dd>${patch ? html`<span class="mono small">${patch.name}</span>` : html`<span class="muted">${t('lib.noPatch', 'Not added yet')}</span>`}</dd>
+          <dt>${t('lib.patch', 'Patch')}</dt><dd>${versions.length > 1
+            ? html`<select class="mono small" aria-label=${t('lib.patch', 'Patch')} value=${patch.id} onChange=${(e) => setPick(e.target.value)}>
+                ${versions.map((p) => html`<option value=${p.id}>${p.name}</option>`)}</select>`
+            : patch ? html`<span class="mono small">${patch.name}</span>` : html`<span class="muted">${t('lib.noPatch', 'Not added yet')}</span>`}</dd>
           <dt>${t('lib.baseRom', 'Your base ROM')}</dt><dd>${baseRom ? html`<span class="mono small">${baseRom.name}</span>` : html`<span class="muted">${t('lib.notOwned', 'Not in your library')}</span>`}</dd>`}
         </dl>
         ${ready && html`<div class="row">

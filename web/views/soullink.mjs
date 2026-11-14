@@ -3,7 +3,7 @@ import { useApp, Modal, Led } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, ago } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
-import { catalog, gameById, hackById, gameTitle } from '../lib/data.mjs';
+import { catalog, gameById, hackById, gameTitle, patchLabel } from '../lib/data.mjs';
 import { PRESETS, DEFAULT_VALUES, localizeRandomizer, randomSeed, sameSettings, withDefaults, fieldActive, fieldEnabled, forGen, buildValues } from '/shared/randomizer-options.mjs';
 import { Cart, coverOf } from './library.mjs';
 import { RestartModal } from './restart.mjs';
@@ -580,7 +580,7 @@ function NewRun({ gameId, hackId, from, mode: sectionMode }) {
         <label class="field"><span>${t('new.hack', 'ROM hack (optional)')}</span>
           <select value=${patchId || ''} onChange=${(e) => setPatchId(e.target.value || null)}>
             <option value="">${t('new.noHack', 'Original game')}</option>
-            ${patchesFor(rom).map((p) => html`<option value=${p.id}>${p.hackId ? hackById(p.hackId)?.name : p.name}</option>`)}
+            ${patchesFor(rom).map((p, i, all) => html`<option value=${p.id}>${patchLabel(p, all)}</option>`)}
           </select></label>
       </div>
       <p class="small muted">${!inspect ? t('new.checking', 'Checking the game …')

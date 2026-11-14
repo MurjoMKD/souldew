@@ -107,6 +107,15 @@ export function gameById(id) {
 export function hackById(id) {
   return CATALOG.hacks?.find((h) => h.id === id) || null;
 }
+/**
+ * A patch in a hack picker: the hack's name – with the file name when the list holds several versions of that hack
+ * (an update added next to the old file), so they can be told apart. A patch of no known hack: its file name.
+ */
+export function patchLabel(p, all = [], nameOf = (id) => hackById(id)?.name) {
+  const hack = p.hackId ? nameOf(p.hackId) : null;
+  if (!hack) return p.name;
+  return all.some((x) => x !== p && x.hackId === p.hackId) ? `${hack} · ${p.name}` : hack;
+}
 export function gameTitle(g) {
   if (!g) return '';
   return (currentLang() === 'de' && g.titleDe) || g.title;
