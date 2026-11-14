@@ -70,6 +70,7 @@ const TEXTS = {
   zipDamaged: (v) => t('err.zipDamaged', '{name} is damaged in the zip (its checksum doesn’t match) – download it again', v),
   zipMethod: (v) => t('err.zipMethod', '{name} is packed in a way souldew can’t unpack (encrypted, or not a normal zip) – unpack it yourself and add the file', v),
   unpackFailed: (v) => t('err.unpackFailed', '{name} couldn’t be unpacked: {why}', v),
+  badRomHack: () => t('err.badRomHack', 'This ROM hack choice isn’t valid'),
   uploadType: () => t('err.uploadType', 'Only ROMs (.gb/.gbc/.gba/.nds), patches or .zip'),
   notRom: () => t('err.notRom', 'Not a ROM file'),
   notPatch: () => t('err.notPatch', 'Not a patch file'),

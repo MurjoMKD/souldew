@@ -14,6 +14,14 @@
 - **Zips with 3DS games in your library folders** are no longer passed over in silence: the library lists them under
   "Zipped 3DS games" with an "Unpack" button that puts the game into your library (the zip stays where it is).
 - 3DS games and zips can be dropped into the library up to 8 GB (it was 600 MB, too small for most 3DS games).
+- **Already-patched ROM hacks can be linked to their hack.** A ROM that was patched before you added it
+  ("kaizo-emerald.gba") still says Emerald in its header, so it showed up as plain Emerald and never on the Emerald
+  Kaizo page. Its page now has "This is a ROM hack…": pick the hack (the hacks of that game, or "Other / unknown hack"
+  with a name of your own), and the ROM appears on the hack's page as "Your ROM" with Play, New SoulLink and New
+  Nuzlocke – remembered by its checksum, also after renaming it, and undone with one click. When the file name already
+  says which hack it is, souldew asks "Looks like Pokémon Emerald Kaizo – link it?" on the ROM's page and in the message
+  after adding it. Runs of such a ROM are hack runs: no vanilla level caps, the randomizer follows the hack's entry, and
+  joining a SoulLink needs the very same ROM, like any patched run.
 
 ## 2.6.3
 

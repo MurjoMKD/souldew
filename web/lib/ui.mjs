@@ -159,7 +159,8 @@ export function Toasts({ toasts, dismiss }) {
   return html`<div class="toasts" role="status" aria-live="polite">
     ${toasts.map((x) => html`<div class="toast" key=${x.id} onClick=${() => dismiss(x.id)}>
       <${Led} on color=${x.kind === 'death' ? 'red' : x.kind === 'ok' ? 'green' : 'amber'} />
-      <div>${x.title && html`<strong>${x.title}</strong>`}<div class="small muted">${x.text}</div></div>
+      <div>${x.title && html`<strong>${x.title}</strong>`}<div class="small muted">${x.text}</div>
+        ${x.action && html`<button class="btn small toast-action" onClick=${(e) => { e.stopPropagation(); dismiss(x.id); x.action.run(); }}>${x.action.label}</button>`}</div>
     </div>`)}
   </div>`;
 }

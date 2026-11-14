@@ -42,7 +42,7 @@ export function PlayHome() {
         ${roms.map((r) => {
           const g = gameById(r.gameId);
           const h = r.hackId ? hackById(r.hackId) : null; // a pre-patched ROM hack: shown as the hack
-          return html`<${Cart} key=${r.id} title=${h ? h.name : g ? gameTitle(g) : r.title || r.name} cover=${coverOf(library, h ? { hackId: h.id } : { rom: r })} color=${h?.color || g?.color} system=${r.system} owned hack=${!!h}
+          return html`<${Cart} key=${r.id} title=${h ? h.name : r.customHack || (g ? gameTitle(g) : r.title || r.name)} cover=${coverOf(library, h ? { hackId: h.id } : { rom: r })} color=${h?.color || g?.color} system=${r.system} owned hack=${!!(h || r.customHack)}
             onClick=${() => navigate('play', { rom: r.id })} />`;
         })}</div>`}
     </section>

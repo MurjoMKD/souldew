@@ -12,7 +12,7 @@ import { detectJava, uprStatus, installUpr, runBridge } from './lib/toolchain.mj
 import { preparePatchedRom, KNOWN_PATCHES } from './lib/roms.mjs';
 import { ROM_EXTENSIONS, PATCH_EXTENSIONS, isCtrExt } from '../shared/romid.mjs';
 import { ALL_SLOTS, slotsOf, runMode } from '../shared/slots.mjs';
-import { scanLibrary, catalog, loadFile, importFiles, uploadTarget, resolveId, discoverRoms, approvedFolder, placeUploadedZip, unpackLibraryZip, MAX_CTR_BYTES } from './lib/library.mjs';
+import { scanLibrary, catalog, loadFile, importFiles, uploadTarget, resolveId, discoverRoms, approvedFolder, placeUploadedZip, unpackLibraryZip, MAX_CTR_BYTES, setRomHack } from './lib/library.mjs';
 import { freeBytes } from './lib/zip.mjs';
 import { saveCover, deleteCover, coverFile, customCovers, coverUrl, COVER_LIMIT } from './lib/covers.mjs';
 import { buildRun, listRuns, readManifest, writeManifest, runDir, runPack, runSummary, trashRun, checkPack, stripLocalRules, isDiscordWebhook, mergeDocEntries, renamePlayers } from './lib/build.mjs';
@@ -936,6 +936,13 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
   route('POST', /^\/api\/library\/unpack$/, async (req) => {
     const { id } = await readBody(req);
     return { added: await unpackLibraryZip(id, loadConfig(), { onUnpack }) };
+  });
+  // "This is a ROM hack…": what an already-patched ROM is, by its CRC32 (library.mjs setRomHack; {} = undo)
+  route('POST', /^\/api\/library\/romhack$/, async (req) => {
+    const body = await readBody(req);
+    const romHacks = setRomHack(loadConfig().romHacks, body);
+    saveConfig({ romHacks });
+    return { romHacks };
   });
   // Search this Mac / PC for ROMs (the usual folders) – the import below then copies the ones the player picked.
   route('POST', /^\/api\/library\/discover$/, () => discoverRoms({ known: scanLibrary(loadConfig()).roms }));

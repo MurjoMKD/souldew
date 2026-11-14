@@ -179,7 +179,7 @@ export function digestRun(manifest, entries, slot, opts = {}) {
   return {
     id: str(manifest?.id, 16), name: str(manifest?.name, 80), mode, players: slots.length, me, names,
     gameId: str(game.id || manifest?.base?.gameId, 60) || null, gen: opts.gen || num(game.generation) || { gb: 1, gbc: 2, gba: 3, nds: 4, '3ds': 6 }[game.system] || null,
-    randomized: manifest?.randomizer ? manifest.randomizer.enabled !== false : false, hack: !!(manifest?.patch || game.hackId),
+    randomized: manifest?.randomizer ? manifest.randomizer.enabled !== false : false, hack: !!(manifest?.patch || game.hackId || game.hackName),
     createdAt: time(manifest?.createdAt), attempt: Number(manifest?.attempt) || Number(/#(\d+)\s*$/.exec(manifest?.name || '')?.[1]) || 1,
     status: st?.state ? { state: st.state, reason: str(st.reason, 20) || null, at: num(st.at), by: str(st.by, 4) || null } : null,
     rules: { hardcore: rules.levelCaps === 'strict' && rules.noBattleItems === true && rules.setMode === true, levelCaps: !!rules.levelCaps, deathless: !!rules.deathless,

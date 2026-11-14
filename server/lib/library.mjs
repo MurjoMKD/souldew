@@ -13,6 +13,7 @@ import { identifyCtr, identifyCtrBytes } from '../../shared/ctr.mjs';
 import { wasPicked, insideAny } from './grants.mjs';
 import { describePatch, detectPatchFormat } from '../../shared/patchers.mjs';
 import { nameVersion, compareVersions, patchFamily } from '../../shared/patchname.mjs';
+import { guessHack } from '../../shared/hackguess.mjs';
 
 export { nameVersion, compareVersions };
 
@@ -346,6 +347,7 @@ export function scanLibrary(config = {}) {
   };
   for (const root of libraryRoots(config)) visit(root, 0);
   saveIndex(nextIndex);
+  applyRomHacks(roms, config, cat);
   // a zipped 3DS game that is unpacked already (the same game, the same size) isn't offered again
   const ctrKey = (r) => `${r.titleId || r.code || r.title}|${r.size}`;
   const unpacked = new Set(roms.filter((r) => r.system === '3ds').map(ctrKey));
@@ -366,6 +368,56 @@ export function scanLibrary(config = {}) {
     if (!p.hackId) p.family = patchFamily(p.name);
   }
   return { roms, patches: newestFirst(patches, patchTime), zipped: zipped.filter((z) => !unpacked.has(ctrKey(z))), roots: libraryRoots(config), libraryDir: LIBRARY_DIR };
+}
+
+/**
+ * What the player said an already-patched ROM is (config.romHacks, by the ROM's CRC32 – the same file under another
+ * name or in another folder keeps it, rescans too): { hackId } a catalog hack → the ROM is that hack (r.hackId, on the
+ * hack's page as "Your ROM", runs get the hack's catalog entry), { name } a hack the catalog doesn't know →
+ * r.customHack, { none: true } "not a hack" (no more suggestion). A ROM that isn't an exact catalog dump and has no mark
+ * gets r.suggestedHackId when its file name looks like a hack of its header's game (shared/hackguess.mjs).
+ */
+function applyRomHacks(roms, config, cat) {
+  const marks = config.romHacks && typeof config.romHacks === 'object' ? config.romHacks : {};
+  for (const r of roms) {
+    if (!r.crc || r.hackId) continue; // (3DS games have no CRC32; a hack known by its checksum stays that)
+    const m = marks[r.crc];
+    const h = m?.hackId ? (cat.hacks || []).find((x) => x.id === m.hackId) : null;
+    if (h) {
+      r.hackId = h.id;
+      r.hackMarked = true;
+      if (!r.gameId) r.gameId = h.baseGameId || null; // (a ROM whose header the catalog doesn't know)
+    } else if (typeof m?.name === 'string' && m.name) {
+      r.customHack = m.name;
+    } else if (!m && !r.exact) {
+      const guess = guessHack(r.name, r.gameId, cat);
+      if (guess) r.suggestedHackId = guess.id;
+    }
+  }
+}
+
+/**
+ * The player's answer to "This is a ROM hack…" for the ROM with CRC32 `crc` → the new config.romHacks:
+ * { hackId } (a catalog hack), { name } ("other / unknown hack", up to 80 characters), { none: true } (not a hack) or
+ * {} (undo: forget it). Throws 400 for anything else.
+ */
+export function setRomHack(marks, { crc, hackId, name, none } = {}, cat = catalog()) {
+  const key = String(crc || '').toUpperCase();
+  if (!/^[0-9A-F]{8}$/.test(key)) throw httpError(400, 'Ungültige Prüfsumme', 'badRomHack');
+  const next = { ...(marks && typeof marks === 'object' && !Array.isArray(marks) ? marks : {}) };
+  if (hackId != null) {
+    if (!(cat.hacks || []).some((h) => h.id === hackId)) throw httpError(400, 'Unbekannter ROM-Hack', 'badRomHack');
+    next[key] = { hackId };
+  } else if (name != null) {
+    const clean = String(name).normalize('NFC').replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!clean || clean.length > 80) throw httpError(400, 'Ungültiger Name', 'badRomHack');
+    next[key] = { name: clean };
+  } else if (none) {
+    next[key] = { none: true };
+  } else {
+    delete next[key];
+  }
+  return next;
 }
 
 /**

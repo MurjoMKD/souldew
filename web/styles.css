@@ -469,6 +469,9 @@ dialog.modal::backdrop { background: #07060acc; }
 .toasts { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 80; max-width: 380px; }
 .toast { background: var(--shell-3); border: 1px solid #0d0c10; border-radius: var(--r-l); padding: 11px 14px; box-shadow: 0 14px 30px #000a; animation: toast-in 0.22s cubic-bezier(.2,.8,.2,1); display: grid; grid-template-columns: 10px 1fr; gap: 10px; }
 .toast .led { margin-top: 5px; }
+.toast .toast-action { margin-top: 8px; }
+.romhack { display: grid; gap: 8px; }
+.romhack select, .romhack input { max-width: 100%; }
 .toast strong { font-family: var(--font-pixel); font-weight: 500; font-size: 14.5px; }
 .toast .muted { white-space: pre-line; overflow-wrap: anywhere; }
 @keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }

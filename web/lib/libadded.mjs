@@ -71,6 +71,7 @@ function addedName({ kind, entry }, cat) {
     return t('lib.addedPatchName', '{name} (patch)', { name: [h ? h.name : title, version].filter(Boolean).join(' ') });
   }
   const h = entry.hackId ? (cat.hacks || []).find((x) => x.id === entry.hackId) : null;
+  if (!h && entry.customHack) return entry.customHack;
   const g = entry.gameId ? (cat.games || []).find((x) => x.id === entry.gameId) : null;
   return h ? h.name : g ? gameTitle(g) : entry.title || entry.name;
 }
@@ -87,6 +88,14 @@ export function addedMessage({ added, already, unusable }, cat = catalog()) {
   if (unusable) extra.push(t('lib.addedUnusable', '{count} file has no game or patch souldew can use.|{count} files have no game or patch souldew can use.', { count: unusable }));
   if (added.length === 1) {
     const hint = added[0].kind === 'patch' ? t('lib.addedPatchHint', 'You’ll find it under ROM hacks.') : t('lib.addedGameHint', 'It’s on the shelf now.');
+    // an already-patched ROM whose file name looks like a catalog hack ("kaizo-emerald.gba", server/lib/library.mjs):
+    // the page offers to link it (`suggest`, a button on the toast)
+    const e = added[0].entry;
+    const h = added[0].kind === 'rom' && e.suggestedHackId && e.crc ? (cat.hacks || []).find((x) => x.id === e.suggestedHackId) : null;
+    if (h) {
+      return { kind: 'ok', title: t('lib.addedOne', 'Added: {name}', { name: name(added[0]) }), ttl: 15000,
+        text: [t('lib.hackSuggest', 'Looks like {hack} – link it?', { hack: h.name }), ...extra].join('\n'), suggest: { crc: e.crc, hackId: h.id, hack: h.name } };
+    }
     return { kind: 'ok', title: t('lib.addedOne', 'Added: {name}', { name: name(added[0]) }), text: [hint, ...extra].join('\n') };
   }
   if (added.length) {
