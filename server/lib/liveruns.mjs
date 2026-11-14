@@ -2,10 +2,10 @@
 //
 // The player links souldew to their Discord account once with a code from `/live connect`; the bot answers with a
 // token for that player. The token is the only credential there is – souldew ships no key, secret or password of
-// its own, only the bot's public address below. It is kept in its own file in the data folder (live-runs.json, next
+// its own, only the bot's public addresses below. It is kept in its own file in the data folder (live-runs.json, next
 // to config.json – never in a run folder, a run pack, the config the page reads, diagnostics or a log line), and only
 // this module reads it: the page asks the local server, the local server asks the bot. A request to the bot never
-// follows a redirect, so the token can't be carried to another host.
+// follows a redirect, so the token can't be carried to another host (the fallback address below is the same bot).
 import { readFileSync, mkdirSync, chmodSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { DATA_DIR, DEV, APP_ROOT } from './paths.mjs';
@@ -13,7 +13,13 @@ import { writeFileAtomic, httpError } from './fsutil.mjs';
 import { buildMeta, metaProblem, normalizeCode, pngProblem } from '../../shared/liveruns.mjs';
 
 /** The bot's public address (the contract's base URL). SOULDEW_LIVE_URL replaces it – for tests against a mock bot. */
-export const LIVE_RUNS_URL = 'https://souldew-discord-bot.sweeparena.workers.dev';
+export const LIVE_RUNS_URL = 'https://api.souldew.app';
+/**
+ * The same bot under its workers.dev address (the base URL up to 2.6). Some DNS filters block *.workers.dev, others may
+ * not know api.souldew.app yet – so a request goes here only when LIVE_RUNS_URL can't be reached at all (no answer:
+ * DNS, connection, TLS, timeout – status 0). An answer with any HTTP status, also an error, is the bot's answer.
+ */
+export const LIVE_RUNS_FALLBACK_URL = 'https://souldew-discord-bot.sweeparena.workers.dev';
 
 /** The address in use: the variable when it is a valid https URL (or http on this computer, for tests), else the bot's. */
 export function liveBase(env = process.env) {
@@ -28,6 +34,12 @@ export function liveBase(env = process.env) {
     }
   }
   return LIVE_RUNS_URL;
+}
+
+/** The addresses a request tries, in order: SOULDEW_LIVE_URL alone (a test never reaches the real bot), else the bot's. */
+export function liveBases(env = process.env) {
+  const base = liveBase(env);
+  return base === LIVE_RUNS_URL ? [LIVE_RUNS_URL, LIVE_RUNS_FALLBACK_URL] : [base];
 }
 
 /** Where the token lives: the data folder (in development the ignored runs/ folder, like config.json). */
@@ -91,20 +103,27 @@ function forget() {
   writeState(s);
 }
 
-/** One request to the bot. Network trouble → { status: 0 }. The body is parsed JSON or {}. */
-async function botFetch(path, { method = 'GET', token, json, form, timeout = 20000, fetchImpl = fetch } = {}) {
+/**
+ * One request to the bot: api.souldew.app, and the workers.dev address only when that gives no answer at all (see
+ * LIVE_RUNS_FALLBACK_URL). Network trouble on every address → { status: 0 }. The body is parsed JSON or {}.
+ */
+async function botFetch(path, { method = 'GET', token, json, form, timeout = 20000, fetchImpl = fetch, env = process.env } = {}) {
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (json) headers['Content-Type'] = 'application/json';
-  let r;
-  try {
-    r = await fetchImpl(`${liveBase()}${path}`, {
-      method, headers, redirect: 'error', signal: AbortSignal.timeout(timeout),
-      body: json ? JSON.stringify(json) : form || undefined,
-    });
-  } catch {
-    return { status: 0, body: {} };
+  let r = null;
+  for (const base of liveBases(env)) {
+    try {
+      r = await fetchImpl(`${base}${path}`, {
+        method, headers, redirect: 'error', signal: AbortSignal.timeout(timeout),
+        body: json ? JSON.stringify(json) : form || undefined,
+      });
+      break;
+    } catch {
+      // no answer from this address – the next one, if there is one
+    }
   }
+  if (!r) return { status: 0, body: {} };
   let body = {};
   try {
     body = await r.json();

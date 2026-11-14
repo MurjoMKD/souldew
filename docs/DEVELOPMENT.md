@@ -152,10 +152,12 @@ Cloudflare Worker; its contract (v1) is: `POST /live/link` (code → token), `GE
 | `web/views/liveshare.mjs` | The "Share to Discord" button (death notice, graveyard, run-over notice) and the Settings block |
 
 **No secrets in the app.** souldew is open source: it ships no key, token, password or signing secret – only the bot's
-public address (`LIVE_RUNS_URL`). Each player's token comes from linking and is kept in `live-runs.json` in the data folder
-(file mode 0600; in development `runs/live-runs.json`), never in `config.json`, a run folder, a run pack, diagnostics, a log
-line or anything the page can read. Requests to the bot never follow redirects. `test/secrets.test.mjs` scans the app,
-the scripts and the tests for anything that looks like a credential.
+public address (`LIVE_RUNS_URL`, `https://api.souldew.app`; when that gives no answer at all – some DNS filters don't
+know it, others block `*.workers.dev` – the same request goes to the bot's workers.dev address,
+`LIVE_RUNS_FALLBACK_URL`). Each player's token comes from linking and is kept in `live-runs.json` in the data folder
+(file mode 0600; in development `runs/live-runs.json`), never in `config.json`, a run folder, a run pack, diagnostics, a
+log line or anything the page can read. Requests to the bot never follow redirects. `test/secrets.test.mjs` scans the
+app, the scripts and the tests for anything that looks like a credential.
 
 | Command | Purpose |
 |---|---|

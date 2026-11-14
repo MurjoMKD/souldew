@@ -152,6 +152,75 @@ test('the base URL: the bot by default, SOULDEW_LIVE_URL only as https or on thi
 
 // ---------------------------------------------------------------------------------------------------------------
 // The card model from a run doc (the fixtures scripts/render-live-cards.mjs paints)
+test('the base URL: api.souldew.app first, the workers.dev address only as the fallback, never for SOULDEW_LIVE_URL', async () => {
+  const { liveBases, LIVE_RUNS_URL, LIVE_RUNS_FALLBACK_URL } = await import('../server/lib/liveruns.mjs');
+  assert.equal(LIVE_RUNS_URL, 'https://api.souldew.app');
+  assert.equal(LIVE_RUNS_FALLBACK_URL, 'https://souldew-discord-bot.sweeparena.workers.dev');
+  assert.deepEqual(liveBases({}), [LIVE_RUNS_URL, LIVE_RUNS_FALLBACK_URL]);
+  assert.deepEqual(liveBases({ SOULDEW_LIVE_URL: 'http://evil.example' }), [LIVE_RUNS_URL, LIVE_RUNS_FALLBACK_URL]);
+  assert.deepEqual(liveBases({ SOULDEW_LIVE_URL: 'http://127.0.0.1:5555/' }), ['http://127.0.0.1:5555'], 'a mock bot alone');
+});
+
+test('the fallback: only when api.souldew.app gives no answer at all – same request, still no redirects', async () => {
+  const { link, unlink, status, LIVE_RUNS_URL, LIVE_RUNS_FALLBACK_URL } = await import('../server/lib/liveruns.mjs');
+  const token = 'ab'.repeat(32);
+  const reply = (code, body) => ({ status: code, json: async () => body });
+  const mock = (answer) => {
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push({ url, init, body: init.body });
+      return answer(url, calls.length);
+    };
+    return { calls, fetchImpl };
+  };
+  const env = {}; // (not process.env: the server tests below point SOULDEW_LIVE_URL at their mock bot)
+  // 1. blocked or unknown host (DNS, connection, TLS – fetch throws): the same POST again at workers.dev
+  const blocked = mock((url) => {
+    if (url.startsWith(LIVE_RUNS_URL)) throw new TypeError('fetch failed');
+    return reply(200, { token, user: { id: '1', name: 'Lou' } });
+  });
+  const linked = await link('ABC-234', { fetchImpl: blocked.fetchImpl, env });
+  assert.equal(linked.ok, true);
+  assert.deepEqual(blocked.calls.map((c) => c.url), [`${LIVE_RUNS_URL}/live/link`, `${LIVE_RUNS_FALLBACK_URL}/live/link`]);
+  for (const c of blocked.calls) {
+    assert.equal(c.init.method, 'POST');
+    assert.equal(c.init.redirect, 'error');
+    assert.equal(JSON.parse(c.body).code, 'ABC-234');
+  }
+  // 2. api.souldew.app answers – also with an error status: that's the bot's answer, no second request
+  const down = mock(() => reply(503, {}));
+  const st = await status({ fetchImpl: down.fetchImpl, env });
+  assert.equal(down.calls.length, 1);
+  assert.equal(down.calls[0].url, `${LIVE_RUNS_URL}/live/me`);
+  assert.equal(down.calls[0].init.headers.Authorization, `Bearer ${token}`);
+  assert.equal(st.linked, true);
+  const ok = mock(() => reply(200, { user: { id: '1', name: 'Lou' }, limits: { perDay: 20, usedToday: 1 } }));
+  assert.equal((await status({ fetchImpl: ok.fetchImpl, env })).limits.left, 19);
+  assert.equal(ok.calls.length, 1);
+  // 3. a timeout counts as no answer, too; both addresses silent → offline
+  const silent = mock(() => {
+    throw Object.assign(new Error('timeout'), { name: 'TimeoutError' });
+  });
+  assert.equal((await status({ fetchImpl: silent.fetchImpl, env })).offline, true);
+  assert.deepEqual(silent.calls.map((c) => c.url), [`${LIVE_RUNS_URL}/live/me`, `${LIVE_RUNS_FALLBACK_URL}/live/me`]);
+  // 4. a mock bot (SOULDEW_LIVE_URL) is the only address – a test never falls through to the real bot
+  const mockBot = mock(() => {
+    throw new TypeError('fetch failed');
+  });
+  assert.equal((await status({ fetchImpl: mockBot.fetchImpl, env: { SOULDEW_LIVE_URL: 'http://127.0.0.1:9' } })).offline, true);
+  assert.deepEqual(mockBot.calls.map((c) => c.url), ['http://127.0.0.1:9/live/me']);
+  // unlinking through the fallback as well; the token is gone afterwards
+  const bye = mock((url) => {
+    if (url.startsWith(LIVE_RUNS_URL)) throw new TypeError('fetch failed');
+    return reply(204, {});
+  });
+  const out = await unlink({ fetchImpl: bye.fetchImpl, env });
+  assert.equal(out.reached, true);
+  assert.equal(out.linked, false);
+  assert.equal(bye.calls.length, 2);
+  assert.equal(bye.calls[1].init.method, 'DELETE');
+});
+
 test('card model: headline, killer, place and teams from the run doc', async () => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
