@@ -39,7 +39,7 @@ export function SoulLinkView({ mode = 'soullink' }) {
       : p.run && p.new === undefined && manifest?.id === p.run ? runMode(manifest) : null);
   if (!own) return null;
   if (p.new !== undefined && p.from) return html`<${RestartRun} key=${p.from} from=${p.from} mode=${mode} />`;
-  if (p.new !== undefined) return html`<${NewRun} key=${mode} mode=${mode} gameId=${p.new} hackId=${p.hack} />`;
+  if (p.new !== undefined) return html`<${NewRun} key=${mode} mode=${mode} gameId=${p.new} hackId=${p.hack} patchPick=${p.patch} />`;
   if (p.join !== undefined) return html`<${JoinRun} />`;
   if (!p.run) return html`<${RunsHome} key=${mode} mode=${mode} />`;
   if (!manifest && missingRun === p.run) {
@@ -396,7 +396,8 @@ function useGameChoices(gameId, hackId) {
   const roms = (library?.roms || []).filter((r) => !gameId || rootOf(r.gameId) === gameId);
   const allRoms = library?.roms || [];
   const patchesFor = (rom) => (library?.patches || []).filter((p) => rom && (!p.expectedCrc || p.expectedCrc === rom.crc));
-  return { roms: roms.length ? roms : allRoms, patchesFor, preferredPatch: (rom) => patchesFor(rom).find((p) => p.hackId === hackId) };
+  return { roms: roms.length ? roms : allRoms, patchesFor, preferredPatch: (rom) => patchesFor(rom).find((p) => p.hackId === hackId),
+    patchById: (id) => (id && (library?.patches || []).find((p) => p.id === id)) || null };
 }
 
 /** First step of a new SoulLink: how many play – one card per head count, the player figures show it.
@@ -430,13 +431,16 @@ function namesFrom(from, fallback) {
 
 /** The new-run wizard of one mode: a SoulLink (2–4 players, invite at the end) or a solo Nuzlocke (rules step).
  * A restart (`from`) always keeps the mode of the old run. */
-function NewRun({ gameId, hackId, from, mode: sectionMode }) {
+function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
   const { status, navigate, reloadStatus, setRunId, setMe } = useApp();
-  const { roms, patchesFor, preferredPatch } = useGameChoices(gameId || null, hackId);
+  const { roms, patchesFor, preferredPatch, patchById } = useGameChoices(gameId || null, hackId);
+  // `patchPick`: started from a patch the catalog doesn't know (library) – its base ROM and that patch come first
+  const picked = !from ? patchById(patchPick) : null;
   // `from`: restart of an old run – same game, hack, settings, mode and players; seeds stay fresh.
-  const [romId, setRomId] = useState(() => (from && baseRomsFor(from, roms)[0])?.id || (hackId && !roms.some((r) => preferredPatch(r)) && roms.find((r) => r.hackId === hackId))?.id || (!hackId && roms.find((r) => !r.hackId))?.id || (hackId && roms.find((r) => preferredPatch(r)))?.id || roms.find((r) => !r.hackId)?.id || roms[0]?.id || null);
+  const [romId, setRomId] = useState(() => (from && baseRomsFor(from, roms)[0])?.id || (picked?.baseRomId && roms.find((r) => r.id === picked.baseRomId))?.id || (hackId && !roms.some((r) => preferredPatch(r)) && roms.find((r) => r.hackId === hackId))?.id || (!hackId && roms.find((r) => !r.hackId))?.id || (hackId && roms.find((r) => preferredPatch(r)))?.id || roms.find((r) => !r.hackId)?.id || roms[0]?.id || null);
   const rom = roms.find((r) => r.id === romId) || roms[0];
-  const [patchId, setPatchId] = useState(() => (from ? (from.patch ? (patchesFor(rom).find((p) => p.sha1 && p.sha1 === from.patch.sha1) || preferredPatch(rom))?.id || null : null) : preferredPatch(rom)?.id || null));
+  const [patchId, setPatchId] = useState(() => (from ? (from.patch ? (patchesFor(rom).find((p) => p.sha1 && p.sha1 === from.patch.sha1) || preferredPatch(rom))?.id || null : null)
+    : (picked && patchesFor(rom).some((p) => p.id === picked.id) ? picked.id : preferredPatch(rom)?.id || null)));
   const [inspect, setInspect] = useState(null);
   const [randomize, setRandomize] = useState(from ? from.randomizer?.enabled !== false : true);
   const oldValues = from?.randomizer?.values && Object.keys(from.randomizer.values).length ? from.randomizer.values : null;

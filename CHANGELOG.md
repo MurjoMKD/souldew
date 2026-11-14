@@ -2,6 +2,21 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **A newer version of a ROM hack's patch is the one that's used.** Adding an update next to the old file
+  ("Run&Bun 1.08" beside "Run&Bun 1.07") said "Library updated", but the hack's page, Play and new runs kept using the
+  old version – on Windows always the older file. The newest version now comes first (by the version in the file
+  name, else the file added last), and when a hack has several patch files its page and the new-run wizard let you
+  choose between them, each shown with its file name.
+- **Patches for hacks souldew doesn't know show up in the library.** They used to be added without appearing anywhere
+  but the new-run wizard. Now each gets a card on the ROM hacks shelf, named after the file with its version
+  underneath, and a page like the known hacks have: the base game when the patch says which ROM it needs, Play and
+  "Save patched game" once that ROM is in your library, new runs, and a version picker when you have several.
+- **Adding files says what was actually added** – "Added: Pokémon Run & Bun 1.08 (patch)", "2 games and 1 patch
+  added", "Already in your library", or which files held nothing souldew can use – instead of always "New games are
+  on the shelf".
+
 ## 2.6.2
 
 - **Randomized SoulLinks with "only sensible items" for trainers build the same game everywhere.** On Gen 4/5 games this

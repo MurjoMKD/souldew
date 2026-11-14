@@ -12,6 +12,9 @@ import { identifyRom, matchCatalog, ROM_EXTENSIONS, PATCH_EXTENSIONS, CTR_EXTENS
 import { identifyCtr } from '../../shared/ctr.mjs';
 import { wasPicked, insideAny } from './grants.mjs';
 import { describePatch, detectPatchFormat } from '../../shared/patchers.mjs';
+import { nameVersion, compareVersions, patchFamily } from '../../shared/patchname.mjs';
+
+export { nameVersion, compareVersions };
 
 const INDEX_PATH = join(DATA_DIR, DEV ? 'runs/library-index.json' : 'library-index.json');
 const SKIP = new Set(['node_modules', 'runs', 'tools', 'web', 'shared', 'server', 'research', 'test', 'electron', 'dist', 'build', 'scripts']);
@@ -245,41 +248,24 @@ export function scanLibrary(config = {}) {
     p.hackId = hack?.id || null;
     if (!p.expectedCrc && hack?.baseCrc32) p.expectedCrc = String(hack.baseCrc32).toUpperCase();
     p.baseRomId = roms.find((r) => p.expectedCrc && r.crc === p.expectedCrc)?.id || null;
+    // a hack the catalog doesn't know: its versions are told together by the file name ("Crest v1.bps", "Crest v2.bps")
+    if (!p.hackId) p.family = patchFamily(p.name);
   }
   return { roms, patches: newestFirst(patches, patchTime), roots: libraryRoots(config), libraryDir: LIBRARY_DIR };
 }
 
 /**
- * The version numbers in a patch's file name, as number lists: "Pokemon Run&Bun 1.08.bps" → [[1, 8]],
- * "Too Many Types 2 v1.5.3.ips" → [[2], [1, 5, 3]], "RenegadePlatinumV130" → [[130]].
- */
-export function nameVersion(name) {
-  const stem = String(name || '').replace(/\.(xdelta3?|vcdiff|bps|ups|ips)$/i, '');
-  return (stem.match(/\d+(?:\.\d+)*/g) || []).map((v) => v.split('.').map(Number));
-}
-
-/** > 0 when version a is the later one (number lists from nameVersion), 0 when they can't be told apart. */
-export function compareVersions(a, b) {
-  if (!a.length || !b.length) return 0;
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const x = a[i] || [];
-    const y = b[i] || [];
-    for (let j = 0; j < Math.max(x.length, y.length); j++) {
-      const d = (x[j] ?? -1) - (y[j] ?? -1);
-      if (d) return d;
-    }
-  }
-  return 0;
-}
-
-/**
  * Several patches of one hack (an update added next to the old version): the newest first – the version in the file
  * name, else the file added later –, because the library and the new-run wizard use the first patch of a hack.
- * Patches of different hacks keep their order; the older versions get `olderVersion: true` (still selectable).
+ * A hack the catalog doesn't know is told by its `family` (the file name without the version). Patches of different
+ * hacks keep their order; the older versions get `olderVersion: true` (still selectable).
  */
 function newestFirst(patches, time = new Map()) {
   const groups = new Map();
-  for (const p of patches) if (p.hackId) groups.set(p.hackId, [...(groups.get(p.hackId) || []), p]);
+  for (const p of patches) {
+    const key = p.hackId ? `hack:${p.hackId}` : p.family ? `file:${p.family}` : null;
+    if (key) groups.set(key, [...(groups.get(key) || []), p]);
+  }
   const order = new Map();
   for (const list of groups.values()) {
     if (list.length < 2) continue;
