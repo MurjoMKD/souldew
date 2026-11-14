@@ -6,7 +6,7 @@ one run. A dark stage, one bright LCD section, the pixel type and player colours
 (`build/readme/art.html`), and exactly one pinned moment: Ember and Chomp hang on a link cable that snaps when Ember
 faints (`#link`, scroll-driven on desktop, plays by itself on phones and with reduced motion).
 
-Address: **https://souldewapp.github.io/souldew/** (English) and **/de/** (German).
+Address: **https://souldew.app/** (English) and **/de/** (German).
 
 ## What's where
 

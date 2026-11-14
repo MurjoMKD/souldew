@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://souldewapp.github.io/souldew/sitemap.xml
+Sitemap: https://souldew.app/sitemap.xml
