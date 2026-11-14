@@ -2,7 +2,7 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
-## Unreleased
+## 2.6.3
 
 - **A newer version of a ROM hack's patch is the one that's used.** Adding an update next to the old file
   ("Run&Bun 1.08" beside "Run&Bun 1.07") said "Library updated", but the hack's page, Play and new runs kept using the
