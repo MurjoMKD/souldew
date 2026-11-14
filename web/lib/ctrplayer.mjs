@@ -7,6 +7,7 @@ import * as controls from '/lib/controls.mjs';
 import { setLang, guessLang, t } from '/lib/i18n.mjs';
 import { serverErrorText } from '/lib/errors.mjs';
 import { findEntry, regionsFor } from '/shared/live/parse.mjs';
+import { CTR_LAYOUTS, ctrLayout, ctrTouchAt } from '/shared/ctrlayout.mjs';
 
 const q = new URLSearchParams(location.search);
 const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7 };
@@ -85,30 +86,37 @@ const f32 = (x) => new Uint8Array(new Float32Array([x]).buffer);
 const u32 = (x) => new Uint8Array(new Uint32Array([x]).buffer);
 
 // ---- picture (WebGL: the host sends BGRA or RGBA rows, top row first) -------------------------------------------
+// The core always renders its default layout (top screen above the bottom one, 400×480 at 1×). The page arranges the
+// two screens itself (shared/ctrlayout.mjs: side by side, large top + small bottom, top only, swapped) – switchable while
+// playing, with no restart of the core, and the touch screen maps back through the same rectangles.
 const canvas = document.getElementById('screen');
 const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true, antialias: false, alpha: false });
 let tex = null;
 let swizzleLoc = null;
+let quadBuf = null;
+let layoutId = CTR_LAYOUTS.includes(q.get('layout')) ? q.get('layout') : 'tb';
 function initGl() {
-  const vs = '#version 300 es\nin vec2 p;out vec2 uv;void main(){uv=vec2((p.x+1.)*.5,(1.-p.y)*.5);gl_Position=vec4(p,0.,1.);}';
-  const fs = '#version 300 es\nprecision mediump float;in vec2 uv;uniform sampler2D t;uniform bool bgra;out vec4 o;void main(){vec4 c=texture(t,uv);o=vec4(bgra?c.bgr:c.rgb,1.);}';
+  const vs = '#version 300 es\nin vec2 p;in vec2 t;out vec2 uv;void main(){uv=t;gl_Position=vec4(p,0.,1.);}';
+  const fs = '#version 300 es\nprecision mediump float;in vec2 uv;uniform sampler2D s;uniform bool bgra;out vec4 o;void main(){vec4 c=texture(s,uv);o=vec4(bgra?c.bgr:c.rgb,1.);}';
   const sh = (type, src) => {
-    const s = gl.createShader(type);
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    return s;
+    const x = gl.createShader(type);
+    gl.shaderSource(x, src);
+    gl.compileShader(x);
+    return x;
   };
   const prog = gl.createProgram();
   gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs));
   gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs));
   gl.linkProgram(prog);
   gl.useProgram(prog);
-  const buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  const loc = gl.getAttribLocation(prog, 'p');
-  gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  quadBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  const ploc = gl.getAttribLocation(prog, 'p');
+  const tloc = gl.getAttribLocation(prog, 't');
+  gl.enableVertexAttribArray(ploc);
+  gl.vertexAttribPointer(ploc, 2, gl.FLOAT, false, 16, 0);
+  gl.enableVertexAttribArray(tloc);
+  gl.vertexAttribPointer(tloc, 2, gl.FLOAT, false, 16, 8);
   tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -116,29 +124,53 @@ function initGl() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   swizzleLoc = gl.getUniformLocation(prog, 'bgra');
+  gl.clearColor(0, 0, 0, 1);
 }
 if (gl) initGl();
 
+/** The screens of the current layout for a picture of w×h: { width, height, quads: [{ src, dst }] } in pixels. */
+const arrangement = (w, h) => ctrLayout(layoutId, w, h);
+
 let pendingFrame = null;
+let lastFrame = null;
 function drawFrame() {
-  const f = pendingFrame;
+  const f = pendingFrame || lastFrame;
   pendingFrame = null;
   if (!f || !gl) return;
-  if (canvas.width !== f.w || canvas.height !== f.h) {
-    canvas.width = f.w;
-    canvas.height = f.h;
-    gl.viewport(0, 0, f.w, f.h);
+  lastFrame = f;
+  const lay = arrangement(f.w, f.h);
+  if (canvas.width !== lay.width || canvas.height !== lay.height) {
+    canvas.width = lay.width;
+    canvas.height = lay.height;
+    gl.viewport(0, 0, lay.width, lay.height);
     layout();
   }
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, f.w, f.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, f.px);
   gl.uniform1i(swizzleLoc, f.bgra ? 1 : 0);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  // two quads (x, y in clip space, u, v in the picture): a triangle strip each
+  const v = new Float32Array(lay.quads.length * 16);
+  lay.quads.forEach(({ src, dst }, i) => {
+    const x0 = (dst.x / lay.width) * 2 - 1;
+    const x1 = ((dst.x + dst.w) / lay.width) * 2 - 1;
+    const y0 = 1 - (dst.y / lay.height) * 2;
+    const y1 = 1 - ((dst.y + dst.h) / lay.height) * 2;
+    const u0 = src.x / f.w;
+    const u1 = (src.x + src.w) / f.w;
+    const v0 = src.y / f.h;
+    const v1 = (src.y + src.h) / f.h;
+    v.set([x0, y1, u0, v1, x1, y1, u1, v1, x0, y0, u0, v0, x1, y0, u1, v0], i * 16);
+  });
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, v, gl.DYNAMIC_DRAW);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  for (let i = 0; i < lay.quads.length; i++) gl.drawArrays(gl.TRIANGLE_STRIP, i * 4, 4);
 }
 function onVideo(p) {
   const v = new DataView(p.buffer, p.byteOffset, 8);
   const w = v.getUint16(0, true);
   const h = v.getUint16(2, true);
   const bgra = v.getUint32(4, true) === 0;
+  if (!w || !h || p.length < 8 + w * h * 4) return;
   if (!pendingFrame) requestAnimationFrame(drawFrame);
   pendingFrame = { w, h, bgra, px: p.subarray(8, 8 + w * h * 4) };
   st.frames++;
@@ -256,10 +288,11 @@ function onEvent(p) {
     showError(t('ctr.failed', 'The 3DS game can’t run: {why}', { why: e.message }));
   }
 }
-function showError(text) {
+function showError(text, code = null) {
   const w = document.getElementById('wait');
   if (w) w.textContent = text;
-  post({ type: 'emu-error', message: text });
+  // (detail: the host's last log lines – the graphics card, the driver – for "Save diagnostics")
+  post({ type: 'emu-error', message: text, code, detail: st.log.slice(-12).join('\n') });
 }
 
 // ---- the stream from the host ------------------------------------------------------------------------------------
@@ -314,7 +347,16 @@ async function pump() {
   st.ended = true;
   waiters.state.splice(0).forEach((f) => f(null));
   waiters.loaded.splice(0).forEach((f) => f(false));
-  if (!st.error) showError(t('ctr.stopped', 'The 3DS game stopped. Close the game and start it again.'));
+  if (st.error) return;
+  // how the host ended (a crash in the graphics driver shows only as an exit code): asked before the page closes it
+  let why = '';
+  try {
+    const s = await fetch('/api/ctr/status').then((r) => r.json());
+    if (s?.session?.id === st.id) why = s.session.exitText || '';
+  } catch {
+    // the server is gone too
+  }
+  showError(why ? t('ctr.stoppedWhy', 'The 3DS game stopped ({why}).', { why }) : t('ctr.stopped', 'The 3DS game stopped. Close the game and start it again.'));
 }
 
 // ---- input ------------------------------------------------------------------------------------------------------------
@@ -373,23 +415,26 @@ addEventListener('blur', () => {
   sendInput();
 });
 
-// touch: the mouse on the bottom screen (the core takes a pointer over the whole picture, -0x7fff…0x7fff)
-function pointer(e) {
+// touch: the mouse on the bottom screen, wherever the layout puts it – the core takes a pointer over its own picture
+// (-0x7fff…0x7fff, the screens on top of each other); a click on the top screen isn't a touch, and a drag that leaves
+// the bottom screen stays on its edge
+function pointer(e, start) {
   const r = canvas.getBoundingClientRect();
-  const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-  const y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
-  inp.px = Math.round(x * 0xfffe - 0x7fff);
-  inp.py = Math.round(y * 0xfffe - 0x7fff);
+  const at = ctrTouchAt(arrangement(st.width, st.height), (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, { clamp: !start });
+  if (!at) return false;
+  inp.px = Math.round(at.x * 0xfffe - 0x7fff);
+  inp.py = Math.round(at.y * 0xfffe - 0x7fff);
+  return true;
 }
 canvas.addEventListener('pointerdown', (e) => {
+  if (!pointer(e, true)) return;
   canvas.setPointerCapture(e.pointerId);
-  pointer(e);
   inp.touch = true;
   sendInput();
 });
 canvas.addEventListener('pointermove', (e) => {
   if (!inp.touch) return;
-  pointer(e);
+  pointer(e, false);
   sendInput();
 });
 const lift = () => {
@@ -541,6 +586,15 @@ window.__emu = {
     sendInput();
   },
   title: () => st.title,
+  /** The screen layout (shared/ctrlayout.mjs CTR_LAYOUTS): applied to the next picture, no restart. */
+  setOption(k, v) {
+    if (k === 'ctr_layout' && CTR_LAYOUTS.includes(v)) {
+      layoutId = v;
+      if (inp.touch) lift();
+      drawFrame();
+    }
+  },
+  layout: () => layoutId,
   /** More memory to read (at most 16 regions of 64 KB together with the game's own) – diagnostics and research. */
   watch(regions = []) {
     extraRegions = regions.filter((r) => Number.isInteger(r.addr) && Number.isInteger(r.len) && r.len > 0 && r.len <= 65536);
@@ -566,7 +620,7 @@ async function start() {
     body: JSON.stringify({ rom: q.get('rom'), key: q.get('key'), scale: Number(q.get('scale')) || 1 }),
   });
   const j = await res.json().catch(() => ({}));
-  if (!res.ok) return showError(serverErrorText(j, res.status));
+  if (!res.ok) return showError(serverErrorText(j, res.status), j.code || null);
   st.id = j.id;
   st.liveMemory = !!j.liveMemory;
   const stop = () => fetch('/api/ctr/stop', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json', 'x-soullink': '1' }, body: JSON.stringify({ id: st.id }) }).catch(() => {});

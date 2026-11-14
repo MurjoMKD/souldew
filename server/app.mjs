@@ -19,7 +19,7 @@ import { SaveWatcher } from './lib/savewatch.mjs';
 import { EMULATORS, detectEmulator, installEmulator, launchRom, revealInFileManager, emulatorRunning } from './lib/emulator.mjs';
 import { LiveBridge } from './lib/livebridge.mjs';
 import { AzaharBridge, enableRpc } from './lib/azahar.mjs';
-import { CtrSessions, ctrTools, saveStamp } from './lib/ctr.mjs';
+import { CtrSessions, ctrTools, saveStamp, ctrInventory, redactHome, ctrEncrypted } from './lib/ctr.mjs';
 import { NativeSessions, nativeTools, NATIVE_CORES } from './lib/native.mjs';
 import { moveToGraveyard, parseHgssSave } from '../shared/gen4save.mjs';
 import { listPresets, savePreset, deletePreset } from './lib/presets.mjs';
@@ -1327,12 +1327,17 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
   route('GET', /^\/api\/live\/azahar$/, () => azaharBridge().status());
   // ---- 3DS in the built-in player ------------------------------------------------------------------------------
   route('GET', /^\/api\/ctr\/status$/, () => ({ tools: ctrToolsNow(), session: ctr.status() }));
+  // "Save diagnostics": the graphics card, how the last 3DS / fast-player game ended and what its host wrote last
+  route('GET', /^\/api\/diagnostics\/players$/, () => JSON.parse(redactHome(JSON.stringify({ ctr: { tools: ctrToolsNow(), inventory: ctrInventory(), ...ctr.diagnostics() }, native: native.diagnostics() }))));
   route('POST', /^\/api\/ctr\/start$/, async (req) => {
     const { rom, key, scale } = await readBody(req);
     const tools = ctrToolsNow();
     if (!tools.ok) throw httpError(409, 'Der 3DS-Teil von souldew fehlt', 'ctrMissing');
     if (typeof key !== 'string' || !key || key.length > 600) throw httpError(400, 'Ungültiger Spielstand-Schlüssel', 'badKey');
-    const id = ctr.start({ rom: romPathFromUrl(rom), key, tools, scale: [1, 2, 3].includes(scale) ? scale : 1 });
+    const romPath = romPathFromUrl(rom);
+    // an encrypted cartridge dump: Azahar's core plays decrypted games only – say so instead of "couldn't load the game"
+    if (ctrEncrypted(romPath)) throw httpError(409, 'Die 3DS-Spieldatei ist verschlüsselt', 'ctrEncrypted');
+    const id = ctr.start({ rom: romPath, key, tools, scale: [1, 2, 3].includes(scale) ? scale : 1 });
     return { id, liveMemory: tools.souldewCore };
   });
   // the game's own saves changed? (a fingerprint – see saveStamp)

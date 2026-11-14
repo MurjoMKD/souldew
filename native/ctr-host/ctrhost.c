@@ -11,7 +11,9 @@
 //                    4 MEM    u32 count, count × { u32 addr, u32 len, bytes }  the watched regions, between frames
 //                    5 STATE  a save state (answer to SAVE)
 //                    6 LOG    text
-//                    7 EVENT  json  { event: 'loaded' | 'error' | 'stateLoaded' | 'stats', … }
+//                    7 EVENT  json  { event: 'gpu' | 'loaded' | 'error' | 'stateLoaded' | 'stats' | 'title', … }
+//                                   gpu: the Vulkan device chosen (name, type, vendor, driver …) – sent before the core
+//                                   touches it, so a crash in the driver still says which one it was
 //   souldew → host   1 INPUT  u32 joypad bits (RETRO_DEVICE_ID_JOYPAD_*), s16 lx, ly, rx, ry, s16 px, py (pointer,
 //                             -0x7fff…0x7fff over the whole picture), u8 pressed
 //                    2 SPEED  f32 (1 = normal, 0 = paused, ≥ 100 = as fast as possible)
@@ -20,6 +22,13 @@
 // Memory reads go through souldew_read_memory (native/azahar-patch: the game process's virtual memory, page by page)
 // between two frames – never torn. Azahar's own core (no patch) runs the game without live data.
 // Builds on macOS, Linux and Windows (compat.h); scripts/build-ctr.mjs builds it.
+//
+// Environment (diagnostics): CTRHOST_GPU=<n> uses the n-th Vulkan device (default: the best one – a discrete card
+// before an integrated one, never a CPU renderer); CTRHOST_ALL_EXTENSIONS=1 offers the core every device extension
+// (see core_gipa); CTRHOST_OLD3DS=1 runs the game in Old 3DS mode; CTRHOST_DEBUG=1 logs input queries.
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE // dladdr / Dl_info (glibc) – before any system header
+#endif
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include "libretro.h"
@@ -40,6 +49,11 @@
 
 static void die(const char *fmt, ...);
 static void logf_(const char *fmt, ...);
+
+// What the host is doing right now and which graphics card it uses – for the crash report (a crash in the graphics
+// driver or the core otherwise only shows as an exit code).
+static const char *volatile stage = "starting";
+static char gpu_desc[400] = "not chosen yet";
 
 // ---- options ---------------------------------------------------------------------------------------------------
 static const char *opt_core, *opt_vulkan, *opt_rom, *opt_system, *opt_save, *opt_dump;
@@ -135,6 +149,21 @@ static void die(const char *fmt, ...) {
   fflush(stderr);
   fflush(stdout);
   _exit(1);
+}
+
+/** A crash (signal / Windows exception, compat.h): one line to stderr and – if the pipe is free – an error event. */
+static void on_crash(const char *what) {
+  char buf[1024], esc[900];
+  int n = snprintf(buf, sizeof buf, "crashed: %s while %s (GPU: %s)", what, (const char *)stage, gpu_desc);
+  if (n <= 0) return;
+  if (n >= (int)sizeof buf) n = sizeof buf - 1;
+  fprintf(stderr, "ctrhost: %s\n", buf);
+  fflush(stderr);
+  if (protocol && compat_trylock(&out_lock)) { // (never wait: the crashing thread may hold it)
+    pthread_mutex_unlock(&out_lock);
+    json_escape(esc, sizeof esc, buf);
+    send_event("{\"event\":\"error\",\"crash\":true,\"message\":\"%s\"}", esc);
+  }
 }
 
 // ---- the core --------------------------------------------------------------------------------------------------
@@ -247,6 +276,7 @@ DEV_FN(vkWaitForFences); DEV_FN(vkResetFences); DEV_FN(vkCreateBuffer); DEV_FN(v
 DEV_FN(vkAllocateMemory); DEV_FN(vkBindBufferMemory); DEV_FN(vkMapMemory); DEV_FN(vkDestroyBuffer); DEV_FN(vkFreeMemory);
 DEV_FN(vkResetCommandBuffer); DEV_FN(vkQueueWaitIdle);
 static PFN_vkGetPhysicalDeviceMemoryProperties vkGetPhysicalDeviceMemoryProperties_;
+static PFN_vkEnumerateDeviceExtensionProperties real_enum_dev_ext;
 
 static VkCommandPool cmd_pool;
 static VkCommandBuffer cmd;
@@ -277,21 +307,194 @@ static void *load_vk(const char *path) {
   if (!lib) die("Vulkan library not loadable: %s", dlerror());
   gipa = (PFN_vkGetInstanceProcAddr)dlsym(lib, "vkGetInstanceProcAddr");
   if (!gipa) die("vkGetInstanceProcAddr missing in %s", path);
+  char where[1024];
+  compat_lib_path((const void *)gipa, where, sizeof where);
+  logf_("Vulkan loader: %s (asked for %s)", *where ? where : "?", path);
+  PFN_vkEnumerateInstanceVersion ver = (PFN_vkEnumerateInstanceVersion)gipa(NULL, "vkEnumerateInstanceVersion");
+  uint32_t v = VK_API_VERSION_1_0;
+  if (ver) ver(&v);
+  logf_("Vulkan loader version %u.%u.%u", v >> 22, (v >> 12) & 0x3ff, v & 0xfff);
   return lib;
+}
+
+// The core creates its Vulkan device itself (create_device below) and enables only a few extensions there – but its
+// renderer then decides which optional features to use from the extensions the GPU *offers* (Azahar 2126.2,
+// vk_instance.cpp: timeline semaphores, extended dynamic state, 8-bit indices, shader interlock / barycentrics, pipeline
+// cache control). Used on a device that never enabled them, that is undefined behaviour: MoltenVK shrugs it off, other
+// drivers may crash (the standalone Azahar enables them properly, which is why it runs where the player didn't).
+// So the core is shown only the extensions it really gets: its device-extension list leaves these out, and the
+// renderer takes its fallbacks (fences, static state, 16-bit indices, plain shaders).
+static const char *const HIDDEN_EXTS[] = {
+  "VK_KHR_timeline_semaphore", "VK_EXT_extended_dynamic_state", "VK_EXT_index_type_uint8", "VK_EXT_fragment_shader_interlock",
+  "VK_EXT_pipeline_creation_cache_control", "VK_KHR_fragment_shader_barycentric", NULL,
+};
+static int all_exts; // CTRHOST_ALL_EXTENSIONS=1: no filtering (to compare)
+static int hidden_ext(const char *name) {
+  if (all_exts) return 0;
+  for (int i = 0; HIDDEN_EXTS[i]; i++)
+    if (!strcmp(name, HIDDEN_EXTS[i])) return 1;
+  return 0;
+}
+/** All of a device's extensions (calloc'd, *n of them), or NULL. */
+static VkExtensionProperties *device_exts(VkPhysicalDevice pd, const char *layer, uint32_t *n) {
+  *n = 0;
+  if (!real_enum_dev_ext) return NULL;
+  for (int tries = 0; tries < 4; tries++) {
+    uint32_t c = 0;
+    if (real_enum_dev_ext(pd, layer, &c, NULL) != VK_SUCCESS) return NULL;
+    VkExtensionProperties *all = calloc(c ? c : 1, sizeof *all);
+    if (!all) return NULL;
+    VkResult r = real_enum_dev_ext(pd, layer, &c, all);
+    if (r == VK_SUCCESS) {
+      *n = c;
+      return all;
+    }
+    free(all);
+    if (r != VK_INCOMPLETE) return NULL;
+  }
+  return NULL;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL filtered_enum_dev_ext(VkPhysicalDevice pd, const char *layer, uint32_t *count, VkExtensionProperties *props) {
+  uint32_t n = 0, k = 0;
+  VkExtensionProperties *all = device_exts(pd, layer, &n);
+  if (!all) return real_enum_dev_ext(pd, layer, count, props);
+  for (uint32_t i = 0; i < n; i++)
+    if (!hidden_ext(all[i].extensionName)) all[k++] = all[i];
+  VkResult r = VK_SUCCESS;
+  if (props) {
+    if (*count < k) k = *count, r = VK_INCOMPLETE;
+    memcpy(props, all, k * sizeof *all);
+  }
+  *count = k;
+  free(all);
+  return r;
+}
+/** vkGetInstanceProcAddr as the core sees it: the device-extension list without HIDDEN_EXTS. */
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL core_gipa(VkInstance inst, const char *name) {
+  if (inst && name && !strcmp(name, "vkEnumerateDeviceExtensionProperties") && real_enum_dev_ext) return (PFN_vkVoidFunction)filtered_enum_dev_ext;
+  return gipa(inst, name);
+}
+
+static const char *gpu_type_name(VkPhysicalDeviceType t) {
+  switch (t) {
+  case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return "discrete";
+  case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return "integrated";
+  case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: return "virtual";
+  case VK_PHYSICAL_DEVICE_TYPE_CPU: return "cpu";
+  default: return "other";
+  }
+}
+/** The driver version as the vendor numbers it (NVIDIA and Intel on Windows have their own schemes). */
+static void driver_version(char *out, size_t cap, uint32_t vendor, uint32_t v) {
+  if (vendor == 0x10DE) snprintf(out, cap, "%u.%u.%u", (v >> 22) & 0x3ff, (v >> 14) & 0xff, (v >> 6) & 0xff);
+#ifdef _WIN32
+  else if (vendor == 0x8086) snprintf(out, cap, "%u.%u", v >> 14, v & 0x3fff);
+#endif
+  else snprintf(out, cap, "%u.%u.%u", v >> 22, (v >> 12) & 0x3ff, v & 0xfff);
+}
+/** Usable for the core: Vulkan 1.1 and a graphics queue. Higher is better (discrete > integrated > virtual > other). */
+static int gpu_score(VkPhysicalDevice d, const VkPhysicalDeviceProperties *p) {
+  if ((p->apiVersion >> 22) == 1 && ((p->apiVersion >> 12) & 0x3ff) < 1) return -1;
+  PFN_vkGetPhysicalDeviceQueueFamilyProperties qf = (PFN_vkGetPhysicalDeviceQueueFamilyProperties)gipa(instance, "vkGetPhysicalDeviceQueueFamilyProperties");
+  uint32_t nq = 0;
+  if (qf) qf(d, &nq, NULL);
+  VkQueueFamilyProperties q[32];
+  if (nq > 32) nq = 32;
+  if (qf && nq) qf(d, &nq, q);
+  int graphics = 0;
+  for (uint32_t i = 0; i < nq; i++) graphics |= !!(q[i].queueFlags & VK_QUEUE_GRAPHICS_BIT);
+  if (!graphics) return -1;
+  switch (p->deviceType) {
+  case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return 4;
+  case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return 3;
+  case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: return 2;
+  case VK_PHYSICAL_DEVICE_TYPE_CPU: return 0;
+  default: return 1;
+  }
+}
+
+/** Pick the graphics card, tell souldew which one (event "gpu" + log), before the core gets to it. */
+static void choose_gpu(void) {
+  PFN_vkEnumeratePhysicalDevices enum_dev = (PFN_vkEnumeratePhysicalDevices)gipa(instance, "vkEnumeratePhysicalDevices");
+  PFN_vkGetPhysicalDeviceProperties props_fn = (PFN_vkGetPhysicalDeviceProperties)gipa(instance, "vkGetPhysicalDeviceProperties");
+  PFN_vkGetPhysicalDeviceProperties2 props2_fn = (PFN_vkGetPhysicalDeviceProperties2)gipa(instance, "vkGetPhysicalDeviceProperties2");
+  if (!props2_fn) props2_fn = (PFN_vkGetPhysicalDeviceProperties2)gipa(instance, "vkGetPhysicalDeviceProperties2KHR");
+  uint32_t nd = 0;
+  VkResult r = enum_dev ? enum_dev(instance, &nd, NULL) : VK_ERROR_INITIALIZATION_FAILED;
+  if (r != VK_SUCCESS || !nd) die("no Vulkan graphics card found (vkEnumeratePhysicalDevices: %d, %u devices) – update the graphics driver", r, nd);
+  VkPhysicalDevice devs[16];
+  if (nd > 16) nd = 16;
+  r = enum_dev(instance, &nd, devs);
+  if (r != VK_SUCCESS && r != VK_INCOMPLETE) die("vkEnumeratePhysicalDevices failed (%d)", r);
+  const char *force = getenv("CTRHOST_GPU");
+  int best = -1, best_score = -1;
+  VkPhysicalDeviceProperties p[16];
+  for (uint32_t i = 0; i < nd; i++) {
+    props_fn(devs[i], &p[i]);
+    int sc = gpu_score(devs[i], &p[i]);
+    char drv[32];
+    driver_version(drv, sizeof drv, p[i].vendorID, p[i].driverVersion);
+    logf_("Vulkan device %u: %s (%s, %04x:%04x, driver %s, Vulkan %u.%u.%u)%s", i, p[i].deviceName, gpu_type_name(p[i].deviceType), p[i].vendorID,
+          p[i].deviceID, drv, p[i].apiVersion >> 22, (p[i].apiVersion >> 12) & 0x3ff, p[i].apiVersion & 0xfff, sc < 0 ? " – not usable" : "");
+    if (sc > best_score) best = (int)i, best_score = sc;
+  }
+  if (force && *force >= '0' && *force <= '9' && (uint32_t)atoi(force) < nd) best = atoi(force);
+  if (best < 0) die("no usable Vulkan graphics card (Vulkan 1.1 with graphics is needed) – update the graphics driver");
+  gpu = devs[best];
+  const VkPhysicalDeviceProperties *g = &p[best];
+  char drv[32], name[300] = "", info[300] = "";
+  driver_version(drv, sizeof drv, g->vendorID, g->driverVersion);
+  // the driver's own name and version text (VK_KHR_driver_properties), e.g. "AMD proprietary driver" "25.10.2"
+  uint32_t ne = 0;
+  VkExtensionProperties *exts = device_exts(gpu, NULL, &ne);
+  int has_driver_props = ((g->apiVersion >> 22) > 1 || ((g->apiVersion >> 12) & 0x3ff) >= 2);
+  for (uint32_t i = 0; i < ne; i++) has_driver_props |= !strcmp(exts[i].extensionName, "VK_KHR_driver_properties");
+  if (props2_fn && has_driver_props) {
+    VkPhysicalDeviceDriverPropertiesKHR dp;
+    memset(&dp, 0, sizeof dp);
+    dp.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES_KHR;
+    VkPhysicalDeviceProperties2 p2;
+    memset(&p2, 0, sizeof p2);
+    p2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    p2.pNext = &dp;
+    props2_fn(gpu, &p2);
+    snprintf(name, sizeof name, "%s", dp.driverName);
+    snprintf(info, sizeof info, "%s", dp.driverInfo);
+  }
+  // which extensions the core won't see (it couldn't enable them – see HIDDEN_EXTS)
+  char hidden[400] = "";
+  size_t hl = 0;
+  for (uint32_t i = 0; i < ne && hl + 64 < sizeof hidden; i++)
+    if (hidden_ext(exts[i].extensionName)) hl += (size_t)snprintf(hidden + hl, sizeof hidden - hl, "%s%s", hl ? " " : "", exts[i].extensionName);
+  free(exts);
+  snprintf(gpu_desc, sizeof gpu_desc, "%s, %s, %04x:%04x, driver %s%s%s%s%s, Vulkan %u.%u.%u", g->deviceName, gpu_type_name(g->deviceType), g->vendorID,
+           g->deviceID, drv, *name ? " " : "", name, *info ? " " : "", info, g->apiVersion >> 22, (g->apiVersion >> 12) & 0x3ff, g->apiVersion & 0xfff);
+  logf_("Vulkan: using device %d of %u – %s", best, nd, gpu_desc);
+  if (*hidden) logf_("Vulkan: left out for the core (a libretro device doesn't enable them): %s", hidden);
+  char e_name[600], e_drv[700];
+  json_escape(e_name, sizeof e_name, g->deviceName);
+  char drv_all[400];
+  snprintf(drv_all, sizeof drv_all, "%s%s%s%s%s", drv, *name ? " " : "", name, *info ? " " : "", info);
+  json_escape(e_drv, sizeof e_drv, drv_all);
+  send_event("{\"event\":\"gpu\",\"name\":\"%s\",\"type\":\"%s\",\"vendor\":\"%04x\",\"device\":\"%04x\",\"driver\":\"%s\",\"api\":\"%u.%u.%u\",\"index\":%d,\"count\":%u,\"filtered\":%s}",
+             e_name, gpu_type_name(g->deviceType), g->vendorID, g->deviceID, e_drv, g->apiVersion >> 22, (g->apiVersion >> 12) & 0x3ff, g->apiVersion & 0xfff, best, nd,
+             all_exts ? "false" : "true");
 }
 
 static void vk_setup(void) {
   const VkApplicationInfo *app = negotiation && negotiation->get_application_info ? negotiation->get_application_info() : NULL;
   VkApplicationInfo def = {VK_STRUCTURE_TYPE_APPLICATION_INFO, NULL, "souldew", 1, "souldew", 1, VK_API_VERSION_1_1};
   PFN_vkEnumerateInstanceExtensionProperties enum_ext = (PFN_vkEnumerateInstanceExtensionProperties)gipa(NULL, "vkEnumerateInstanceExtensionProperties");
+  PFN_vkCreateInstance create_instance = (PFN_vkCreateInstance)gipa(NULL, "vkCreateInstance");
+  if (!enum_ext || !create_instance) die("the Vulkan loader is incomplete (vkCreateInstance missing) – reinstall the graphics driver");
   uint32_t n = 0;
   enum_ext(NULL, &n, NULL);
   VkExtensionProperties *props = calloc(n ? n : 1, sizeof *props);
-  enum_ext(NULL, &n, props);
+  if (props && enum_ext(NULL, &n, props) != VK_SUCCESS) n = 0;
   const char *exts[4];
   uint32_t ne = 0;
   VkInstanceCreateFlags flags = 0;
-  for (uint32_t i = 0; i < n; i++) {
+  for (uint32_t i = 0; props && i < n; i++) {
     if (!strcmp(props[i].extensionName, VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) exts[ne++] = VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
     if (!strcmp(props[i].extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
       exts[ne++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
@@ -300,23 +503,29 @@ static void vk_setup(void) {
   }
   free(props);
   VkInstanceCreateInfo ici = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, NULL, flags, app ? app : &def, 0, NULL, ne, exts};
-  PFN_vkCreateInstance create_instance = (PFN_vkCreateInstance)gipa(NULL, "vkCreateInstance");
+  {
+    const VkApplicationInfo *ai = ici.pApplicationInfo;
+    logf_("Vulkan instance: API %u.%u for %s, %u of %u instance extensions:%s%s%s%s", ai->apiVersion >> 22, (ai->apiVersion >> 12) & 0x3ff,
+          ai->pApplicationName ? ai->pApplicationName : "?", ne, n, ne > 0 ? " " : "", ne > 0 ? exts[0] : "", ne > 1 ? " " : "", ne > 1 ? exts[1] : "");
+  }
+  stage = "creating the Vulkan instance";
   VkResult r = create_instance(&ici, NULL, &instance);
-  if (r != VK_SUCCESS) die("vkCreateInstance failed (%d)", r);
-  PFN_vkEnumeratePhysicalDevices enum_dev = (PFN_vkEnumeratePhysicalDevices)gipa(instance, "vkEnumeratePhysicalDevices");
-  uint32_t nd = 0;
-  enum_dev(instance, &nd, NULL);
-  if (!nd) die("no Vulkan GPU found");
-  VkPhysicalDevice devs[8];
-  if (nd > 8) nd = 8;
-  enum_dev(instance, &nd, devs);
-  gpu = devs[0];
+  if (r != VK_SUCCESS) die("vkCreateInstance failed (%d) – the graphics driver doesn't offer Vulkan 1.1", r);
   gdpa = (PFN_vkGetDeviceProcAddr)gipa(instance, "vkGetDeviceProcAddr");
   vkGetPhysicalDeviceMemoryProperties_ = (PFN_vkGetPhysicalDeviceMemoryProperties)gipa(instance, "vkGetPhysicalDeviceMemoryProperties");
+  real_enum_dev_ext = (PFN_vkEnumerateDeviceExtensionProperties)gipa(instance, "vkEnumerateDeviceExtensionProperties");
+  all_exts = !!getenv("CTRHOST_ALL_EXTENSIONS");
+  stage = "choosing the graphics card";
+  choose_gpu();
 
   memset(&vkctx, 0, sizeof vkctx);
   if (!negotiation || !negotiation->create_device) die("the core offers no Vulkan device creation");
-  if (!negotiation->create_device(&vkctx, instance, gpu, VK_NULL_HANDLE, gipa, NULL, 0, NULL, 0, NULL)) die("the core couldn't create its Vulkan device");
+  stage = "creating the Vulkan device (core)";
+  if (!negotiation->create_device(&vkctx, instance, gpu, VK_NULL_HANDLE, core_gipa, NULL, 0, NULL, 0, NULL))
+    die("the core couldn't create its Vulkan device (vkCreateDevice – see the [core] lines before) – GPU: %s", gpu_desc);
+  if (!vkctx.device || !vkctx.queue) die("the core's Vulkan device has no queue");
+  logf_("Vulkan device created: queue family %u", vkctx.queue_family_index);
+  stage = "setting up the picture readback";
 
 #define LOADD(name) name##_ = (PFN_##name)gdpa(vkctx.device, #name); if (!name##_) die("missing %s", #name)
   LOADD(vkCreateCommandPool); LOADD(vkAllocateCommandBuffers); LOADD(vkBeginCommandBuffer); LOADD(vkEndCommandBuffer);
@@ -326,11 +535,11 @@ static void vk_setup(void) {
   LOADD(vkResetCommandBuffer); LOADD(vkQueueWaitIdle);
 
   VkCommandPoolCreateInfo pci = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, NULL, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, vkctx.queue_family_index};
-  vkCreateCommandPool_(vkctx.device, &pci, NULL, &cmd_pool);
+  if ((r = vkCreateCommandPool_(vkctx.device, &pci, NULL, &cmd_pool)) != VK_SUCCESS) die("vkCreateCommandPool failed (%d)", r);
   VkCommandBufferAllocateInfo cai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, NULL, cmd_pool, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
-  vkAllocateCommandBuffers_(vkctx.device, &cai, &cmd);
+  if ((r = vkAllocateCommandBuffers_(vkctx.device, &cai, &cmd)) != VK_SUCCESS) die("vkAllocateCommandBuffers failed (%d)", r);
   VkFenceCreateInfo fci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, NULL, 0};
-  vkCreateFence_(vkctx.device, &fci, NULL, &fence);
+  if ((r = vkCreateFence_(vkctx.device, &fci, NULL, &fence)) != VK_SUCCESS) die("vkCreateFence failed (%d)", r);
 
   vkif.interface_type = RETRO_HW_RENDER_INTERFACE_VULKAN;
   vkif.interface_version = RETRO_HW_RENDER_INTERFACE_VULKAN_VERSION;
@@ -339,7 +548,7 @@ static void vk_setup(void) {
   vkif.gpu = vkctx.gpu ? vkctx.gpu : gpu;
   vkif.device = vkctx.device;
   vkif.get_device_proc_addr = gdpa;
-  vkif.get_instance_proc_addr = gipa;
+  vkif.get_instance_proc_addr = core_gipa;
   vkif.queue = vkctx.queue;
   vkif.queue_index = vkctx.queue_family_index;
   vkif.set_image = vk_set_image;
@@ -359,7 +568,7 @@ static void ensure_readback(VkDeviceSize size) {
     vkFreeMemory_(vkctx.device, rb_mem, NULL);
   }
   VkBufferCreateInfo bci = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, NULL, 0, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_SHARING_MODE_EXCLUSIVE, 0, NULL};
-  vkCreateBuffer_(vkctx.device, &bci, NULL, &rb_buf);
+  if (vkCreateBuffer_(vkctx.device, &bci, NULL, &rb_buf) != VK_SUCCESS) die("readback buffer (%llu bytes)", (unsigned long long)size);
   VkMemoryRequirements req;
   vkGetBufferMemoryRequirements_(vkctx.device, rb_buf, &req);
   VkPhysicalDeviceMemoryProperties mp;
@@ -375,8 +584,8 @@ static void ensure_readback(VkDeviceSize size) {
   if (type == UINT32_MAX) die("no host-visible Vulkan memory");
   VkMemoryAllocateInfo mai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, NULL, req.size, type};
   if (vkAllocateMemory_(vkctx.device, &mai, NULL, &rb_mem) != VK_SUCCESS) die("readback memory");
-  vkBindBufferMemory_(vkctx.device, rb_buf, rb_mem, 0);
-  vkMapMemory_(vkctx.device, rb_mem, 0, VK_WHOLE_SIZE, 0, &rb_ptr);
+  if (vkBindBufferMemory_(vkctx.device, rb_buf, rb_mem, 0) != VK_SUCCESS || vkMapMemory_(vkctx.device, rb_mem, 0, VK_WHOLE_SIZE, 0, &rb_ptr) != VK_SUCCESS || !rb_ptr)
+    die("readback memory can't be mapped");
   rb_size = size;
 }
 
@@ -386,6 +595,11 @@ static const uint8_t *readback(int w, int h, int *bgra) {
   VkImage image = cur_image->create_info.image;
   VkFormat fmt = cur_image->create_info.format;
   *bgra = fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SRGB;
+  static int warned_fmt;
+  if (!*bgra && fmt != VK_FORMAT_R8G8B8A8_UNORM && fmt != VK_FORMAT_R8G8B8A8_SRGB && fmt != VK_FORMAT_A8B8G8R8_UNORM_PACK32 && !warned_fmt) {
+    warned_fmt = 1; // (4 bytes a pixel is all the readback knows – a wider format would overrun the buffer)
+    if (fmt != VK_FORMAT_A8B8G8R8_SRGB_PACK32) die("unexpected picture format from the core (VkFormat %d)", (int)fmt);
+  }
   ensure_readback((VkDeviceSize)w * h * 4);
   vkResetCommandBuffer_(cmd, 0);
   VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, NULL};
@@ -412,8 +626,15 @@ static const uint8_t *readback(int w, int h, int *bgra) {
   pthread_mutex_lock(&queue_lock);
   VkResult r = vkQueueSubmit_(vkctx.queue, 1, &si, fence);
   pthread_mutex_unlock(&queue_lock);
-  if (r != VK_SUCCESS) return NULL;
-  vkWaitForFences_(vkctx.device, 1, &fence, VK_TRUE, UINT64_MAX);
+  if (r == VK_ERROR_DEVICE_LOST) die("the graphics driver stopped the game's GPU work (VK_ERROR_DEVICE_LOST) – GPU: %s", gpu_desc);
+  if (r != VK_SUCCESS) {
+    static int warned;
+    if (!warned++) logf_("vkQueueSubmit failed (%d) – picture skipped", r);
+    return NULL;
+  }
+  r = vkWaitForFences_(vkctx.device, 1, &fence, VK_TRUE, 10ull * 1000 * 1000 * 1000);
+  if (r == VK_ERROR_DEVICE_LOST) die("the graphics driver stopped the game's GPU work (VK_ERROR_DEVICE_LOST) – GPU: %s", gpu_desc);
+  if (r == VK_TIMEOUT) die("the graphics card didn't finish a picture in 10 seconds (GPU: %s)", gpu_desc);
   vkResetFences_(vkctx.device, 1, &fence);
   return rb_ptr;
 }
@@ -452,12 +673,16 @@ static void video_refresh(const void *data, unsigned w, unsigned h, size_t pitch
 
 // ---- environment -------------------------------------------------------------------------------------------------
 static void core_log(enum retro_log_level level, const char *fmt, ...) {
-  if (level < RETRO_LOG_WARN) return;
+  if (level < RETRO_LOG_INFO) return;
   char buf[2048];
   va_list ap;
   va_start(ap, fmt);
   vsnprintf(buf, sizeof buf, fmt, ap);
   va_end(ap);
+  // warnings and errors always; of the info lines only the renderer's (device, driver, extensions – what a crash on
+  // another PC needs)
+  if (level < RETRO_LOG_WARN && !strstr(buf, "Vulkan") && !strstr(buf, "Render")) return;
+  if (strstr(buf, "Fetching variable")) return; // the core options souldew leaves at their defaults (an error line each)
   logf_("[core] %s", buf);
 }
 
@@ -697,9 +922,12 @@ int main(int argc, char **argv) {
   snprintf(scale_str, sizeof scale_str, "%d", opt_scale);
   if (opt_bench) protocol = 0;
   compat_init();
+  compat_crash_handler(on_crash);
   if (getenv("CTRHOST_DEBUG")) debug_input = 400;
 
+  stage = "loading the Vulkan library";
   load_vk(opt_vulkan);
+  stage = "loading the core";
   void *lib = dlopen(opt_core, RTLD_NOW | RTLD_LOCAL);
   if (!lib) die("core not loadable: %s", dlerror());
   SYM(init, "retro_init"); SYM(deinit, "retro_deinit"); SYM(set_environment, "retro_set_environment");
@@ -718,12 +946,15 @@ int main(int argc, char **argv) {
   core.set_audio_sample_batch(audio_batch);
   core.set_input_poll(input_poll);
   core.set_input_state(input_state);
+  stage = "starting the core";
   core.init();
 
   struct retro_game_info info = {opt_rom, NULL, 0, NULL};
+  stage = "opening the game";
   if (!core.load_game(&info)) die("the core couldn't load the game");
   if (hw.context_type != RETRO_HW_CONTEXT_VULKAN) die("the core didn't ask for Vulkan");
   vk_setup();
+  stage = "starting the renderer (the core loads the game)";
   if (hw.context_reset) hw.context_reset(); // the core loads the game here (Vulkan path)
 
   struct retro_system_av_info av;
@@ -735,6 +966,7 @@ int main(int argc, char **argv) {
 
   if (opt_bench) {
     double t0 = now_s();
+    stage = "running the game (bench)";
     for (int i = 0; i < opt_bench; i++) {
       want_frame = i == opt_bench - 1 || (i % 60) == 0;
       core.run();
@@ -758,6 +990,7 @@ int main(int argc, char **argv) {
     _exit(0);
   }
 
+  stage = "running the first frames";
   pthread_t th;
   pthread_create(&th, NULL, reader, NULL);
   double next = now_s();
@@ -800,7 +1033,7 @@ int main(int argc, char **argv) {
     pthread_mutex_lock(&in_lock);
     if (touch_latch > 0) touch_latch--;
     pthread_mutex_unlock(&in_lock);
-    frame++;
+    if (++frame == 120) stage = "running the game";
     stat_frames++;
     if (audio_n) {
       send_msg(3, audio_buf, (uint32_t)(audio_n * sizeof *audio_buf));

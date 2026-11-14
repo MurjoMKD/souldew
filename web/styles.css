@@ -725,6 +725,10 @@ details.group details.group { margin: 0 14px 8px; }
 .sound-pop .diag-btn { align-self: flex-end; color: var(--ink-3); font-size: 12px; }
 /* cheats: like the volume popover, hung off the bar's right edge */
 .cheat-wrap { display: inline-flex; }
+.layout-wrap { display: inline-flex; }
+.cheat-pop.layout-pop .btn { justify-content: flex-start; }
+.screen-confirm.ctr-failed { top: 10px; align-content: center; background: #121116; z-index: 6; }
+.screen-confirm.ctr-failed > .grow { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; }
 .cheat-pop { position: absolute; bottom: calc(100% + 10px); right: 0; z-index: 8; display: flex; flex-direction: column; align-items: stretch; gap: 8px; width: min(280px, calc(100vw - 32px));
   padding: 10px 12px; background: #18171c; border: 1px solid var(--edge-hi); border-radius: 12px; box-shadow: 0 10px 30px #0009; }
 .cheat-pop .btn { justify-content: center; }
