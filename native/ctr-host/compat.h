@@ -13,6 +13,7 @@
 #include <io.h>
 #include <process.h>
 #include <stdlib.h>
+#include <string.h>
 
 // libraries
 #define RTLD_NOW 0
@@ -46,6 +47,13 @@ static void *dlopen(const char *path, int flags) {
   return (void *)m;
 }
 static void *dlsym(void *lib, const char *name) { return (void *)(uintptr_t)GetProcAddress((HMODULE)lib, name); }
+/** The file a loaded function comes from (which vulkan-1.dll the system really gave us). */
+static void compat_lib_path(const void *fn, char *out, size_t cap) {
+  HMODULE mod = NULL;
+  out[0] = 0;
+  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)fn, &mod) && mod)
+    GetModuleFileNameA(mod, out, (DWORD)cap);
+}
 static const char *dlerror(void) { return compat_dlerr; }
 
 // locks and the command reader thread
@@ -69,6 +77,50 @@ static int pthread_create(pthread_t *t, void *attr, void *(*fn)(void *), void *a
   s->arg = arg;
   *t = (HANDLE)_beginthreadex(NULL, 0, compat_thread_main, s, 0, NULL);
   return *t ? 0 : -1;
+}
+
+static int compat_trylock(pthread_mutex_t *m) { return TryAcquireSRWLockExclusive(m) ? 1 : 0; }
+
+// Crash reports: what went wrong and in which DLL (the graphics driver, the core, the host) – written to stderr, which
+// souldew keeps for "Save diagnostics". No Windows error dialog: it would keep the dead process (and the game's window
+// in souldew) waiting for a click nobody sees.
+#include <signal.h>
+static void (*compat_crash_cb)(const char *what);
+static const char *compat_exception_name(DWORD code) {
+  switch (code) {
+  case EXCEPTION_ACCESS_VIOLATION: return "access violation";
+  case EXCEPTION_ILLEGAL_INSTRUCTION: return "illegal instruction";
+  case EXCEPTION_STACK_OVERFLOW: return "stack overflow";
+  case EXCEPTION_INT_DIVIDE_BY_ZERO: return "division by zero";
+  case EXCEPTION_IN_PAGE_ERROR: return "in-page error";
+  case 0xE06D7363: return "C++ exception";
+  default: return "exception";
+  }
+}
+static LONG WINAPI compat_seh(EXCEPTION_POINTERS *e) {
+  char what[512], path[MAX_PATH] = "?";
+  void *addr = e->ExceptionRecord->ExceptionAddress;
+  DWORD code = e->ExceptionRecord->ExceptionCode;
+  HMODULE mod = NULL;
+  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)addr, &mod) && mod)
+    GetModuleFileNameA(mod, path, sizeof path);
+  const char *base = strrchr(path, '\\');
+  base = base ? base + 1 : path;
+  snprintf(what, sizeof what, "%s 0x%08lX in %s+0x%llx", compat_exception_name(code), (unsigned long)code, base,
+           (unsigned long long)((uintptr_t)addr - (uintptr_t)mod));
+  if (compat_crash_cb) compat_crash_cb(what);
+  return EXCEPTION_CONTINUE_SEARCH;
+}
+static void compat_on_abort(int sig) {
+  (void)sig;
+  if (compat_crash_cb) compat_crash_cb("abort (an uncaught error in the core or the driver)");
+  _exit(3);
+}
+static void compat_crash_handler(void (*cb)(const char *what)) {
+  compat_crash_cb = cb;
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+  SetUnhandledExceptionFilter(compat_seh);
+  signal(SIGABRT, compat_on_abort); // (msvcrt's abort() raises SIGABRT first)
 }
 
 // the protocol runs over stdin / stdout: binary, unbuffered
@@ -127,6 +179,27 @@ static void compat_sleep(double s) {
 #include <time.h>
 #include <unistd.h>
 
+#include <signal.h>
+static int compat_trylock(pthread_mutex_t *m) { return pthread_mutex_trylock(m) == 0; }
+// Crash reports (see the Windows part): the signal, written to stderr, then the default action.
+static void (*compat_crash_cb)(const char *what);
+static void compat_on_signal(int sig) {
+  const char *what = sig == SIGSEGV ? "segmentation fault (SIGSEGV)" : sig == SIGBUS ? "bus error (SIGBUS)"
+    : sig == SIGILL ? "illegal instruction (SIGILL)" : sig == SIGFPE ? "arithmetic error (SIGFPE)" : "abort (SIGABRT)";
+  signal(sig, SIG_DFL);
+  if (compat_crash_cb) compat_crash_cb(what);
+  raise(sig);
+}
+static void compat_crash_handler(void (*cb)(const char *what)) {
+  compat_crash_cb = cb;
+  const int sigs[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT};
+  for (unsigned i = 0; i < sizeof sigs / sizeof *sigs; i++) signal(sigs[i], compat_on_signal);
+}
+static void compat_lib_path(const void *fn, char *out, size_t cap) {
+  Dl_info info;
+  out[0] = 0;
+  if (dladdr(fn, &info) && info.dli_fname) snprintf(out, cap, "%s", info.dli_fname);
+}
 typedef ssize_t compat_ssize;
 static compat_ssize compat_read(int fd, void *b, size_t n) { return read(fd, b, n); }
 static compat_ssize compat_write(int fd, const void *b, size_t n) { return write(fd, b, n); }

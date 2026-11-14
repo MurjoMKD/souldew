@@ -184,7 +184,10 @@ export async function saveDiagnostics(extra = {}) {
   const info = await window.sls?.appInfo?.().catch(() => null);
   // graphics backend, Chromium switches, GPU feature status and graphics cards (desktop app only)
   const gpu = await window.sls?.gpuInfo?.().catch(() => null) ?? null;
-  const dump = diagDump({ app: info ? { version: info.version, packaged: info.packaged, platform: info.platform } : null, gpu, userAgent: navigator.userAgent, lang: document.documentElement.lang, ...extra });
+  // the native players (3DS, fast player): the Vulkan card and driver, how the last game that failed ended, the host's
+  // last words – a crash on someone else's PC is otherwise invisible
+  const players = await fetch('/api/diagnostics/players').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const dump = diagDump({ app: info ? { version: info.version, packaged: info.packaged, platform: info.platform } : null, gpu, players, userAgent: navigator.userAgent, lang: document.documentElement.lang, ...extra });
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   download(`souldew-diagnostics-${stamp}.json`, JSON.stringify(dump));
 }

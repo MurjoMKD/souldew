@@ -65,3 +65,24 @@ Checked 2026-11-11 with the real US images of Omega Ruby, Y, Sun and Ultra Sun (
   wild battles too on 1.0. The battle type sits 0x21 before the in-battle flag (USUM 0x33FC1F44): 1 from a trainer's
   cutscene on, 0 for a wild battle. The battle memory is cleared when a battle ends.
 - **Azahar 2127.0-rc2** for macOS doesn't start (libavdevice missing from the bundle) – 2126.2 is the tag to build.
+
+## Audit 2026-11-14 (Windows install, AMD crash, layouts)
+
+- **Azahar's Windows zip** (azahar-windows-msvc-2126.2.zip, made with PowerShell) uses backslashes and starts with the
+  folder entry `azahar-windows-msvc-2126.2\plugins\` – a reader that only treats a trailing "/" as a folder writes it as
+  an empty file, and every `plugins\…\*.dll` after it fails with ENOTDIR (server/lib/archive.mjs `isFolderEntry`).
+  macOS (azahar-macos-universal, ditto) and Linux (azahar.AppImage, no unpacking) were fine.
+- **The core's libretro device** (libretro_vk.cpp `CreateVulkanDevice`) enables only swapchain, image format list,
+  stencil export, external host memory, tooling info, portability subset and custom border colours; vk_instance.cpp then
+  still turns on timeline semaphores, extended dynamic state, uint8 indices, fragment shader interlock / barycentrics and
+  pipeline cache control when the GPU *offers* them (HAVE_LIBRETRO skips creating the device, not the detection) –
+  undefined behaviour on a device that never enabled them. ctrhost hides those extensions from the core's
+  vkEnumerateDeviceExtensionProperties (`core_gipa`, CTRHOST_ALL_EXTENSIONS=1 to compare); the renderer takes its
+  fallbacks. Same picture and speed on MoltenVK.
+- **Layouts**: the core keeps `citra_layout_option` "default" (400×480, bottom screen at x 40); the page cuts the two
+  screens out of that picture and arranges them (shared/ctrlayout.mjs) – no core option change, no restart, touch mapped
+  back through the same rectangles.
+- **Diagnostics**: ctrhost logs the Vulkan loader file, every device (type, vendor:device, driver), the chosen one and
+  the renderer's own info lines, sends an event "gpu" before the core touches the device, and on a crash writes
+  "crashed: <exception / signal> in <module>+<offset> while <stage>" to stderr. The server keeps the start and the end
+  of stderr, the exit (NTSTATUS names) and the GPU for "Save diagnostics" and in logs/players.log.

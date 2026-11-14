@@ -128,6 +128,7 @@ export class NativeSessions extends CtrSessions {
     super(opts);
     this.keepTypes = [NMSG.EVENT, NMSG.STATE, NMSG.SRAM];
     this.writeSave = writeSave;
+    this.label = 'fast player';
   }
 
   onMessage(s, m, attached) {

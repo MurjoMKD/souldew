@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync, cpSync, stat
 import { join, basename, dirname, isAbsolute, resolve, posix } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { TOOLS_DIR } from './paths.mjs';
-import { httpError } from './fsutil.mjs';
+import { httpError, renameRetry, safeFileName } from './fsutil.mjs';
 import { extractArchiveAsync } from './archive.mjs';
 
 // assets: which file of the emulator's latest GitHub release to download – per platform, and per architecture
@@ -157,62 +157,137 @@ export function detectEmulator(id, customPath) {
   return found ? { installed: true, ...found } : { installed: false };
 }
 
-export async function installEmulator(id) {
+/**
+ * Download and install the latest release of an emulator into souldew's tools folder. Every failure is an httpError
+ * with a code (web/lib/errors.mjs shows it in the player's language) – the German text is only the fallback.
+ */
+export async function installEmulator(id, { fetchImpl = fetch } = {}) {
   const emu = EMULATORS[id];
   if (!emu) throw httpError(404, 'Unbekannter Emulator', 'unknownEmulator');
-  const relRes = await fetch(`https://api.github.com/repos/${emu.repo}/releases/latest`, { headers: { 'User-Agent': 'souldew' } });
-  if (!relRes.ok) throw new Error(`GitHub antwortete ${relRes.status} – später erneut versuchen`);
-  const rel = await relRes.json();
+  const vars = { emu: emu.name };
+  const offline = (e) => httpError(502, `GitHub nicht erreichbar: ${e.message}`, 'emuOffline', { ...vars, detail: String(e.cause?.code || e.message).slice(0, 200) });
+  let rel;
+  try {
+    const relRes = await fetchImpl(`https://api.github.com/repos/${emu.repo}/releases/latest`, { headers: { 'User-Agent': 'souldew' } });
+    if (!relRes.ok) throw httpError(502, `GitHub antwortete ${relRes.status} – später erneut versuchen`, 'emuGithub', { ...vars, status: relRes.status });
+    rel = await relRes.json();
+  } catch (e) {
+    throw e.status ? e : offline(e);
+  }
   const asset = pickAsset(rel.assets, id);
-  if (!asset) throw new Error(`Kein ${emu.name}-Download für ${process.platform} gefunden`);
-  const res = await fetch(asset.browser_download_url);
-  if (!res.ok) throw new Error(`Download fehlgeschlagen (${res.status})`);
-  const bytes = Buffer.from(await res.arrayBuffer()); // download fully before removing a working install
-  const dir = dirFor(id);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, asset.name);
-  writeFileSync(file, bytes);
+  if (!asset) throw httpError(404, `Kein ${emu.name}-Download für ${process.platform} gefunden`, 'emuNoAsset', { ...vars, platform: PLATFORM_NAMES[process.platform] || process.platform });
+  let bytes;
+  try {
+    const res = await fetchImpl(asset.browser_download_url);
+    if (!res.ok) throw httpError(502, `Download fehlgeschlagen (${res.status})`, 'emuDownload', { ...vars, detail: `HTTP ${res.status}` });
+    bytes = Buffer.from(await res.arrayBuffer()); // download fully before touching a working install
+  } catch (e) {
+    throw e.status ? e : httpError(502, `Download fehlgeschlagen: ${e.message}`, 'emuDownload', { ...vars, detail: String(e.cause?.code || e.message).slice(0, 200) });
+  }
+  await installDownloaded(id, asset.name, bytes, dirFor(id));
+  return { ...detectEmulator(id), version: rel.tag_name };
+}
+
+/** Readable platform names for messages. */
+const PLATFORM_NAMES = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' };
+
+/** Remove a folder, true when it is gone (a file in it may be in use – Windows – or the folder may not exist). */
+function removeDir(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // in use – reported by the caller where it matters
+  }
+  return !existsSync(dir);
+}
+
+/**
+ * Unpack a downloaded release (`name`, `bytes`) as the emulator's folder `dir`. Unpacked next to it first
+ * (`<dir>.new`) and only swapped in once the emulator is found inside: a failed or interrupted install never leaves
+ * a half-unpacked emulator behind or destroys the working one, and the next try starts clean – a leftover `.new`
+ * (or a file where a folder must go) from an earlier attempt is removed first.
+ */
+export async function installDownloaded(id, name, bytes, dir, { platform = process.platform } = {}) {
+  const emu = EMULATORS[id];
+  const vars = { emu: emu.name };
+  const stage = `${dir}.new`;
+  const old = `${dir}.old`;
+  removeDir(old); // a swap that was cut short
+  if (!removeDir(stage)) throw httpError(409, `Der alte Download von ${emu.name} lässt sich nicht entfernen: ${stage}`, 'emuInUse', vars);
+  const unpackError = (detail) => httpError(500, `Entpacken fehlgeschlagen: ${detail}`, 'emuUnpack', { ...vars, detail: String(detail).slice(0, 300) });
+  const file = join(stage, safeFileName(name));
+  try {
+    mkdirSync(stage, { recursive: true });
+    writeFileSync(file, bytes);
+  } catch (e) {
+    removeDir(stage);
+    throw httpError(500, `Download konnte nicht gespeichert werden: ${e.message}`, 'emuWrite', { ...vars, detail: e.code || e.message });
+  }
   let ok = true;
-  if (process.platform !== 'darwin' && /\.(zip|7z)$/i.test(asset.name)) {
+  if (platform !== 'darwin' && /\.(zip|7z)$/i.test(name)) {
     // Windows / Linux: unpacked in JavaScript – no PowerShell quoting, and Windows 10's tar.exe can't read 7z (LZMA)
     try {
-      await extractArchiveAsync(file, dir); // on a worker thread: the app's window stays responsive
+      await extractArchiveAsync(file, stage); // on a worker thread: the app's window stays responsive
     } catch (e) {
-      rmSync(dir, { recursive: true, force: true }); // no half-unpacked emulator left to be found
-      throw new Error(`Entpacken fehlgeschlagen: ${e.message}`);
+      removeDir(stage);
+      throw unpackError(e.message);
     }
-  } else if (asset.name.endsWith('.dmg')) {
-    const mount = join(dir, 'mnt');
+  } else if (name.endsWith('.dmg')) {
+    const mount = join(stage, 'mnt');
     mkdirSync(mount, { recursive: true });
     ok = spawnSync('hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', mount, file]).status === 0;
     if (ok) {
       const app = findIn(mount, (n) => emu.app.test(n), 1);
-      if (app) cpSync(app, join(dir, app.split('/').pop()), { recursive: true, verbatimSymlinks: true });
+      if (app) cpSync(app, join(stage, basename(app)), { recursive: true, verbatimSymlinks: true });
       spawnSync('hdiutil', ['detach', mount, '-force']);
       rmSync(mount, { recursive: true, force: true });
       ok = !!app;
     }
-  } else if (asset.name.endsWith('.zip')) {
-    ok = spawnSync('ditto', ['-x', '-k', file, dir]).status === 0; // macOS: keeps the .app bundle intact
-  } else if (/appimage$/i.test(asset.name)) {
+  } else if (name.endsWith('.zip')) {
+    ok = spawnSync('ditto', ['-x', '-k', file, stage]).status === 0; // macOS: keeps the .app bundle intact
+  } else if (/appimage$/i.test(name)) {
     chmodSync(file, 0o755);
   }
-  if (!ok) throw new Error('Entpacken fehlgeschlagen');
-  if (!/appimage$/i.test(asset.name)) rmSync(file, { force: true });
-  const inner = findIn(dir, (n) => /\.AppImage$/i.test(n));
+  if (!ok) {
+    removeDir(stage);
+    throw unpackError(name);
+  }
+  if (!/appimage$/i.test(name)) rmSync(file, { force: true });
+  const inner = findIn(stage, (n) => /\.AppImage$/i.test(n));
   if (inner) chmodSync(inner, 0o755);
-  if (process.platform === 'darwin') {
+  // the emulator must really be in there before the working install is replaced
+  if (!findIn(stage, (n) => (platform === 'darwin' ? emu.app.test(n) : emu.exe.test(n)))) {
+    removeDir(stage);
+    throw unpackError(`${emu.name} not found in ${name}`);
+  }
+  // swap: the old folder is moved aside first – on Windows that fails as a whole while the emulator runs (its files
+  // are in use), instead of deleting half of it
+  if (existsSync(dir)) {
+    try {
+      renameRetry(dir, old);
+    } catch {
+      removeDir(stage);
+      throw httpError(409, `${emu.name} läuft noch – schließe es und versuche es erneut`, 'emuInUse', vars);
+    }
+  }
+  try {
+    renameRetry(stage, dir);
+  } catch (e) {
+    if (existsSync(old) && !existsSync(dir)) renameRetry(old, dir); // put the working one back
+    removeDir(stage);
+    throw httpError(500, `Installieren fehlgeschlagen: ${e.message}`, 'emuWrite', { ...vars, detail: e.code || e.message });
+  }
+  removeDir(old);
+  if (platform === 'darwin') {
     const app = findIn(dir, (n) => emu.app.test(n));
     if (app) spawnSync('xattr', ['-dr', 'com.apple.quarantine', app]);
   }
-  return { ...detectEmulator(id), version: rel.tag_name };
 }
 
 /** Resolves once the process has started; rejects if it can't be spawned (e.g. not executable). */
 export async function launchRom(id, romPath, { customPath, script } = {}) {
   const emu = detectEmulator(id, customPath);
-  if (!emu.installed) throw new Error(`${EMULATORS[id]?.name || id} ist nicht installiert`);
+  if (!emu.installed) throw httpError(404, `${EMULATORS[id]?.name || id} ist nicht installiert`, 'emuNotInstalled', { emu: EMULATORS[id]?.name || id });
   // A .cia isn't started from the file – Azahar installs it (File › Install CIA) and lists the game; open it empty.
   const args = romPath && !(id === 'azahar' && /\.z?cia$/i.test(romPath)) ? [romPath] : [];
   let child;
@@ -233,7 +308,7 @@ export async function launchRom(id, romPath, { customPath, script } = {}) {
   // An unhandled 'error' event on the child would crash the whole server.
   await new Promise((resolve, reject) => {
     child.once('spawn', resolve);
-    child.once('error', (e) => reject(new Error(`${EMULATORS[id]?.name || id} konnte nicht gestartet werden: ${e.message}`)));
+    child.once('error', (e) => reject(httpError(500, `${EMULATORS[id]?.name || id} konnte nicht gestartet werden: ${e.message}`, 'emuLaunch', { emu: EMULATORS[id]?.name || id, detail: e.code || e.message })));
   });
   child.unref();
   return { ...emu, script };

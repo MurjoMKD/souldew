@@ -27,6 +27,7 @@ import { addSample, typicalReach, offeredSteps, beyondReach, HELD } from '../lib
 import { SlowWatch, slowTips } from '../lib/slowdown.mjs';
 import { gpuBackends } from '/shared/gpu.mjs';
 import { GPU_LABELS } from './settings.mjs';
+import { CTR_LAYOUTS, ctrLayoutAspect } from '/shared/ctrlayout.mjs';
 
 let TABLES = null;
 async function liveTables() {
@@ -106,6 +107,53 @@ export function PlayView() {
   if (choice !== 'builtin' && status?.emulators?.[choice]?.installed) return html`<${ExternalPlay} target=${target} emu=${choice} />`;
   if (running) return html`<${SwitchGame} next=${target} />`;
   return html`<${StartGame} target=${target} />`;
+}
+
+/** The 3DS layouts' names (shared/ctrlayout.mjs CTR_LAYOUTS). */
+function ctrLayoutLabel(id) {
+  return {
+    tb: t('play.l3dsTb', 'Top screen above the bottom one'),
+    lr: t('play.l3dsLr', 'Side by side'),
+    large: t('play.l3dsLarge', 'Large top screen, small bottom screen'),
+    bt: t('play.l3dsBt', 'Bottom screen above the top one'),
+    top: t('play.l3dsTop', 'Top screen only'),
+  }[id] || id;
+}
+
+/**
+ * The built-in 3DS player stopped (its host crashed or gave up – some graphics drivers can't run it): what happened,
+ * and one click to play 3DS games in Azahar instead (Settings › Emulators › Nintendo 3DS), which opens this game
+ * there – or offers to install Azahar first.
+ */
+function CtrFailed({ fail, target, onClose }) {
+  const { status, reloadStatus, toast, navigate, endSession } = useApp();
+  const [busy, setBusy] = useState(false);
+  // the game file itself is the problem (encrypted, not a 3DS game, missing): Azahar wouldn't play it either
+  const noAzahar = ['ctrEncrypted', 'notCtr', 'romNotFound', 'ctrInArchive', 'badRomUrl'].includes(fail.code);
+  const toAzahar = async () => {
+    setBusy(true);
+    try {
+      await api.post('/api/config', { emulatorFor: { ...(status?.config?.emulatorFor || {}), '3ds': 'azahar' } });
+      await reloadStatus();
+      endSession(); // (the game is gone already – nothing left to save)
+      navigate('play', target.params);
+    } catch (e) {
+      toast({ kind: 'death', title: 'Azahar', text: e.message });
+      setBusy(false);
+    }
+  };
+  return html`<div class="screen-confirm ctr-failed" role="alertdialog" aria-live="assertive">
+    <div class="grow stack-s">
+      <b>${t('ctr.failedTitle', 'The 3DS game has stopped')}</b>
+      ${fail.message && html`<span class="small">${fail.message}</span>`}
+      ${!noAzahar && html`<span class="small muted">${t('ctr.failedHint', 'Some graphics cards and drivers can’t run souldew’s built-in 3DS player yet. Azahar, the free 3DS emulator, plays the same games – with live tracking. You can switch back any time in Settings › Emulators.')}</span>`}
+    </div>
+    <div class="row">
+      ${!noAzahar && html`<button class="btn small primary" disabled=${busy} onClick=${toAzahar}>${t('ctr.useAzahar', 'Play 3DS games in Azahar')}</button>`}
+      <button class="btn small ghost" onClick=${() => saveDiagnostics({ ctrFailed: fail })}><${Icon} name="save" size=${14} />${t('play.diag', 'Save diagnostics')}</button>
+      <button class="btn small ghost" onClick=${onClose}>${t('play.close', 'Close game')}</button>
+    </div>
+  </div>`;
 }
 
 function StartGame({ target }) {
@@ -205,6 +253,10 @@ export function GameSession({ session, mode }) {
   const [cheatGame, setCheatGame] = useState(false); // this game's bag layout is known (shared/live/cheats.mjs)
   const liveRef = useRef({ entry: null, state: null }); // the live reader's game entry and state – the cheats find the bag with them
   const [layout, setLayoutState] = useState(() => ls.get('sl-ds-layout', 'tb')); // tb | lr
+  // 3DS screens (shared/ctrlayout.mjs): the player page arranges them, switchable while playing
+  const [layout3ds, setLayout3dsState] = useState(() => (CTR_LAYOUTS.includes(ls.get('sl-3ds-layout', 'tb')) ? ls.get('sl-3ds-layout', 'tb') : 'tb'));
+  const [layoutOpen, setLayoutOpen] = useState(false);
+  const [ctrFail, setCtrFail] = useState(null); // the 3DS player stopped: { message } – offers Azahar instead
   const [fs, setFs] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -451,7 +503,17 @@ export function GameSession({ session, mode }) {
       setTurboAudioState(m);
       ls.set('sl-turbo-audio', m);
     },
+    layout3ds: (id) => {
+      if (!CTR_LAYOUTS.includes(id)) return;
+      setLayout3dsState(id);
+      ls.set('sl-3ds-layout', id);
+      emu()?.setOption?.('ctr_layout', id);
+    },
     layout: () => {
+      if (target.system === '3ds') {
+        // the key / menu shortcut cycles through the 3DS layouts
+        return act.current.layout3ds(CTR_LAYOUTS[(CTR_LAYOUTS.indexOf(layout3ds) + 1) % CTR_LAYOUTS.length]);
+      }
       const next = layout === 'tb' ? 'lr' : 'tb';
       setLayoutState(next);
       ls.set('sl-ds-layout', next);
@@ -483,12 +545,13 @@ export function GameSession({ session, mode }) {
 
   // the volume and cheat popovers close on Escape and on any click outside them
   useEffect(() => {
-    if (!soundOpen && !cheatOpen) return;
+    if (!soundOpen && !cheatOpen && !layoutOpen) return;
     const close = () => {
       setSoundOpen(false);
       setCheatOpen(false);
+      setLayoutOpen(false);
     };
-    const away = (e) => !e.target.closest?.('.sound-wrap, .cheat-wrap') && close();
+    const away = (e) => !e.target.closest?.('.sound-wrap, .cheat-wrap, .layout-wrap') && close();
     const esc = (e) => e.key === 'Escape' && close();
     addEventListener('pointerdown', away);
     addEventListener('keydown', esc);
@@ -498,7 +561,7 @@ export function GameSession({ session, mode }) {
       removeEventListener('keydown', esc);
       window.removeEventListener('blur', away);
     };
-  }, [soundOpen, cheatOpen]);
+  }, [soundOpen, cheatOpen, layoutOpen]);
 
   useEffect(() => {
     const on = () => setFs(!!document.fullscreenElement);
@@ -569,6 +632,11 @@ export function GameSession({ session, mode }) {
       if (e.data?.type === 'emu-native-failed') {
         diag('perf', { type: 'nativeFallback', message: String(e.data.message || '').slice(0, 300) });
         setNativeOn(false);
+      }
+      // the 3DS player stopped (the host crashed or gave up): say so over the game and offer Azahar for 3DS games
+      if (e.data?.type === 'emu-error' && target.system === '3ds') {
+        diag('perf', { type: 'ctrFailed', message: String(e.data.message || '').slice(0, 500), detail: String(e.data.detail || '').slice(0, 1000) });
+        setCtrFail({ message: String(e.data.message || ''), code: e.data.code ? String(e.data.code) : null, detail: String(e.data.detail || '') });
       }
       if (e.data?.type === 'emu-key') onKey(e.data, true);
       if (e.data?.type === 'emu-pad' && ['turbo', 'pause'].includes(e.data.action)) act.current[e.data.action]();
@@ -1098,7 +1166,7 @@ export function GameSession({ session, mode }) {
   const [wasmSrc] = useState(() => {
     // 3DS: souldew's own player page – the game runs in the native host (server/lib/ctr.mjs), its saves live in the
     // host's folder for this game / run slot (target.key)
-    if (target.system === '3ds') return `/player3ds.html?rom=${encodeURIComponent(target.rom)}&key=${encodeURIComponent(target.key)}&name=${encodeURIComponent(target.name)}`;
+    if (target.system === '3ds') return `/player3ds.html?rom=${encodeURIComponent(target.rom)}&key=${encodeURIComponent(target.key)}&name=${encodeURIComponent(target.name)}&layout=${layout3ds}`;
     // EmulatorJS names the ROM (and its browser-side save) after the URL's last segment → make it unique per game.
     const romKey = `${hash(new TextEncoder().encode(target.key)).replace(/\D/g, '')}`;
     const romUrl = `/rom/g${romKey}.${target.system}?src=${encodeURIComponent(target.rom)}`;
@@ -1107,7 +1175,7 @@ export function GameSession({ session, mode }) {
     return `/player.html?system=${target.system}${wcore ? `&core=${wcore}` : ''}${lay}${fullTurbo ? '' : '&fullturbo=0'}&rom=${encodeURIComponent(romUrl)}&name=${encodeURIComponent(target.name)}&save=${encodeURIComponent(target.saveUrl)}&tap=${encodeURIComponent(t('play.tapToStart', 'Click to start'))}`;
   });
   const src = nativeOn && target.system !== '3ds' ? nativeSrc : wasmSrc;
-  const arn = target.system === '3ds' ? 400 / 480 : isDs ? (layout === 'lr' ? 512 / 192 : 256 / 384) : target.system === 'gba' ? 3 / 2 : 10 / 9;
+  const arn = target.system === '3ds' ? ctrLayoutAspect(layout3ds) : isDs ? (layout === 'lr' ? 512 / 192 : 256 / 384) : target.system === 'gba' ? 3 / 2 : 10 / 9;
   const names = isRun && doc && manifest ? getPlayers(doc, manifest) : null;
   const others = isRun && manifest ? othersOf(me, manifest) : [];
   const myLive = isRun && doc ? live(doc, me) : null;
@@ -1200,6 +1268,7 @@ export function GameSession({ session, mode }) {
               <button class="btn small primary" onClick=${doCheat}>${t('cheat.add', 'Add')}</button>
               <button class="btn small ghost" onClick=${() => { setConfirmCheat(false); focusGame(); }}>${t('common.cancel', 'Cancel')}</button>
             </div>`}
+            ${ctrFail && html`<${CtrFailed} fail=${ctrFail} target=${target} onClose=${actions.close} />`}
           </div>
         </div>
         <div class="session-bar" role="toolbar" aria-label=${t('play.controls', 'Game controls')}>
@@ -1216,6 +1285,15 @@ export function GameSession({ session, mode }) {
             title=${t('states.openHint', 'All save states – load, overwrite, delete')} onClick=${() => setStatesOpen(!statesOpen)}>
             <${Icon} name="load" size=${14} />${t('states.title', 'Save states')}<span class="px slot-no" aria-hidden="true">${sel}</span></button>
           <span class="spacer"></span>
+          ${target.system === '3ds' && html`<span class="layout-wrap">
+            ${btn(layout3ds === 'lr' || layout3ds === 'large' ? 'layoutLr' : 'layoutTb', t('play.layout3ds', 'Screen layout'), () => setLayoutOpen(!layoutOpen), { 'aria-expanded': layoutOpen, 'aria-haspopup': 'dialog' })}
+            ${layoutOpen && html`<div class="cheat-pop layout-pop" role="dialog" aria-label=${t('play.layout3ds', 'Screen layout')}>
+              <b class="small">${t('play.layout3ds', 'Screen layout')}</b>
+              ${CTR_LAYOUTS.map((id) => html`<button class=${`btn small ${layout3ds === id ? 'primary' : 'ghost'}`} aria-pressed=${layout3ds === id}
+                onClick=${() => { actions.layout3ds(id); setLayoutOpen(false); focusGame(); }}>${ctrLayoutLabel(id)}</button>`)}
+              <span class="tiny faint">${layout3ds === 'top' ? t('play.layout3dsNoTouch', 'The touch screen is hidden in this layout – switch back to tap it.') : t('play.layout3dsHint', 'Click the bottom screen to touch it, wherever it is. Switches right away, without restarting the game.')}</span>
+            </div>`}
+          </span>`}
           ${isDs && btn(layout === 'lr' ? 'layoutTb' : 'layoutLr', layout === 'lr' ? t('play.layoutTb', 'Screens on top of each other') : t('play.layoutLr', 'Screens side by side'), actions.layout)}
           ${btn('camera', t('keys.screenshot', 'Screenshot') + ' (F12)', actions.screenshot)}
           <span class="cheat-wrap">

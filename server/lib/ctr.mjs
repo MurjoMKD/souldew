@@ -9,11 +9,13 @@
 //                                                   (native/azahar-patch); Azahar's own core runs the game without it
 //   libMoltenVK.dylib (macOS)                      Vulkan on Metal; Windows/Linux use the system's Vulkan loader
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, statSync, openSync, readSync, closeSync, appendFileSync, readFileSync, renameSync } from 'node:fs';
+import { join, extname } from 'node:path';
+import { homedir } from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
 import { BUNDLED_TOOLS, TOOLS_DIR, DATA_DIR, DEV, APP_ROOT } from './paths.mjs';
 import { httpError } from './fsutil.mjs';
+import { identifyCtr } from '../../shared/ctr.mjs';
 
 export const PLATFORM_DIR = `${process.platform}-${process.arch}`;
 const EXE = process.platform === 'win32' ? 'ctrhost.exe' : 'ctrhost';
@@ -64,6 +66,23 @@ export function ctrTools({ azaharApp = null } = {}) {
     else return { ok: false, missing: 'vulkan', dir };
   }
   return { ok: true, dir, host: join(dir, EXE), core: join(dir, CORE), vulkan, souldewCore: existsSync(join(dir, 'SOULDEW_CORE')) };
+}
+
+/** Is the 3DS game file an encrypted dump? (Azahar plays decrypted games only.) Unreadable / unknown: false. */
+export function ctrEncrypted(path) {
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const readAt = (o, n) => {
+      const b = Buffer.alloc(n);
+      return new Uint8Array(b.buffer, b.byteOffset, readSync(fd, b, 0, n, o));
+    };
+    return !!identifyCtr(readAt, extname(path).slice(1))?.encrypted;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 /** A save folder per game / run slot: the 3DS's SD card and system memory of that playthrough. */
@@ -178,6 +197,63 @@ export class MessageSplitter {
   }
 }
 
+// Windows exception codes a crashed host ends with (the exit code is the NTSTATUS)
+const NTSTATUS = {
+  0xc0000005: 'access violation', 0xc000001d: 'illegal instruction', 0xc00000fd: 'stack overflow', 0xc0000094: 'division by zero',
+  0xc0000409: 'stack buffer overrun / fail-fast', 0xc0000374: 'heap corruption', 0xc0000135: 'a DLL is missing', 0xc0000139: 'a DLL entry point is missing',
+  0xc0000142: 'a DLL failed to initialise', 0x40000015: 'abort', 0xe06d7363: 'C++ exception',
+};
+
+/** How a host ended, readable: "exit code 0xC0000005 (access violation)", "signal SIGSEGV", "exit code 1". */
+export function exitText(exit) {
+  if (!exit) return '';
+  if (exit.error) return exit.error;
+  if (exit.signal) return `signal ${exit.signal}`;
+  const c = Number(exit.code);
+  if (!Number.isFinite(c)) return '';
+  const u = c >>> 0;
+  if (u >= 0x40000000) return `exit code 0x${u.toString(16).toUpperCase()}${NTSTATUS[u] ? ` (${NTSTATUS[u]})` : ''}`;
+  return `exit code ${c}`;
+}
+
+/** Text from the host for diagnostics, with the home folder shortened (it holds the user name). */
+export function redactHome(text, home = homedir()) {
+  let out = String(text);
+  if (!home || home.length < 3) return out;
+  // as written, and as it reads inside JSON (Windows: C:\\Users\\Name)
+  for (const h of new Set([home, JSON.stringify(home).slice(1, -1)])) out = out.split(h).join('~');
+  return out;
+}
+
+/**
+ * The players' log file (data folder › logs › players.log): every host that ended badly, one JSON line each – it
+ * survives a restart of souldew (people often restart before they save the diagnostics). Kept small (rotated at 512 KB).
+ */
+export const PLAYER_LOG = join(DATA_DIR, DEV ? 'runs/logs' : 'logs', 'players.log');
+export function appendPlayerLog(record, file = PLAYER_LOG) {
+  try {
+    mkdirSync(join(file, '..'), { recursive: true });
+    if (existsSync(file) && statSync(file).size > 512 * 1024) renameSync(file, `${file}.1`);
+    appendFileSync(file, `${JSON.stringify(record)}\n`);
+  } catch {
+    // a full disk or a read-only folder: the in-memory record still goes into the diagnostics
+  }
+}
+/** The last `n` records of the players' log (newest last). */
+export function readPlayerLog(n = 5, file = PLAYER_LOG) {
+  try {
+    return readFileSync(file, 'utf8').trim().split('\n').slice(-n).map((l) => {
+      try {
+        return JSON.parse(l);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** Kept for a page that isn't connected (yet): the start, events and save states – pictures, sound only up to this. */
 const BUFFER_LIMIT = 8 * 1024 * 1024;
 /** A session no page ever connected to (the page failed right after starting it) ends after this. */
@@ -188,12 +264,47 @@ export class CtrSessions {
   constructor({ spawn: spawnHost = spawn } = {}) {
     this.spawn = spawnHost;
     this.current = null; // { id, child, stream, buffered, events, exit }
+    this.last = null; // how the last session that went wrong ended (diagnostics – kept after it is gone)
+    this.logFile = PLAYER_LOG;
     this.keepTypes = [MSG.EVENT, MSG.STATE]; // kept for a page that connects later even past BUFFER_LIMIT
   }
 
   status() {
     const s = this.current;
-    return s ? { id: s.id, running: !s.exit, exit: s.exit, events: s.events.slice(-5) } : null;
+    return s ? { id: s.id, running: !s.exit, exit: s.exit, exitText: exitText(s.exit), events: s.events.slice(-5), gpu: s.gpu || null } : null;
+  }
+
+  /** For "Save diagnostics": the running session (with the end of its stderr) and how the last failed one ended. */
+  diagnostics() {
+    const s = this.current;
+    return {
+      session: s ? { ...this.status(), stderrStart: redactHome(s.head), stderr: redactHome(s.log.join('').slice(-4000)) } : null,
+      last: this.last,
+      log: readPlayerLog(5, this.logFile),
+    };
+  }
+
+  /** A session ended: remember (and log) it when it didn't end the normal way – a crash, an error from the host. */
+  ended(s, exit) {
+    if (s.recorded) return;
+    s.recorded = true;
+    const error = [...s.events].reverse().find((e) => e?.event === 'error');
+    const normal = exit && exit.code === 0 && !exit.signal && !error;
+    if (normal || s.quit) return; // (s.quit: stopped by souldew – the host's _exit after QUIT, or the kill)
+    this.last = {
+      at: new Date().toISOString(),
+      exit: exitText(exit) || null,
+      error: error?.message ? redactHome(error.message).slice(0, 1000) : null,
+      gpu: s.gpu || null,
+      startedAt: s.startedAt,
+      secondsRun: Math.round((Date.now() - s.startedAt) / 1000),
+      stderrStart: redactHome(s.head),
+      stderr: redactHome(s.log.join('').slice(-4000)),
+    };
+    appendPlayerLog({ player: this.label || '3ds', ...this.last }, this.logFile);
+    console.warn(`[${this.label || '3ds'}] the host ended: ${this.last.exit || '?'}${this.last.error ? ` – ${this.last.error}` : ''}${s.gpu ? ` – GPU ${s.gpu.name} (driver ${s.gpu.driver})` : ''}`);
+    const tail = this.last.stderr.trim().split('\n').slice(-8).join('\n');
+    if (tail) console.warn(tail);
   }
 
   /** Start the game `rom` (a path) with the save folder of `key`; ends a session that still runs. */
@@ -211,7 +322,7 @@ export class CtrSessions {
     this.stop();
     const env = this.hostEnv?.();
     const child = this.spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) });
-    const s = { id: randomBytes(8).toString('hex'), save, child, stream: null, buffered: [], bufferedBytes: 0, events: [], exit: null, closed: false, held: false, log: [] };
+    const s = { id: randomBytes(8).toString('hex'), save, child, stream: null, buffered: [], bufferedBytes: 0, events: [], exit: null, closed: false, held: false, log: [], head: '', startedAt: Date.now() };
     const split = new MessageSplitter();
     child.stdout.on('data', (chunk) => {
       // whole messages only: a page that connects later (or a new one) must start at a message's beginning
@@ -233,12 +344,17 @@ export class CtrSessions {
       }
     });
     child.stderr.on('data', (d) => {
+      // the start (the Vulkan loader, the graphics cards, the device) is kept apart: the core's warnings later would
+      // push it out of the tail
+      if (s.head.length < 10000) s.head += String(d).slice(0, 10000 - s.head.length);
       s.log.push(String(d));
       if (s.log.length > 200) s.log.splice(0, s.log.length - 200);
     });
     child.on('exit', (code, signal) => {
       s.exit = { code, signal };
     });
+    // (after the last output is read: the host's error event comes right before it leaves)
+    child.on('close', (code, signal) => this.ended(s, s.exit || { code, signal }));
     // the end of the stream once the host's output is all read: 'exit' can come before the last of it (the error
     // event a failing host sends right before it leaves), and a write after end() is an unhandled 'error'
     const done = () => {
@@ -252,6 +368,7 @@ export class CtrSessions {
     });
     child.on('error', (e) => {
       s.exit = { error: e.message };
+      this.ended(s, s.exit);
       done();
     });
     child.stdin.on('error', () => {});
@@ -272,8 +389,10 @@ export class CtrSessions {
   /** Remember the host's events (loaded, title, errors) for the status. `data`: one whole EVENT message. */
   peek(s, data) {
     try {
-      s.events.push(JSON.parse(data.subarray(8).toString('utf8')));
+      const e = JSON.parse(data.subarray(8).toString('utf8'));
+      s.events.push(e);
       if (s.events.length > 50) s.events.shift();
+      if (e?.event === 'gpu') s.gpu = { name: e.name, type: e.type, vendor: e.vendor, device: e.device, driver: e.driver, api: e.api, index: e.index, count: e.count };
     } catch {
       // not JSON – skip
     }
@@ -327,6 +446,7 @@ export class CtrSessions {
     const s = this.current;
     if (!s) return;
     this.current = null;
+    s.quit = true;
     clearTimeout(s.orphan);
     try {
       s.child.stdin.write(command(CMD.QUIT));
