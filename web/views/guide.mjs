@@ -69,7 +69,7 @@ export function GuideView() {
   const [tab, setTab] = useState(route.params.tab || 'start');
   return html`<div class="stack-l">
     <div class="topbar"><h1>${t('guide.title', 'Help')}</h1></div>
-    <div class="tabs" role="tablist">
+    <div class="tabs" role="tablist" data-pad-tabs>
       ${[['start', t('guide.start', 'Getting started')], ['keys', t('guide.keys', 'Controls & shortcuts')], ['faq', t('guide.faq', 'Questions')]]
         .map(([k, l]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l}</button>`)}
     </div>

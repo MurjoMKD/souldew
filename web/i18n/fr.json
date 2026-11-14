@@ -1115,6 +1115,8 @@
   "pad.title": "Manette",
   "pad.turbo": "{button} : turbo marche / arrêt.",
   "pad.xbox": "Disposition Xbox (A en bas)",
+  "pad.nav": "Utiliser l’app avec une manette",
+  "pad.navHint": "La croix directionnelle ou le stick gauche passe d’un bouton à l’autre, A appuie, B revient en arrière, L et R changent de section ou d’onglet, Start va à la barre latérale, le stick droit fait défiler. Pendant une partie, la manette appartient au jeu – mets-le en pause ({button} ou Home) pour utiliser les menus.",
   "pairs.boxed": "dans la boîte",
   "pairs.boxedShort": "boîte",
   "pairs.empty": "Les paires liées apparaissent ici dès que vous capturez quelque chose.",

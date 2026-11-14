@@ -520,7 +520,7 @@ function startPads(pads) {
     if (lx > 0.5) bits |= 1 << BIT.right;
     if (ly < -0.5) bits |= 1 << BIT.up;
     if (ly > 0.5) bits |= 1 << BIT.down;
-    inp.pad = bits;
+    inp.pad = controls.appHasPad() ? 0 : bits; // the app's menus have the controller (lib/padnav.mjs)
     for (const [i, action] of Object.entries(HOT)) {
       const on = !!pad.buttons[i]?.pressed;
       if (on && !held[i]) post({ type: 'emu-pad', action });

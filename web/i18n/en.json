@@ -1433,6 +1433,8 @@
   "pad.hotkey": "{button} is already used while playing ({action}). Press another button.",
   "pad.layouts": "Button layout",
   "pad.missing": "{name} (not connected)",
+  "pad.nav": "Navigate the app with a controller",
+  "pad.navHint": "D-pad or left stick moves between buttons, A presses, B goes back, L and R switch sections or tabs, Start jumps to the sidebar, the right stick scrolls. While a game runs, the controller belongs to the game – pause it ({button} or Home) to use the menus.",
   "pad.nintendo": "Nintendo layout (A right)",
   "pad.nonStandard": "unusual layout – check the buttons below",
   "pad.none": "No controller found. Connect one and press any button on it.",

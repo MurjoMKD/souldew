@@ -340,7 +340,7 @@ export function TrophiesView() {
   const medalsEarned = (tr?.medals || []).filter((m) => m.tier >= 0).length;
   return html`<div class="trophies">
     <div class="topbar"><h1>${t('trophy.title', 'Trophies')}</h1></div>
-    <div class="trophy-nav" role="tablist">${[
+    <div class="trophy-nav" role="tablist" data-pad-tabs>${[
       ['ach', 'trophy', t('trophy.tabAch', 'Achievements'), tr ? `${got.length}/${tr.achievements?.length || 0}` : ''],
       ['dex', 'ball', t('trophy.tabDex', 'Pokédex'), tr ? `${tr.totals?.caught || 0}/${SUPPORTED_MAX}` : ''],
       ['medals', 'badge', t('trophy.tabMedals', 'Medals'), tr ? `${medalsEarned}/${tr.medals?.length || 0}` : ''],

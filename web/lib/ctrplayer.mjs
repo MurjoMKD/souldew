@@ -420,8 +420,9 @@ function startPads(pads) {
       const i = IDX[label];
       if (i !== undefined && pad.buttons[i]?.pressed) bits |= 1 << BIT[btn];
     }
-    inp.pad = bits;
-    const [lx = 0, ly = 0, rx = 0, ry = 0] = pad.axes;
+    // the app's menus have the controller (lib/padnav.mjs): no buttons, sticks centred
+    const [lx = 0, ly = 0, rx = 0, ry = 0] = controls.appHasPad() ? [] : pad.axes;
+    inp.pad = controls.appHasPad() ? 0 : bits;
     inp.lx = axis(lx);
     inp.ly = axis(ly);
     inp.rx = axis(rx);
