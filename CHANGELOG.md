@@ -2,6 +2,14 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **Randomized SoulLinks with "only sensible items" for trainers build the same game everywhere.** On Gen 4/5 games this
+  option added weakness berries in an order that depended on the Java version, so two computers with different Java
+  (or a computer and a phone) could build different ROMs from the same seed and settings. souldew now ships a fixed copy
+  of the randomizer's one affected class, so every computer and the souldew iPhone app build byte-identical games. New
+  "Nuzlocke hard mode" runs on DS games get different trainer items than before; existing runs keep their files.
+
 ## 2.6.1
 
 - **Joining a SoulLink works with another release of the same game.** A normal run (no randomizer, no ROM hack) used
