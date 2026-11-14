@@ -124,7 +124,9 @@ export function runBridge(args, { timeoutMs = 180000 } = {}) {
   if (!java.ok) return Promise.reject(new Error('Java 8+ wurde nicht gefunden. Bitte Java installieren (z. B. Temurin 21 von adoptium.net).'));
   if (!existsSync(UPR_JAR)) return Promise.reject(new Error('Universal Pokemon Randomizer ZX fehlt – bitte im Setup installieren.'));
   return new Promise((resolve, reject) => {
-    const cp = [UPR_JAR, BRIDGE_DIR].join(delimiter);
+    // the bridge folder first: it carries a fixed copy of UPR's Effectiveness (EnumMap instead of HashMap – the order
+    // of a HashMap of enums depends on the JVM, so "sensible items" on Gen 4/5 gave different ROMs per Java version)
+    const cp = [BRIDGE_DIR, UPR_JAR].join(delimiter);
     const child = spawn(java.bin, [...JAVA_OPTS, '-cp', cp, 'SoulLinkBridge', ...args], {
       cwd: dirname(UPR_JAR),
       windowsHide: true, // no console window next to the app while the randomizer runs

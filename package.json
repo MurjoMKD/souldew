@@ -87,8 +87,8 @@
         "from": "tools/upr-bridge",
         "to": "tools/upr-bridge",
         "filter": [
-          "*.class",
-          "*.java"
+          "**/*.class",
+          "**/*.java"
         ]
       }
     ],
