@@ -76,7 +76,7 @@ function useTarget() {
       rom: p.patch ? `/api/library/patched?romId=${encodeURIComponent(p.rom)}&patchId=${encodeURIComponent(p.patch)}` : `/api/library/rom?id=${encodeURIComponent(p.rom)}`,
       name: r.name.replace(/\.\w+$/, ''), saveUrl: `/api/saves/solo?id=${encodeURIComponent(id)}`, stateId: id,
       // (a ROM patched before it was added is named after its hack – server/lib/library.mjs describeRom)
-      label: p.patch ? library.patches.find((x) => x.id === p.patch)?.name : r.hackId && hackById(r.hackId) ? hackById(r.hackId).name : gameById(r.gameId) ? gameTitle(gameById(r.gameId)) : r.title,
+      label: p.patch ? library.patches.find((x) => x.id === p.patch)?.name : r.hackId && hackById(r.hackId) ? hackById(r.hackId).name : r.customHack || (gameById(r.gameId) ? gameTitle(gameById(r.gameId)) : r.title),
       params: { rom: p.rom, patch: p.patch || undefined },
     };
   }

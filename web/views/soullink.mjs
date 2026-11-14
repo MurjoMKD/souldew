@@ -21,7 +21,8 @@ import { FirstSteps } from './firststeps.mjs';
  * The SoulLink and the Nuzlocke section – one view, two modes (route `soullink` / `nuzlocke`):
  *   no params        → the overview of that mode's runs (never straight into the last board)
  *   ?run=<id>        → that run's board
- *   ?new=<gameId>[&hack=<hackId>] → the new-run wizard of that mode (`new=` with no game: pick one)
+ *   ?new=<gameId>[&hack=<hackId>][&rom=<library ROM id>] → the new-run wizard of that mode (`new=` with no game: pick
+ *   one; `rom=` starts with that ROM – a ROM marked as a hack the catalog doesn't know)
  *   ?new=&from=<id>  → a new attempt of a run, in the mode of that run
  *   ?join=1          → join a SoulLink with a code (SoulLink only)
  * A run opened under the other mode's route (old links, restarts, the board's "Play" round trip) moves to its own
@@ -39,7 +40,7 @@ export function SoulLinkView({ mode = 'soullink' }) {
       : p.run && p.new === undefined && manifest?.id === p.run ? runMode(manifest) : null);
   if (!own) return null;
   if (p.new !== undefined && p.from) return html`<${RestartRun} key=${p.from} from=${p.from} mode=${mode} />`;
-  if (p.new !== undefined) return html`<${NewRun} key=${mode} mode=${mode} gameId=${p.new} hackId=${p.hack} patchPick=${p.patch} />`;
+  if (p.new !== undefined) return html`<${NewRun} key=${mode} mode=${mode} gameId=${p.new} hackId=${p.hack} patchPick=${p.patch} romPick=${p.rom} />`;
   if (p.join !== undefined) return html`<${JoinRun} />`;
   if (!p.run) return html`<${RunsHome} key=${mode} mode=${mode} />`;
   if (!manifest && missingRun === p.run) {
@@ -431,13 +432,13 @@ function namesFrom(from, fallback) {
 
 /** The new-run wizard of one mode: a SoulLink (2–4 players, invite at the end) or a solo Nuzlocke (rules step).
  * A restart (`from`) always keeps the mode of the old run. */
-function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
+function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode }) {
   const { status, navigate, reloadStatus, setRunId, setMe } = useApp();
   const { roms, patchesFor, preferredPatch, patchById } = useGameChoices(gameId || null, hackId);
   // `patchPick`: started from a patch the catalog doesn't know (library) – its base ROM and that patch come first
   const picked = !from ? patchById(patchPick) : null;
   // `from`: restart of an old run – same game, hack, settings, mode and players; seeds stay fresh.
-  const [romId, setRomId] = useState(() => (from && baseRomsFor(from, roms)[0])?.id || (picked?.baseRomId && roms.find((r) => r.id === picked.baseRomId))?.id || (hackId && !roms.some((r) => preferredPatch(r)) && roms.find((r) => r.hackId === hackId))?.id || (!hackId && roms.find((r) => !r.hackId))?.id || (hackId && roms.find((r) => preferredPatch(r)))?.id || roms.find((r) => !r.hackId)?.id || roms[0]?.id || null);
+  const [romId, setRomId] = useState(() => (romPick && roms.find((r) => r.id === romPick))?.id || (from && baseRomsFor(from, roms)[0])?.id || (picked?.baseRomId && roms.find((r) => r.id === picked.baseRomId))?.id || (hackId && !roms.some((r) => preferredPatch(r)) && roms.find((r) => r.hackId === hackId))?.id || (!hackId && roms.find((r) => !r.hackId))?.id || (hackId && roms.find((r) => preferredPatch(r)))?.id || roms.find((r) => !r.hackId)?.id || roms[0]?.id || null);
   const rom = roms.find((r) => r.id === romId) || roms[0];
   const [patchId, setPatchId] = useState(() => (from ? (from.patch ? (patchesFor(rom).find((p) => p.sha1 && p.sha1 === from.patch.sha1) || preferredPatch(rom))?.id || null : null)
     : (picked && patchesFor(rom).some((p) => p.id === picked.id) ? picked.id : preferredPatch(rom)?.id || null)));
@@ -500,7 +501,11 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
   const patch = patchesFor(rom).find((p) => p.id === patchId);
   // (a ROM patched before it was added is recognised by its checksum – server/lib/library.mjs describeRom)
   const hack = patch?.hackId ? hackById(patch.hackId) : !patch && rom?.hackId ? hackById(rom.hackId) : null;
-  const canRandomize = inspect && !inspect.info?.unsupported;
+  // a ROM the player marked as a hack the catalog doesn't know (library "This is a ROM hack…")
+  const customHack = !patch && !hack && rom?.customHack ? rom.customHack : null;
+  // (a hack the catalog says the randomizer can't handle – also an already-patched ROM linked to it in the library)
+  const hackNoUpr = hack?.uprCompatible === 'no';
+  const canRandomize = inspect && !inspect.info?.unsupported && !hackNoUpr;
   const step = { who: 1, game: 2, randomizer: 3, rules: 4, build: 5 };
   const seedSlots = solo || seedMode === 'shared' ? ['p1'] : slots;
 
@@ -515,7 +520,8 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
         romId: rom.id, patchId, values: buildValues(values, gen), randomize: randomize && canRandomize, mode,
         seeds: Object.fromEntries(slots.map((s) => [s, seeds[seedSlots.includes(s) ? s : 'p1']])), sharedSeed: !solo && seedMode === 'shared',
         players, buildFor: solo || buildFor === 'all' ? slots : ['p1'],
-        gameId: game?.variantOf || game?.id || null, gameTitle: hack?.name || (game ? gameTitle(game) : rom.title), hackId: hack?.id || null,
+        gameId: game?.variantOf || game?.id || null, gameTitle: hack?.name || customHack || (game ? gameTitle(game) : rom.title), hackId: hack?.id || null,
+        hackName: !hack && customHack ? customHack : undefined,
         name: numberedName(defaultRunName(players, mode), status?.runs),
         rules: { ...(solo ? nzRules : from && runMode(from) === 'soullink' ? from.rules || {} : {}), typeHelp },
       });
@@ -579,7 +585,7 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
       <div class="grid-2">
         <label class="field"><span>${t('new.game', 'Game from your library')}</span>
           <select value=${rom?.id} onChange=${(e) => { setRomId(e.target.value); const r = roms.find((x) => x.id === e.target.value); setPatchId(preferredPatch(r)?.id || null); }}>
-            ${roms.map((r) => html`<option value=${r.id}>${r.hackId && hackById(r.hackId) ? hackById(r.hackId).name : gameById(r.gameId) ? gameTitle(gameById(r.gameId)) : r.title || r.name}</option>`)}
+            ${roms.map((r) => html`<option value=${r.id}>${r.hackId && hackById(r.hackId) ? hackById(r.hackId).name : r.customHack || (gameById(r.gameId) ? gameTitle(gameById(r.gameId)) : r.title || r.name)}</option>`)}
           </select></label>
         <label class="field"><span>${t('new.hack', 'ROM hack (optional)')}</span>
           <select value=${patchId || ''} onChange=${(e) => setPatchId(e.target.value || null)}>
@@ -593,7 +599,7 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
           : t('new.noJava', 'Java wasn’t found, so the randomizer can’t run. Install Java (e.g. Temurin 21 from adoptium.net) and restart the app – or play a regular SoulLink.'))
         : inspect.info?.missingTool === 'upr' ? (solo ? t('new.noUprSolo', 'The randomizer (Universal Pokémon Randomizer ZX) is missing – you can still play the Nuzlocke without it.')
           : t('new.noUpr', 'The randomizer (Universal Pokémon Randomizer ZX) is missing – or play a regular SoulLink.'))
-        : inspect.info?.unsupported ? (solo ? t('new.noRandomizerSolo', 'This game can’t be randomized – you can still play the Nuzlocke without the randomizer.')
+        : inspect.info?.unsupported || hackNoUpr ? (solo ? t('new.noRandomizerSolo', 'This game can’t be randomized – you can still play the Nuzlocke without the randomizer.')
           : t('new.noRandomizer', 'This game can’t be randomized – you can still play a regular SoulLink.'))
         : t('new.ok', '{n} Pokémon · randomizer supported', { n: inspect.info.pokemonCount })}${inspect && inspect.info && inspect.info.staticsSupported === false ? ` · ${t('new.noStatics', 'gifts & legendaries stay as in the hack')}` : ''}</p>
     </section>
@@ -751,10 +757,10 @@ function JoinRun() {
       const res = await api.post('/api/runs/build', {
         runId: pack.id, romId: rom.id, patchId: patch?.id || null, values: pack.randomizer.values, randomize: pack.randomizer.enabled,
         seeds: pack.randomizer.seeds, sharedSeed: pack.randomizer.sharedSeed, players: withMyName(), buildFor: [mine], name: pack.name, mode: runMode(pack),
-        expectedOutputs: pack.expectedOutputs, rules: pack.rules, gameId: pack.game?.id, hackId: pack.game?.hackId,
+        expectedOutputs: pack.expectedOutputs, rules: pack.rules, gameId: pack.game?.id, hackId: pack.game?.hackId, hackName: pack.game?.hackName || undefined,
         // same file name as the host's ("Robin – Silberne Edition Randomized.gbc", not the raw header title; a hack –
         // also a pre-patched one without a patch file – by its name, as the host's wizard does)
-        gameTitle: pack.patch?.name || hackById(pack.game?.hackId)?.name || (gameById(pack.game?.id) ? gameTitle(gameById(pack.game.id)) : undefined),
+        gameTitle: pack.patch?.name || hackById(pack.game?.hackId)?.name || pack.game?.hackName || (gameById(pack.game?.id) ? gameTitle(gameById(pack.game.id)) : undefined),
       });
       setLog(res.log);
       setMe(mine, pack.id);
@@ -791,7 +797,7 @@ function JoinRun() {
       ${rom ? html`<p class="small"><span class="chip ok">${t('join.found', 'Found in your library')}</span> <span class="mono">${rom.name}</span></p>
         ${otherRelease && html`<p class="small muted">${t('join.otherRelease', 'Another release than the host’s ({host}) – that’s fine: everyone plays their own copy in this run.', { host: releaseOf(baseCrc) || `CRC32 ${baseCrc}` })}</p>`}`
         : html`<p class="warning">${baseCrc && needsIdenticalRom(pack) ? t('join.missingExact', 'This run is {kind}, so everyone needs exactly the same release: {release}. Add it to your library first.', {
-            kind: pack.patch ? t('join.kindPatched', 'a ROM hack') : t('join.kindRandom', 'randomized'), release: releaseOf(baseCrc) || `CRC32 ${baseCrc}` })
+            kind: pack.patch || pack.game?.hackId || pack.game?.hackName ? t('join.kindPatched', 'a ROM hack') : t('join.kindRandom', 'randomized'), release: releaseOf(baseCrc) || `CRC32 ${baseCrc}` })
             + (ownReleases.length ? ' ' + t('join.youHave', 'You have: {list}.', { list: ownReleases.map((r) => releaseOf(r.crc) || r.name).join(', ') }) : '')
           : baseCrc && !gameById(pack.game?.id) ? t('join.missing', 'Add your own copy of the base game (CRC32 {crc}) to the library first.', { crc: baseCrc })
           : t('join.missingGame', 'Add your own copy of {game} to the library first.', { game: gameById(pack.game?.id) ? gameTitle(gameById(pack.game.id)) : pack.game?.title || pack.game?.code || '?' })}</p>

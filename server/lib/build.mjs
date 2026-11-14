@@ -279,6 +279,9 @@ export function isDiscordWebhook(url) {
  * Type checks for an imported run pack (it comes from the partner – untrusted). Returns the cleaned identity
  * fields { room, secret, name, createdAt, players, mode? }; throws a 400 for anything malformed.
  */
+/** The name of a hack the catalog doesn't know, as a run keeps it (up to 80 characters, no control characters). */
+const hackNameOf = (s) => (typeof s === 'string' ? s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) : '');
+
 export function checkPack(pack) {
   const bad = (what) => httpError(400, `Run-Paket ist beschädigt (${what})`, 'packBroken', { what });
   const text = (v, min, max) => typeof v === 'string' && v.length >= min && v.length <= max && !/[\x00-\x1f\x7f]/.test(v);
@@ -390,7 +393,9 @@ async function buildInto(opts, onLog) {
     players,
     base: { crc: patched.baseCrc, name: basename(String(opts.romId).split('::').pop()), gameId: opts.gameId || null },
     patch: opts.patchId ? { name: patched.patchName, sha1: patched.patchSha1 || opts.patchSha1 || null, resultCrc: patched.crc, hackId: opts.hackId || null } : null,
-    game: { id: opts.gameId || existing?.game?.id || null, system: patched.system, code: patched.header?.code || '', title: patched.header?.title || '', hackId: opts.hackId || null },
+    game: { id: opts.gameId || existing?.game?.id || null, system: patched.system, code: patched.header?.code || '', title: patched.header?.title || '', hackId: opts.hackId || null,
+      // an already-patched ROM the player marked as a hack the catalog doesn't know (library.mjs romHacks): its name
+      ...(!opts.hackId && hackNameOf(opts.hackName) ? { hackName: hackNameOf(opts.hackName) } : {}) },
     patchedSha1: patched.sha1,
     randomizer: {
       enabled: opts.randomize !== false && !ctr,

@@ -110,7 +110,7 @@ export function levelCapOf(manifest, rules, raw, badges, slot = null) {
   }
   const name = (b) => b.name || (b.badge !== undefined ? (b.leader ? `${prettyTrainer(b.leader)} (gym ${b.badge + 1})` : `Gym ${b.badge + 1}`) : b.key);
   // the curated gym aces of the unmodified games (a ROM hack's trainers have other levels) …
-  const v = manifest?.game?.hackId || manifest?.patch ? null : vanillaCapFor(gymCapsFamily(manifest?.game?.id || manifest?.base?.gameId || ''), badges);
+  const v = manifest?.game?.hackId || manifest?.game?.hackName || manifest?.patch ? null : vanillaCapFor(gymCapsFamily(manifest?.game?.id || manifest?.base?.gameId || ''), badges);
   if (v) return { cap: v.cap, boss: { key: v.boss.key, name: name(v.boss) } };
   // … else the caps read from the player's game (romcaps:<slot>, web/lib/run.mjs) once its badges were read
   const live = slot ? raw?.[`live:${slot}`]?.v : null;

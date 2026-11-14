@@ -2,14 +2,14 @@ import { html, useState, useMemo, useEffect } from '/vendor/htm-preact.mjs';
 import { useApp, Modal } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, currentLang } from '../lib/i18n.mjs';
-import { api } from '../lib/api.mjs';
+import { api, events } from '../lib/api.mjs';
 import { serverErrorText } from '../lib/errors.mjs';
 import { catalog, gameTitle } from '../lib/data.mjs';
 import { romFeatures, FEATURES } from '/shared/live/features.mjs';
 import { gymCapsFamily } from '/shared/routes.mjs';
 import { FirstSteps } from './firststeps.mjs';
 import { IS_MAC, IS_WIN, shortPath } from '../lib/platform.mjs';
-import { addedToLibrary, addedMessage } from '../lib/libadded.mjs';
+import { addedToLibrary, addedMessage, unpackToast } from '../lib/libadded.mjs';
 import { patchTitle } from '/shared/patchname.mjs';
 
 const SYS = { gb: 'GB', gbc: 'GBC', gba: 'GBA', nds: 'DS', '3ds': '3DS' };
@@ -29,7 +29,10 @@ export function DiscoverModal({ onClose }) {
   const [error, setError] = useState(null);
   const [pick, setPick] = useState({});
   const [busy, setBusy] = useState(false);
+  const [unpacking, setUnpacking] = useState(null); // a zipped 3DS game being unpacked: the toast's text, shown here
   const cat = catalog();
+  // (the app's toasts sit behind this modal – a multi-GB unpack shows its progress in the modal itself)
+  useEffect(() => (busy ? events({ unpack: (p) => setUnpacking(unpackToast(p, cat)) }) : undefined), [busy]);
   useEffect(() => {
     let off = false;
     api.post('/api/library/discover', {}).then((r) => {
@@ -48,11 +51,13 @@ export function DiscoverModal({ onClose }) {
       const paths = [...new Set(chosen.map((f) => f.path))]; // a zip is copied whole
       const r = await api.post('/api/library/import', { paths });
       const after = await reloadLibrary();
-      toast(library && after ? addedMessage(addedToLibrary(library, after, r.added))
+      toast(library && after ? withHackLink(addedMessage(addedToLibrary(library, after, r.added)), { toast, reloadLibrary })
         : { kind: 'ok', title: t('disc.added', 'Added to your library'), text: t('disc.addedText', '{n} file|{n} files', { n: r.added.length, count: r.added.length }) });
       onClose();
     } catch (e) {
       toast({ kind: 'death', title: t('disc.failed', 'Could not add the games'), text: e.message });
+      setError(`${t('disc.failed', 'Could not add the games')}: ${e.message}`); // (the toast is behind the modal)
+      setUnpacking(null);
       setBusy(false);
     }
   };
@@ -65,6 +70,8 @@ export function DiscoverModal({ onClose }) {
       <p class="small muted">${IS_MAC ? t('disc.privacy', 'Only file names and the first bytes of game files are read – nothing leaves your Mac. macOS may ask once whether souldew may look into these folders.')
         : t('disc.privacyPc', 'Only file names and the first bytes of game files are read – nothing leaves your PC.')}</p></div></div>`}
     ${error && html`<div class="warning error" role="alert">${error}</div>`}
+    ${busy && unpacking?.title && html`<div class="disc-search" role="status"><span class="disc-spin" aria-hidden="true"></span>
+      <div><b>${unpacking.title}</b><p class="small muted">${unpacking.text}</p></div></div>`}
     ${res && !res.found.length && html`<div class="note">${t('disc.none', 'No games found in the usual places. Add them by hand – or drop the files into the library.')}</div>`}
     ${res && res.found.length > 0 && html`<ul class="disc-list">
       ${res.found.map((f) => {
@@ -73,13 +80,53 @@ export function DiscoverModal({ onClose }) {
           <input type="checkbox" checked=${!!pick[key(f)]} disabled=${f.inLibrary || busy} onChange=${(e) => setPick({ ...pick, [key(f)]: e.target.checked })} />
           ${g ? html`<img class="disc-cover pixel" src=${`/covers/${g.id}.png`} alt="" loading="lazy" />` : html`<span class="disc-cover none">${SYS[f.system] || '?'}</span>`}
           <span class="disc-body"><b>${g ? gameTitle(g) : f.name}</b>
-            <span class="tiny muted">${[SYS[f.system], g ? f.name : t('disc.unknown', 'not in the catalog (ROM hack or other version)'), home(f.entry ? `${f.path} › ${f.entry}` : f.path)].filter(Boolean).join(' · ')}</span></span>
+            <span class="tiny muted">${[SYS[f.system], g ? f.name : t('disc.unknown', 'not in the catalog (ROM hack or other version)'), home(f.entry ? `${f.path} › ${f.entry}` : f.path),
+              f.zipped && t('disc.zipped', 'zipped – unpacked into your library when you add it')].filter(Boolean).join(' · ')}</span></span>
           ${f.inLibrary ? html`<span class="chip">${t('disc.have', 'already in the library')}</span>` : g ? html`<span class="chip ok">${t('disc.known', 'recognised')}</span>` : ''}
         </label></li>`;
       })}
     </ul>`}
     ${res?.truncated && html`<p class="tiny faint">${t('disc.truncated', 'Very large folders were only searched in part. Games deeper inside: add them by hand.')}</p>`}
   <//>`;
+}
+
+/**
+ * 3DS games the scan found inside zips in your library folders (scanLibrary().zipped): souldew plays 3DS games from
+ * the unpacked file, so they are offered for unpacking here instead of sitting on the shelf unplayable. Unpacking puts
+ * the game into the library folder (the zip stays where it is); the progress shows as a toast (web/app.mjs).
+ */
+function ZippedGames({ zipped }) {
+  const { library, reloadLibrary, toast } = useApp();
+  const [busy, setBusy] = useState(null);
+  const cat = catalog();
+  if (!zipped?.length) return null;
+  const nameOf = (z) => {
+    const g = z.gameId ? (cat.games || []).find((x) => x.id === z.gameId) : null;
+    return g ? gameTitle(g) : z.title || z.name;
+  };
+  const unpack = async (z) => {
+    setBusy(z.id);
+    try {
+      const r = await api.post('/api/library/unpack', { id: z.id });
+      const after = await reloadLibrary();
+      toast(library && after ? addedMessage(addedToLibrary(library, after, r.added))
+        : { kind: 'ok', title: t('lib.added', 'Library updated'), text: t('lib.addedText', 'New games are on the shelf.') });
+    } catch (e) {
+      toast({ kind: 'death', title: t('lib.unpackFailed', 'Couldn’t unpack {name}', { name: nameOf(z) }), text: e.message });
+    } finally {
+      setBusy(null);
+    }
+  };
+  return html`<div class="panel flat zipped-games" style="margin-bottom:22px">
+    <div class="panel-head"><h2>${t('lib.zippedTitle', 'Zipped 3DS game|Zipped 3DS games', { count: zipped.length })}</h2>
+      <p>${t('lib.zippedText', 'souldew plays 3DS games from the unpacked file. Unpack it once into your library – the zip stays where it is.|souldew plays 3DS games from the unpacked file. Unpack them once into your library – the zips stay where they are.', { count: zipped.length })}</p></div>
+    <ul class="disc-list">${zipped.map((z) => html`<li class="disc-item" key=${z.id}><div class="row">
+      ${z.gameId ? html`<img class="disc-cover pixel" src=${coverOf(library, { gameId: z.gameId })} alt="" loading="lazy" />` : html`<span class="disc-cover none">3DS</span>`}
+      <span class="disc-body grow"><b>${nameOf(z)}</b>
+        <span class="tiny muted">${['3DS', z.name, shortPath(`${z.file} › ${z.entry || z.name}`)].join(' · ')}</span></span>
+      <button class="btn small" disabled=${!!busy} onClick=${() => unpack(z)}><${Icon} name="plus" size=${14} />${busy === z.id ? t('lib.unpackBusy', 'Unpacking …') : t('lib.unpack', 'Unpack')}</button>
+    </div></li>`)}</ul>
+  </div>`;
 }
 
 export async function addGamesFlow({ reloadLibrary, folder = false, toast } = {}) {
@@ -117,17 +164,90 @@ export async function addGamesFlow({ reloadLibrary, folder = false, toast } = {}
     return;
   }
   const after = await reloadLibrary?.();
-  tellAdded({ toast, failures, before, after, added });
+  tellAdded({ toast, failures, before, after, added, reloadLibrary });
 }
 
 const libraryNow = () => api.get('/api/library').catch(() => null);
 
 /** After an import / upload: the files that failed, then what was really added (or that it was there already). */
-function tellAdded({ toast, failures = [], before, after, added }) {
+function tellAdded({ toast, failures = [], before, after, added, reloadLibrary }) {
   if (failures.length) toastFailures(toast, failures);
   if (failures.length && !added?.length) return;
-  toast?.(before && after ? addedMessage(addedToLibrary(before, after, added))
+  toast?.(before && after ? withHackLink(addedMessage(addedToLibrary(before, after, added)), { toast, reloadLibrary })
     : { kind: 'ok', title: t('lib.added', 'Library updated'), text: t('lib.addedText', 'New games are on the shelf.') });
+}
+
+/** The "added" toast of an already-patched ROM that looks like a catalog hack: with a "Link it" button. */
+export function withHackLink(msg, app) {
+  if (!msg?.suggest) return msg;
+  const { crc, hackId } = msg.suggest;
+  return { ...msg, action: { label: t('lib.hackLink', 'Link it'), run: () => markRomHack({ crc }, { hackId }, app) } };
+}
+
+/**
+ * "This is a ROM hack…": what an already-patched ROM is (server/lib/library.mjs setRomHack, by its CRC32) –
+ * { hackId } a catalog hack, { name } another hack, { none: true } not a hack, {} undo. → true when it was saved.
+ */
+export async function markRomHack(rom, body, { toast, reloadLibrary } = {}) {
+  try {
+    await api.post('/api/library/romhack', { crc: rom.crc, ...body });
+    await reloadLibrary?.();
+    const h = body.hackId ? (catalog().hacks || []).find((x) => x.id === body.hackId) : null;
+    if (h || body.name) {
+      toast?.({ kind: 'ok', title: t('lib.hackLinked', 'Linked: {name}', { name: h ? h.name : body.name }),
+        text: h ? t('lib.hackLinkedText', 'Your ROM is on the hack’s page now – play it or start a run from there.') : t('lib.hackLinkedOther', 'It’s on the ROM hacks shelf now.') });
+    }
+    return true;
+  } catch (e) {
+    toast?.({ kind: 'death', title: t('lib.hackLinkFailed', 'Couldn’t save that'), text: e.message });
+    return false;
+  }
+}
+
+/**
+ * For a ROM that isn't an exact catalog dump (its header names a game, its checksum is unknown – often an
+ * already-patched hack): "Looks like Emerald Kaizo – link it?" when its file name says so, and "This is a ROM hack…"
+ * to pick the hack (the hacks of its game, or "Other / unknown hack" with a name). `onLinked(hackId)` after a catalog
+ * hack was picked (the page then shows that hack).
+ */
+function RomHackAction({ rom, onLinked }) {
+  const app = useApp();
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (!rom?.crc || rom.hackId || rom.customHack || rom.exact) return null;
+  const cat = catalog();
+  const rootOf = (id) => cat.games.find((g) => g.id === id)?.variantOf || id;
+  const choices = (cat.hacks || []).filter((h) => (rom.gameId ? rootOf(h.baseGameId) === rootOf(rom.gameId) : h.system === rom.system || (h.system === 'gbc' && rom.system === 'gb')));
+  const suggested = rom.suggestedHackId ? (cat.hacks || []).find((h) => h.id === rom.suggestedHackId) : null;
+  const save = async (body) => {
+    setBusy(true);
+    const ok = await markRomHack(rom, body, app);
+    setBusy(false);
+    if (ok && body.hackId) onLinked?.(body.hackId);
+  };
+  return html`<div class="romhack">
+    ${suggested && !open && html`<div class="note">${t('lib.hackSuggest', 'Looks like {hack} – link it?', { hack: suggested.name })}
+      <div class="row" style="margin-top:6px"><button class="btn small" disabled=${busy} onClick=${() => save({ hackId: suggested.id })}>${t('lib.hackLink', 'Link it')}</button>
+        <button class="btn small ghost" disabled=${busy} onClick=${() => save({ none: true })}>${t('lib.hackNotIt', 'No, it isn’t')}</button></div></div>`}
+    ${!open ? html`<div><button class="btn small ghost" onClick=${() => setOpen(true)}>${t('lib.isHack', 'This is a ROM hack…')}</button></div>`
+      : html`<div class="panel flat stack">
+        <p class="small muted">${t('lib.isHackHint', 'An already-patched ROM still names the original game in its header. Tell souldew which hack it is – it then shows up on the hack’s page, and runs get the hack’s settings.')}</p>
+        <label class="field">${t('lib.hackPick', 'Which hack?')}
+          <select value=${pick} onChange=${(e) => setPick(e.target.value)}>
+            <option value="">–</option>
+            ${choices.map((h) => html`<option value=${h.id}>${h.name}</option>`)}
+            <option value="other">${t('lib.hackOther', 'Other / unknown hack')}</option>
+          </select></label>
+        ${pick === 'other' && html`<label class="field">${t('lib.hackOtherName', 'Name of the hack')}
+          <input type="text" maxlength="80" value=${name} onInput=${(e) => setName(e.target.value)} /></label>`}
+        <div class="row">
+          <button class="btn small primary" disabled=${busy || !pick || (pick === 'other' && !name.trim())}
+            onClick=${() => save(pick === 'other' ? { name: name.trim() } : { hackId: pick })}>${t('lib.hackSave', 'Save')}</button>
+          <button class="btn small ghost" onClick=${() => setOpen(false)}>${t('common.cancel', 'Cancel')}</button>
+        </div></div>`}
+  </div>`;
 }
 
 async function uploadFile(file) {
@@ -182,7 +302,7 @@ export function DropZone({ onAdded }) {
         const before = await libraryNow();
         const { failures, added } = await uploadFiles([...e.dataTransfer.files]);
         const after = await onAdded?.();
-        tellAdded({ toast, failures, before, after, added });
+        tellAdded({ toast, failures, before, after, added, reloadLibrary: onAdded });
       } catch (err) {
         toast?.({ kind: 'death', title: t('lib.addFailed', 'Could not add files'), text: err.message });
       } finally {
@@ -310,12 +430,13 @@ function CoverActions({ coverId, own, offer }) {
 }
 
 /** "New SoulLink" and its solo sibling "New Nuzlocke" for a game or ROM hack. */
-function NewRunButtons({ gameId, hackId, patchId, close }) {
+function NewRunButtons({ gameId, hackId, patchId, romId, close }) {
   const { navigate } = useApp();
   const go = (view) => {
     close?.();
-    // (a patch of a hack the catalog doesn't know: the wizard starts with that patch; `new=` – any game – without a known base)
-    navigate(view, hackId ? { new: gameId, hack: hackId } : patchId ? { new: gameId || '', patch: patchId } : { new: gameId });
+    // (a patch of a hack the catalog doesn't know: the wizard starts with that patch; `new=` – any game – without a known
+    // base; a ROM marked as such a hack: the wizard starts with that ROM)
+    navigate(view, hackId ? { new: gameId, hack: hackId } : patchId ? { new: gameId || '', patch: patchId } : romId ? { new: gameId || '', rom: romId } : { new: gameId });
   };
   return html`<div class="row lib-new">
     <button class="btn go" onClick=${() => go('soullink')}><${Icon} name="link" size=${16} />${t('lib.newSoulLink', 'New SoulLink')}</button>
@@ -339,10 +460,14 @@ export function LibraryView() {
     const m = new Map();
     // a pre-patched ROM hack (recognised by its checksum, r.hackId) belongs to its hack, not to the base game: it must
     // not make the base game "owned", nor become the "continue playing" game under the base game's name
-    for (const r of roms) if (r.gameId && !r.hackId && !m.has(rootOf(r.gameId))) m.set(rootOf(r.gameId), r);
+    // (the same for a ROM marked as a hack the catalog doesn't know – r.customHack; an exact dump is preferred)
+    for (const r of [...roms].sort((a, b) => Number(!!b.exact) - Number(!!a.exact))) if (r.gameId && !r.hackId && !r.customHack && !m.has(rootOf(r.gameId))) m.set(rootOf(r.gameId), r);
     return m;
   }, [library]);
-  const unknownRoms = roms.filter((r) => !r.gameId);
+  const unknownRoms = roms.filter((r) => !r.gameId && !r.customHack);
+  // ROMs marked as hacks the catalog doesn't know ("This is a ROM hack…" → other): on the ROM hacks shelf
+  const customRoms = roms.filter((r) => r.customHack && (filter === 'all' || filter === 'hacks' || r.system === filter)
+    && (!q || `${r.customHack} ${r.name}`.toLowerCase().includes(q.toLowerCase())));
 
   const games = (cat.games || []).filter((g) => {
     if (g.variantOf) return false;
@@ -392,6 +517,7 @@ export function LibraryView() {
     </section>`}
 
     ${roms.length === 0 && html`<div class="stack" style="margin-bottom:26px"><${DropZone} onAdded=${reloadLibrary} /></div>`}
+    ${filter !== 'hacks' && html`<${ZippedGames} zipped=${library?.zipped} />`}
 
     <div class="lib-head">
       <div class="seg" role="tablist" aria-label=${t('lib.filterSystem', 'Filter by system')}>
@@ -411,18 +537,20 @@ export function LibraryView() {
         onClick=${() => setOpen({ kind: 'rom', id: r.id })} onPickCover=${() => pickCover(coverIdOf({ rom: r }), { reloadLibrary, toast })} />`)}
     </div>`}
 
-    ${games.length + shownUnknown.length + hacks.length + ownPatches.length === 0 && html`<div class="panel empty-state lib-empty">
+    ${games.length + shownUnknown.length + hacks.length + ownPatches.length + customRoms.length === 0 && html`<div class="panel empty-state lib-empty">
       <h2>${t('lib.noMatch', 'No games match')}</h2>
       <p class="muted">${mine && !q && filter === 'all' ? t('lib.noMatchMine', 'Your library is empty so far.') : t('lib.noMatchText', 'Try another system or search term.')}</p>
       <button class="btn" onClick=${() => { setFilter('all'); setMine(false); setQ(''); }}>${t('lib.clearFilter', 'Clear filters')}</button>
     </div>`}
 
-    ${hacks.length + ownPatches.length > 0 && html`<div class="stack" style="margin-top:34px">
+    ${hacks.length + ownPatches.length + customRoms.length > 0 && html`<div class="stack" style="margin-top:34px">
       <h2>${t('lib.popularHacks', 'Popular ROM hacks')}</h2>
       <p class="small muted">${t('lib.hacksHint2', 'Fan-made versions. If you have a patch file for one, add it here and souldew applies it to your own ROM.')}</p>
       <div class="shelf">
         ${ownPatches.map((c) => html`<${Cart} key=${c.family} hack title=${c.title} sub=${c.sub} color=${c.color} system=${c.system} owned
           onClick=${() => setOpen({ kind: 'patch', id: c.family })} />`)}
+        ${customRoms.map((r) => html`<${Cart} key=${r.id} hack title=${r.customHack} sub=${r.name} system=${r.system} owned cover=${coverOf(library, { rom: r })}
+          color=${cat.games.find((g) => g.id === r.gameId)?.color} onClick=${() => setOpen({ kind: 'rom', id: r.id })} />`)}
         ${hacks.map((h) => {
           const base = cat.games.find((g) => g.id === h.baseGameId);
           const hasPatch = patches.some((p) => p.hackId === h.id) || roms.some((r) => r.hackId === h.id); // (or the patched ROM)
@@ -435,7 +563,7 @@ export function LibraryView() {
 
     ${open?.kind === 'game' && html`<${GameDetail} id=${open.id} onClose=${() => setOpen(null)} openHack=${(id) => setOpen({ kind: 'hack', id })} />`}
     ${open?.kind === 'hack' && html`<${HackDetail} id=${open.id} onClose=${() => setOpen(null)} openGame=${(id) => setOpen({ kind: 'game', id })} />`}
-    ${open?.kind === 'rom' && html`<${RomDetail} id=${open.id} onClose=${() => setOpen(null)} />`}
+    ${open?.kind === 'rom' && html`<${RomDetail} id=${open.id} onClose=${() => setOpen(null)} openHack=${(id) => setOpen({ kind: 'hack', id })} />`}
     ${open?.kind === 'patch' && html`<${PatchDetail} family=${open.id} onClose=${() => setOpen(null)} openGame=${(id) => setOpen({ kind: 'game', id })} />`}
   </div>`;
 }
@@ -505,7 +633,10 @@ function GameDetail({ id, onClose, openHack }) {
   const { library, reloadLibrary, toast } = useApp();
   const cat = catalog();
   const g = cat.games.find((x) => x.id === id);
-  const rom = library?.roms?.find((r) => !r.hackId && (r.gameId === id || cat.games.find((x) => x.id === r.gameId)?.variantOf === id));
+  // this game's ROMs (not those marked as a hack) – an exact dump first; the others may be already-patched hacks
+  const copies = (library?.roms || []).filter((r) => !r.hackId && !r.customHack && (r.gameId === id || cat.games.find((x) => x.id === r.gameId)?.variantOf === id))
+    .sort((a, b) => Number(!!b.exact) - Number(!!a.exact));
+  const rom = copies[0];
   const save = useSoloSave(rom?.id);
   const [noCover, setNoCover] = useState(false); // the catalog picture didn't load → offer an own one
   if (!g) return null;
@@ -525,7 +656,11 @@ function GameDetail({ id, onClose, openHack }) {
           <dt>${t('lib.randomizer', 'Randomizer')}</dt><dd>${g.uprSupported ? t('lib.yes', 'Supported') : t('lib.no', 'Not supported')}</dd>
           <dt>${t('lib.liveTracking', 'Live tracking')}</dt><dd>${liveSupportText(g)}</dd>
           ${rom && html`<${ReadsLine} src=${`/api/library/rom?id=${encodeURIComponent(rom.id)}`} gameId=${g.id} />`}
-          <dt>${t('lib.yourRom', 'Your ROM')}</dt><dd>${rom ? html`<span class="mono small">${rom.name}</span> ${rom.exact ? html`<span class="chip ok">${t('lib.verified', 'verified dump')}</span>` : ''}` : html`<span class="muted">${t('lib.notOwned', 'Not in your library')}</span>`}</dd>
+          <dt>${t('lib.yourRom', 'Your ROM')}</dt><dd>${rom ? html`<span class="mono small">${rom.name}</span> ${rom.exact ? html`<span class="chip ok">${t('lib.verified', 'verified dump')}</span>` : ''}
+            <${RomHackAction} rom=${rom} onLinked=${openHack} />` : html`<span class="muted">${t('lib.notOwned', 'Not in your library')}</span>`}</dd>
+          ${copies.length > 1 && html`<dt>${t('lib.otherCopies', 'Other copies')}</dt><dd class="stack">${copies.slice(1).map((r) => html`<div key=${r.id}>
+            <span class="mono small">${r.name}</span> ${r.exact ? html`<span class="chip ok">${t('lib.verified', 'verified dump')}</span>` : ''}
+            <${RomHackAction} rom=${r} onLinked=${openHack} /></div>`)}</dd>`}
         </dl>
         ${rom
           ? html`<${PlayButtons} romId=${rom.id} system=${g.system} close=${onClose} />
@@ -639,7 +774,10 @@ function HackDetail({ id, onClose, openGame }) {
           <dt>${t('lib.randomizer', 'Randomizer')}</dt><dd>${{ yes: t('lib.yes', 'Supported'), no: t('lib.no', 'Not supported'), unknown: t('lib.unknown', 'Unknown') }[h.uprCompatible] || '–'}</dd>
           ${h.live && html`<dt>${t('lib.live', 'Live tracking')}</dt><dd>${liveLabel(h.live)}${h.liveNote && html`<div class="small muted">${liveNote(h.liveNote)}</div>`}</dd>`}
           ${(ready || canPatch) && html`<${ReadsLine} src=${ready ? `/api/library/rom?id=${encodeURIComponent(ready.id)}` : `/api/library/patched?romId=${encodeURIComponent(baseRom.id)}&patchId=${encodeURIComponent(patch.id)}`} />`}
-          ${ready ? html`<dt>${t('lib.patchedRom', 'Your ROM')}</dt><dd><span class="mono small">${ready.name}</span><div class="small muted">${t('lib.patchedRomHint', 'Already patched – recognised by its checksum.')}</div></dd>` : html`
+          ${ready ? html`<dt>${t('lib.patchedRom', 'Your ROM')}</dt><dd><span class="mono small">${ready.name}</span>${ready.hackMarked
+            ? html`<div class="small muted">${t('lib.hackMarked', 'You marked this ROM as this hack.')}
+                <button class="btn small ghost" onClick=${() => markRomHack(ready, {}, { toast, reloadLibrary })}>${t('lib.hackUndo', 'Undo')}</button></div>`
+            : html`<div class="small muted">${t('lib.patchedRomHint', 'Already patched – recognised by its checksum.')}</div>`}</dd>` : html`
           <dt>${t('lib.patch', 'Patch')}</dt><dd>${versions.length > 1
             ? html`<select class="mono small" aria-label=${t('lib.patch', 'Patch')} value=${patch.id} onChange=${(e) => setPick(e.target.value)}>
                 ${versions.map((p) => html`<option value=${p.id}>${p.name}</option>`)}</select>`
@@ -749,15 +887,16 @@ function PatchDetail({ family, onClose, openGame }) {
   <//>`;
 }
 
-function RomDetail({ id, onClose }) {
-  const { library } = useApp();
+function RomDetail({ id, onClose, openHack }) {
+  const { library, reloadLibrary, toast } = useApp();
   const r = library?.roms?.find((x) => x.id === id);
   const save = useSoloSave(r?.id);
   if (!r) return null;
-  return html`<${Modal} open=${true} wide onClose=${onClose} title=${r.title || r.name}>
+  const title = r.customHack || r.title || r.name;
+  return html`<${Modal} open=${true} wide onClose=${onClose} title=${title}>
     <div class="detail">
       <div class="cover-col">
-        <${Cart} big title=${r.title || r.name} cover=${coverOf(library, { rom: r })} system=${r.system} owned />
+        <${Cart} big hack=${!!r.customHack} title=${title} cover=${coverOf(library, { rom: r })} system=${r.system} owned />
         <${CoverActions} coverId=${coverIdOf({ rom: r })} own=${!!r.customCover} offer />
       </div>
       <div class="stack">
@@ -770,8 +909,13 @@ function RomDetail({ id, onClose }) {
             : html`<dt>CRC32</dt><dd class="mono">${r.crc}</dd>`}
           <${ReadsLine} src=${`/api/library/rom?id=${encodeURIComponent(r.id)}`} />
         </dl>
-        <p class="small muted">${t('lib.unknownRom', 'This ROM is not in the catalog (maybe a hack or another region). You can still play it.')}</p>
+        ${r.customHack
+          ? html`<p class="small muted">${t('lib.hackMarkedOther', 'You marked this ROM as a ROM hack that isn’t in souldew’s list.')}
+              <button class="btn small ghost" onClick=${() => markRomHack(r, {}, { toast, reloadLibrary })}>${t('lib.hackUndo', 'Undo')}</button></p>`
+          : html`<p class="small muted">${t('lib.unknownRom', 'This ROM is not in the catalog (maybe a hack or another region). You can still play it.')}</p>
+            <${RomHackAction} rom=${r} onLinked=${openHack} />`}
         <${PlayButtons} romId=${r.id} system=${r.system} close=${onClose} />
+        ${r.customHack && html`<${NewRunButtons} gameId=${r.gameId} romId=${r.id} close=${onClose} />`}
         <${ExportFiles} links=${[
           { href: libDownload({ id: r.id }), label: t('lib.exportRom', 'Save ROM'), title: r.name },
           saveLink(r.id, save),

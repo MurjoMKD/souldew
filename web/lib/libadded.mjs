@@ -1,7 +1,7 @@
 // What adding files to the library actually changed – for the message after an import or upload (web/views/library.mjs).
 // Compares the library before and after: an entry from one of the added files is new, or was there already (the same
 // ROM or patch, by checksum, under this or another name). A file that gave no entry holds nothing souldew can use.
-import { t } from './i18n.mjs';
+import { t, currentLang } from './i18n.mjs';
 import { catalog, gameTitle } from './data.mjs';
 import { patchTitle } from '/shared/patchname.mjs';
 
@@ -36,6 +36,33 @@ export function addedToLibrary(before, after, paths) {
   return { added, already, unusable };
 }
 
+const gbText = (n) => {
+  const gb = Math.max(0, Number(n) || 0) / 1024 ** 3;
+  let num = gb.toFixed(1);
+  try {
+    num = gb.toLocaleString(currentLang(), { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  } catch {
+    // unknown locale – "4.0"
+  }
+  return `${num} GB`;
+};
+
+/**
+ * The progress toast while a zipped 3DS game is unpacked (the server's "unpack" events: { state, name, gameId, size,
+ * done }): "Unpacking Pokémon Sun … 40 % of 4.0 GB", replaced as it goes (key) and taken away when it's over – the
+ * page that added it then says what was added, or why it failed.
+ */
+export function unpackToast(p, cat = catalog()) {
+  if (!p || (p.state !== 'start' && p.state !== 'progress')) return { key: 'unpack', remove: true };
+  const g = p.gameId ? (cat.games || []).find((x) => x.id === p.gameId) : null;
+  const pct = p.size > 0 ? Math.min(100, Math.floor((100 * (p.done || 0)) / p.size)) : 0;
+  return {
+    key: 'unpack', kind: 'warn', ttl: 30 * 60 * 1000,
+    title: t('lib.unpacking', 'Unpacking {name} …', { name: g ? gameTitle(g) : p.name }),
+    text: t('lib.unpackingText', '{pct} % of {size} – souldew unpacks 3DS games into your library once', { pct, size: gbText(p.size) }),
+  };
+}
+
 /** A name for an entry in the "added" message: the game or hack it is (with the patch's version), else its file name. */
 function addedName({ kind, entry }, cat) {
   if (kind === 'patch') {
@@ -44,6 +71,7 @@ function addedName({ kind, entry }, cat) {
     return t('lib.addedPatchName', '{name} (patch)', { name: [h ? h.name : title, version].filter(Boolean).join(' ') });
   }
   const h = entry.hackId ? (cat.hacks || []).find((x) => x.id === entry.hackId) : null;
+  if (!h && entry.customHack) return entry.customHack;
   const g = entry.gameId ? (cat.games || []).find((x) => x.id === entry.gameId) : null;
   return h ? h.name : g ? gameTitle(g) : entry.title || entry.name;
 }
@@ -60,6 +88,14 @@ export function addedMessage({ added, already, unusable }, cat = catalog()) {
   if (unusable) extra.push(t('lib.addedUnusable', '{count} file has no game or patch souldew can use.|{count} files have no game or patch souldew can use.', { count: unusable }));
   if (added.length === 1) {
     const hint = added[0].kind === 'patch' ? t('lib.addedPatchHint', 'You’ll find it under ROM hacks.') : t('lib.addedGameHint', 'It’s on the shelf now.');
+    // an already-patched ROM whose file name looks like a catalog hack ("kaizo-emerald.gba", server/lib/library.mjs):
+    // the page offers to link it (`suggest`, a button on the toast)
+    const e = added[0].entry;
+    const h = added[0].kind === 'rom' && e.suggestedHackId && e.crc ? (cat.hacks || []).find((x) => x.id === e.suggestedHackId) : null;
+    if (h) {
+      return { kind: 'ok', title: t('lib.addedOne', 'Added: {name}', { name: name(added[0]) }), ttl: 15000,
+        text: [t('lib.hackSuggest', 'Looks like {hack} – link it?', { hack: h.name }), ...extra].join('\n'), suggest: { crc: e.crc, hackId: h.id, hack: h.name } };
+    }
     return { kind: 'ok', title: t('lib.addedOne', 'Added: {name}', { name: name(added[0]) }), text: [hint, ...extra].join('\n') };
   }
   if (added.length) {

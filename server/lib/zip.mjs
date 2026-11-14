@@ -1,9 +1,18 @@
-// Tiny ZIP reader (stored + deflate entries, ZIP64 sizes) — enough for ROM / patch archives.
-import { inflateRawSync, constants as zlibConstants } from 'node:zlib';
+// Tiny ZIP reader (stored + deflate entries, ZIP64 sizes) — enough for ROM / patch archives. Entries are read into
+// memory (readZipEntry, up to 600 MB), or – 3DS games, 1–4 GB – streamed into a file (extractZipEntry).
+import * as zlib from 'node:zlib';
+import { openSync, readSync, closeSync, fstatSync, createReadStream, createWriteStream, renameSync, rmSync, statfsSync } from 'node:fs';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { basename, dirname, join } from 'node:path';
+import { crc32 as crc32js } from '../../shared/checksum.mjs';
 
-/** Largest entry we ever decompress (biggest NDS ROMs are 512 MB). Protects against zip bombs. */
+const { inflateRawSync, createInflateRaw, constants: zlibConstants } = zlib;
+/** CRC32 over a chunk, continuing from `crc` – zlib's native one where Node has it (22.2+, 20.15+). */
+const crc32 = typeof zlib.crc32 === 'function' ? zlib.crc32 : crc32js;
+
+/** Largest entry we ever decompress into memory (biggest NDS ROMs are 512 MB). Protects against zip bombs. */
 export const MAX_ENTRY_SIZE = 600 * 1024 * 1024;
-import { openSync, readSync, closeSync, fstatSync } from 'node:fs';
 
 function readAt(fd, pos, len) {
   const buf = Buffer.alloc(len);
@@ -51,6 +60,7 @@ export function listZip(path) {
     let p = 0;
     for (let i = 0; i < count && p + 46 <= cd.length; i++) {
       if (cd.readUInt32LE(p) !== 0x02014b50) break;
+      const flags = cd.readUInt16LE(p + 8);
       const method = cd.readUInt16LE(p + 10);
       const crc = cd.readUInt32LE(p + 16);
       let compSize = cd.readUInt32LE(p + 20);
@@ -74,7 +84,7 @@ export function listZip(path) {
         }
         e += 4 + len;
       }
-      if (!name.endsWith('/')) entries.push({ name, method, crc, compSize, uncompSize, localOffset });
+      if (!name.endsWith('/')) entries.push({ name, method, flags, crc, compSize, uncompSize, localOffset });
       p += 46 + nameLen + extraLen + commentLen;
     }
     return entries;
@@ -88,15 +98,20 @@ export function listZip(path) {
  * MAX_ENTRY_SIZE). With `{ prefix: n }` only the first n bytes are decompressed (e.g. a ROM header) – that
  * reads at most 64 KB of compressed data instead of inflating a whole ROM.
  */
+/** Where an entry's data starts (after its local header), checked against the file's size. */
+function dataStartOf(fd, entry) {
+  const fileSize = fstatSync(fd).size;
+  const lh = readAt(fd, entry.localOffset, 30);
+  if (lh.length < 30 || lh.readUInt32LE(0) !== 0x04034b50) throw new Error('Corrupt zip (bad local header)');
+  const dataStart = entry.localOffset + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28);
+  if (!(entry.compSize >= 0 && dataStart + entry.compSize <= fileSize)) throw new Error('Corrupt zip (entry out of range)');
+  return dataStart;
+}
+
 export function readZipEntry(path, entry, { prefix = 0 } = {}) {
   const fd = openSync(path, 'r');
   try {
-    const fileSize = fstatSync(fd).size;
-    const lh = readAt(fd, entry.localOffset, 30);
-    if (lh.length < 30 || lh.readUInt32LE(0) !== 0x04034b50) throw new Error('Corrupt zip (bad local header)');
-    const dataStart = entry.localOffset + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28);
-    if (!(entry.compSize >= 0 && dataStart + entry.compSize <= fileSize)) throw new Error('Corrupt zip (entry out of range)');
-    if (!(entry.uncompSize >= 0 && entry.uncompSize <= MAX_ENTRY_SIZE)) throw new Error(`Zip entry too large: ${entry.name}`);
+    const dataStart = dataStartOf(fd, entry);
     if (prefix > 0) {
       const raw = readAt(fd, dataStart, Math.min(entry.compSize, entry.method === 0 ? prefix : 64 * 1024));
       if (entry.method === 0) return raw;
@@ -106,6 +121,8 @@ export function readZipEntry(path, entry, { prefix = 0 } = {}) {
       }
       throw new Error(`Unsupported zip compression method ${entry.method} in ${entry.name}`);
     }
+    // (a header – `prefix` – is read from any entry; a whole entry only up to MAX_ENTRY_SIZE)
+    if (!(entry.uncompSize >= 0 && entry.uncompSize <= MAX_ENTRY_SIZE)) throw new Error(`Zip entry too large: ${entry.name}`);
     if (entry.compSize > MAX_ENTRY_SIZE) throw new Error(`Zip entry too large: ${entry.name}`);
     const raw = readAt(fd, dataStart, entry.compSize);
     if (entry.method === 0) return raw;
@@ -114,5 +131,88 @@ export function readZipEntry(path, entry, { prefix = 0 } = {}) {
     throw new Error(`Unsupported zip compression method ${entry.method} in ${entry.name}`);
   } finally {
     closeSync(fd);
+  }
+}
+
+/** An error while unpacking, with a `code` for the message the player gets (server/lib/library.mjs). */
+function zipError(code, message) {
+  return Object.assign(new Error(message), { zipCode: code });
+}
+
+/**
+ * The file name an entry is unpacked under – its last path part ("Games/Pokemon Sun.3ds" → "Pokemon Sun.3ds"). Names
+ * that try to leave the folder ("../x", "/etc/x", "C:\\x", "\\\\server\\x") are refused (throws, zipCode 'unsafe').
+ */
+export function entryFileName(name) {
+  const s = String(name ?? '');
+  const parts = s.split(/[\\/]/);
+  if (!s || s.includes('\0') || /^[\\/]/.test(s) || /^[a-zA-Z]:/.test(s) || parts.includes('..') || !parts.at(-1) || parts.at(-1) === '.') {
+    throw zipError('unsafe', `Unsafe name in the zip: ${s}`);
+  }
+  return parts.at(-1);
+}
+
+/** Free bytes on the disk that holds `dir` (null when the system can't tell). */
+export function freeBytes(dir, { statfs = statfsSync } = {}) {
+  try {
+    const s = statfs(dir);
+    return Number(s.bavail) * Number(s.bsize);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Stream one entry into the file `dest` – never held in memory, any size up to `maxSize` (ZIP64 sizes and offsets
+ * come from listZip). Written to a hidden temp file next to `dest` (the library scan skips it) and renamed once the
+ * size and the CRC32 match the central directory; on any failure the temp file is removed and nothing is at `dest`.
+ * `onProgress(done, total)` is called as the bytes are written. Throws errors with `zipCode`: 'method' (encrypted or
+ * a compression other than stored / deflate), 'tooLarge', 'damaged' (size, CRC32 or the data itself); file system
+ * errors (disk full, no permission) pass through.
+ */
+export async function extractZipEntry(zipPath, entry, dest, { maxSize = Infinity, onProgress = null } = {}) {
+  if (entry.flags & 1) throw zipError('method', `Encrypted zip entry: ${entry.name}`);
+  if (![0, 8].includes(entry.method)) throw zipError('method', `Unsupported zip compression method ${entry.method} in ${entry.name}`);
+  if (!(entry.uncompSize >= 0 && entry.uncompSize <= maxSize)) throw zipError('tooLarge', `Zip entry too large: ${entry.name}`);
+  if (entry.method === 0 && entry.compSize !== entry.uncompSize) throw zipError('damaged', `Corrupt zip (stored entry sizes differ): ${entry.name}`);
+  let dataStart;
+  const fd = openSync(zipPath, 'r');
+  try {
+    dataStart = dataStartOf(fd, entry);
+  } catch (e) {
+    throw zipError('damaged', e.message);
+  } finally {
+    closeSync(fd);
+  }
+  const part = join(dirname(dest), `.${basename(dest)}.${process.pid}.part`);
+  rmSync(part, { force: true }); // (left behind by a crash)
+  let written = 0;
+  let crc = 0;
+  const check = new Transform({
+    transform(chunk, enc, cb) {
+      written += chunk.length;
+      // more than the central directory says: a damaged entry or a zip bomb – stop before the disk fills up
+      if (written > entry.uncompSize) return cb(zipError('damaged', `Corrupt zip (entry larger than declared): ${entry.name}`));
+      crc = crc32(chunk, crc);
+      onProgress?.(written, entry.uncompSize);
+      cb(null, chunk);
+    },
+  });
+  const source = entry.compSize > 0
+    ? createReadStream(zipPath, { start: dataStart, end: dataStart + entry.compSize - 1, highWaterMark: 1 << 20 })
+    : Readable.from([]);
+  try {
+    try {
+      await pipeline(source, ...(entry.method === 8 ? [createInflateRaw()] : []), check, createWriteStream(part, { flags: 'wx' }));
+    } catch (e) {
+      // zlib: a broken deflate stream
+      throw e.zipCode || !/^Z_|zlib|incorrect|invalid/i.test(`${e.code || ''} ${e.message}`) ? e : zipError('damaged', `Corrupt zip (${e.message}): ${entry.name}`);
+    }
+    if (written !== entry.uncompSize) throw zipError('damaged', `Corrupt zip (entry shorter than declared): ${entry.name}`);
+    if ((crc >>> 0) !== (entry.crc >>> 0)) throw zipError('damaged', `CRC32 mismatch in ${entry.name}`);
+    renameSync(part, dest);
+  } catch (e) {
+    rmSync(part, { force: true });
+    throw e;
   }
 }

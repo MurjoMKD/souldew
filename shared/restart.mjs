@@ -34,9 +34,12 @@ export function baseRomsFor(m, roms, rootOf = null) {
   return (roms || []).filter((r) => r.system === '3ds' && (id ? r.gameId === id : !!code && String(r.code || '').toUpperCase() === code));
 }
 
-/** Randomized or patched runs: every player must build the same bytes, so only the exact base release fits. */
+/**
+ * Randomized or patched runs – also a ROM hack played from an already-patched ROM (game.hackId / game.hackName, no
+ * patch file) –: every player must play the same bytes, so only the exact base release fits.
+ */
 export function needsIdenticalRom(m) {
-  return !!(m?.randomizer?.enabled || m?.patch);
+  return !!(m?.randomizer?.enabled || m?.patch || m?.game?.hackId || m?.game?.hackName);
 }
 
 /** The old run's base name without a "#n" suffix. */
