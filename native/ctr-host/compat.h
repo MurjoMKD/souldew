@@ -195,11 +195,20 @@ static void compat_crash_handler(void (*cb)(const char *what)) {
   const int sigs[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT};
   for (unsigned i = 0; i < sizeof sigs / sizeof *sigs; i++) signal(sigs[i], compat_on_signal);
 }
+// (dladdr / Dl_info: glibc declares them only with _GNU_SOURCE, which ctrhost.c defines first – retrohost.c, which
+// doesn't need this, gets an empty answer instead of a build error on Linux)
+#if defined(__APPLE__) || defined(_GNU_SOURCE)
 static void compat_lib_path(const void *fn, char *out, size_t cap) {
   Dl_info info;
   out[0] = 0;
   if (dladdr(fn, &info) && info.dli_fname) snprintf(out, cap, "%s", info.dli_fname);
 }
+#else
+static void compat_lib_path(const void *fn, char *out, size_t cap) {
+  (void)fn;
+  if (cap) out[0] = 0;
+}
+#endif
 typedef ssize_t compat_ssize;
 static compat_ssize compat_read(int fd, void *b, size_t n) { return read(fd, b, n); }
 static compat_ssize compat_write(int fd, const void *b, size_t n) { return write(fd, b, n); }
