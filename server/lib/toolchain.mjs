@@ -1,10 +1,10 @@
 // Java + Universal Pokemon Randomizer ZX detection, download and invocation.
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync, renameSync, rmSync, readdirSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { join, delimiter, dirname } from 'node:path';
 import { listZip, readZipEntry } from './zip.mjs';
-import { TOOLS_DIR, BUNDLED_TOOLS } from './paths.mjs';
+import { TOOLS_DIR, BUNDLED_TOOLS, CACHE_DIR } from './paths.mjs';
 
 export const UPR_VERSION = '4.6.1';
 export const UPR_URL = 'https://github.com/Ajarmar/universal-pokemon-randomizer-zx/releases/download/v4.6.1/PokeRandoZX-v4_6_1.zip';
@@ -23,6 +23,50 @@ const BUNDLED_FALLBACK = process.platform === 'win32' && process.arch === 'arm64
  * text in the ANSI code page (cp1252), unlike macOS – the same seed must give the same game on every computer.
  */
 export const JAVA_OPTS = ['-Xmx1g', '-Djava.awt.headless=true', '-Dfile.encoding=UTF-8', '-Dsun.stdout.encoding=UTF-8', '-Dsun.stderr.encoding=UTF-8'];
+
+/**
+ * A 3DS game (Gen 6/7) needs far more Java heap: UPR ZX's own launcher starts it with -Xmx4608M (Sun runs out of memory
+ * below ~2 GB). Only a ceiling – Java takes what it uses.
+ */
+export const CTR_HEAP = '-Xmx4608m';
+/** Rebuilding a 3DS game writes ~3 GB and hashes it: minutes on a slow disk. */
+export const CTR_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * JVM options of one bridge call. `ctr`: a 3DS game – the larger heap and UPR's working folder `workDir` (the patched
+ * SysConstants in tools/upr-bridge reads -Dsouldew.upr.root; without it UPR writes next to its jar, inside the app).
+ */
+export function javaOptsFor({ ctr = false, workDir = null } = {}) {
+  if (!ctr) return JAVA_OPTS;
+  return [CTR_HEAP, ...JAVA_OPTS.filter((o) => !o.startsWith('-Xmx')), ...(workDir ? [`-Dsouldew.upr.root=${workDir}`] : [])];
+}
+
+/**
+ * The @@ lines of the bridge's output → { json, warnings, error, settingsString, done, code, step, files }.
+ * Other lines (UPR's own "NCCH: …" chatter) are ignored.
+ */
+export function parseBridgeOutput(out) {
+  const result = { json: null, warnings: [], error: null, settingsString: null, done: null, code: null, step: null, files: null };
+  for (const line of String(out).split(/\r?\n/)) {
+    const m = line.match(/^@@(\w+) (.*)$/);
+    if (!m) continue;
+    let value;
+    try {
+      value = JSON.parse(m[2]);
+    } catch {
+      continue; // a garbled line must not throw inside an event handler (= server crash)
+    }
+    if (m[1] === 'JSON') result.json = value;
+    else if (m[1] === 'WARN') result.warnings.push(value);
+    else if (m[1] === 'ERROR') result.error = value;
+    else if (m[1] === 'SETTINGS') result.settingsString = value;
+    else if (m[1] === 'DONE') result.done = value;
+    else if (m[1] === 'CODE') result.code = value;
+    else if (m[1] === 'STEP') result.step = value;
+    else if (m[1] === 'FILES') result.files = value;
+  }
+  return result;
+}
 
 let javaCache = null;
 
@@ -118,54 +162,68 @@ export async function installUpr() {
   return uprStatus();
 }
 
-/** Run the SoulLinkBridge (see tools/upr-bridge/SoulLinkBridge.java). Resolves with parsed @@ lines. */
-export function runBridge(args, { timeoutMs = 180000 } = {}) {
+/**
+ * Run the SoulLinkBridge (see tools/upr-bridge/SoulLinkBridge.java). Resolves with parsed @@ lines.
+ * `ctr`: a 3DS game – bigger heap, its own working folder under the cache (removed afterwards), a longer timeout.
+ * `onLine`: called with every line the bridge prints while it runs (progress of a 3DS build).
+ * A failure carries `code` when the bridge named one ('encrypted', 'memory', 'timeout').
+ */
+export function runBridge(args, { timeoutMs, ctr = false, onLine = null } = {}) {
   const java = detectJava();
   if (!java.ok) return Promise.reject(new Error('Java 8+ wurde nicht gefunden. Bitte Java installieren (z. B. Temurin 21 von adoptium.net).'));
   if (!existsSync(UPR_JAR)) return Promise.reject(new Error('Universal Pokemon Randomizer ZX fehlt – bitte im Setup installieren.'));
+  const limit = timeoutMs ?? (ctr ? CTR_TIMEOUT_MS : 180000);
+  // a 3DS build's own folder for the game files UPR unpacks (hundreds of MB) – never inside the app, never shared
+  const workDir = ctr ? join(CACHE_DIR, 'upr-3ds', randomBytes(6).toString('hex')) : null;
+  if (workDir) mkdirSync(workDir, { recursive: true });
   return new Promise((resolve, reject) => {
     // the bridge folder first: it carries a fixed copy of UPR's Effectiveness (EnumMap instead of HashMap – the order
     // of a HashMap of enums depends on the JVM, so "sensible items" on Gen 4/5 gave different ROMs per Java version)
+    // and of SysConstants (the working folder above)
     const cp = [BRIDGE_DIR, UPR_JAR].join(delimiter);
-    const child = spawn(java.bin, [...JAVA_OPTS, '-cp', cp, 'SoulLinkBridge', ...args], {
-      cwd: dirname(UPR_JAR),
+    const child = spawn(java.bin, [...javaOptsFor({ ctr, workDir }), '-cp', cp, 'SoulLinkBridge', ...args], {
+      cwd: workDir || dirname(UPR_JAR),
       windowsHide: true, // no console window next to the app while the randomizer runs
     });
     let out = '';
     let err = '';
+    let partial = '';
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGKILL');
-    }, timeoutMs);
-    child.stdout.on('data', (d) => (out += d));
+    }, limit);
+    child.stdout.on('data', (d) => {
+      out += d;
+      if (!onLine) return;
+      const lines = (partial + d).split(/\r?\n/);
+      partial = lines.pop();
+      for (const l of lines) {
+        try {
+          onLine(l);
+        } catch {
+          // progress only – never the build's failure
+        }
+      }
+    });
     child.stderr.on('data', (d) => (err += d));
-    child.on('error', (e) => {
+    const cleanup = () => {
       clearTimeout(timer);
+      if (workDir) rmSync(workDir, { recursive: true, force: true });
+    };
+    child.on('error', (e) => {
+      cleanup();
       reject(e);
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
-      const result = { code, json: null, warnings: [], error: null, settingsString: null, done: null, stdout: out, stderr: err };
-      for (const line of out.split(/\r?\n/)) {
-        const m = line.match(/^@@(\w+) (.*)$/);
-        if (!m) continue;
-        let value;
-        try {
-          value = JSON.parse(m[2]);
-        } catch {
-          continue; // a garbled line must not throw inside this event handler (= server crash)
-        }
-        if (m[1] === 'JSON') result.json = value;
-        else if (m[1] === 'WARN') result.warnings.push(value);
-        else if (m[1] === 'ERROR') result.error = value;
-        else if (m[1] === 'SETTINGS') result.settingsString = value;
-        else if (m[1] === 'DONE') result.done = value;
-      }
+      cleanup();
+      // `code`: the code the bridge named (@@CODE), `exitCode`: the process' exit code
+      const result = { ...parseBridgeOutput(out), exitCode: code, stdout: out, stderr: err };
       if (code !== 0 || result.error) {
-        const detail = timedOut ? `Zeitüberschreitung nach ${Math.round(timeoutMs / 1000)} s` : result.error || err.split(/\r?\n/).find((l) => l.trim())?.trim() || `Exit-Code ${code}`;
+        const detail = timedOut ? `Zeitüberschreitung nach ${Math.round(limit / 1000)} s` : result.error || err.split(/\r?\n/).find((l) => l.trim())?.trim() || `Exit-Code ${code}`;
         const e = new Error(`Randomizer-Fehler: ${detail}`);
         e.details = result;
+        e.code = timedOut ? 'timeout' : result.code || (/OutOfMemoryError/.test(err) ? 'memory' : null);
         reject(e);
         return;
       }

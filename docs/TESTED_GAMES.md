@@ -123,6 +123,19 @@ and Ultra Sun**, in the development app and in the packaged app (`electron-build
 | **Ultra Sun place sign** | ✅ "Route 1" (the house 36, outside 1, the grass 5 – all Route 1 in the ROM's table). The zone sits in the player's position { u16, u16 zone, float x, y, z } at 0x33F6D74A, found with a heap scan across house → outside → house; the same after a fresh start |
 | **Sun live** | ✅ played from the house on (bag and hat from the moving boxes, Kukui, Mahalo Trail, the bridge): Rowlet ♂ L5 22/22 the moment Hala hands it over, "Lili'i" (Iki Town) on the sign, later "Route 1"; L6 24/24 after the first battle. Battle panel: Hau's Popplio ("Robball") L5 → "Trainer", Rowlet's Tackle, Leafage (×2) and Growl (Gen 6/7 moves named since the merge with 2.4.0) (type byte 0x341C8CAC = 1), a wild Pikipek ("Peppeck") L3 in Route 1's grass → "wild" (type byte 0, in-battle 0x341C8CCD = 1). Kukui's demo battle (his Rockruff vs a Pikipek, your team not in it) shows no panel – the game doesn't set the in-battle flag there |
 
+**Randomized Sun** (macOS, Apple Silicon, the No-Intro US cartridge image – decrypted `.3ds`, 4 GiB, NCCH 3.0 GB):
+
+| What | Result |
+|---|---|
+| New-run wizard | ✅ "802 Pokémon · randomizer supported", Gen 7 options (totem Pokémon), only the 4 tweaks UPR offers for Sun, live progress (reading, randomizing, writing x %, checksum) |
+| Build ("Nuzlocke hard mode", "Classic") | ✅ one `.cxi` of 3,218,046,976 bytes in ~35 s incl. SHA-1; UPR's working files in the cache, gone afterwards |
+| Same seed + settings twice / on Temurin 17, OpenJDK 21, OpenJDK 27 | ✅ byte-identical `.cxi` and `p1.data.json` (hard mode: e63e995f…, chaos: ec155e97…) |
+| SoulLink join (second profile imports the pack, builds p2) | ✅ "byte-identisch mit dem deines Freundes" (`matchesFriend: true`); shared seed: p2 hard-linked to p1 on the host |
+| Built-in player (play view of the run) | ✅ boots to the language selection at 60 fps; `ctrhost --bench` the same |
+| Encrypted dump | ✅ (made-up file with Sun's IDs, unit test) "encrypted – needs a decrypted copy", never "not supported" |
+| Gen 1–5 unchanged | ✅ Platinum and Emerald, "hard mode" seed 4242: the old bridge + 2.6.3 settings and the new bridge + new settings give the same ROM and data |
+| Azahar app with the `.cxi` | not checked (a `.cxi` starts in Azahar like any other – see below) |
+
 **Azahar app** (the external route, Windows/Linux or by choice): checked on macOS with **Azahar 2126.2**, installed
 through souldew's one-click install, in its own portable profile, with free homebrew and stand-ins:
 

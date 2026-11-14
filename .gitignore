@@ -15,6 +15,12 @@ library/
 *.7z
 # … except the small archives the tests unpack (made by the tests' authors, no game data)
 !test/fixtures/7z/*.7z
+*.3ds
+*.cci
+*.cxi
+*.cia
+*.zcci
+*.zcxi
 *.sav
 *.dsv
 *.srm

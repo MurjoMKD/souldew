@@ -57,8 +57,12 @@ const TEXTS = {
   emulatorOpen: (v) => t('err.emulatorOpen', '{emu} is already open – start the game there, or close {emu} and start it from here', v),
   ctrNoPatch: () => t('err.ctrNoPatch', 'Nintendo 3DS games can’t be patched here'),
   ctrInArchive: () => t('err.ctrInArchive', 'Unpack the 3DS game from its archive into the library first'),
-  ctrEncrypted: () => t('err.ctrEncrypted', 'This 3DS game file is encrypted. souldew and Azahar play decrypted games only – dump your cartridge decrypted (for example with GodMode9 on your 3DS) and add that file.'),
+// (one text for playing and randomizing: the player, the randomizer and Azahar all need a decrypted dump)
+  ctrEncrypted: () => t('err.ctrEncrypted', 'This 3DS game file is encrypted. souldew and Azahar only play decrypted games, and the randomizer needs a decrypted copy too (.3ds, .cci or .cxi) – souldew doesn’t decrypt games. Dump your cartridge decrypted (for example with GodMode9 on your 3DS) and add that file.'),
   notCtr: () => t('err.notCtr', 'Not a Nintendo 3DS game'),
+  ctrNoSpace: (v) => t('err.ctrNoSpace', 'Not enough disk space: the randomized 3DS games need about {need} GB, {free} GB are free.', v),
+  ctrMemory: () => t('err.ctrMemory', 'Not enough memory for the 3DS randomizer (it needs up to 4.5 GB). Close other programs and try again.'),
+  ctrTimeout: () => t('err.ctrTimeout', 'The 3DS randomizer took too long and was stopped. Try again – a fast drive helps.'),
   badEmulatorPath: () => t('err.badEmulatorPath', 'Invalid emulator path'),
   scriptMissing: () => t('err.scriptMissing', 'The mGBA script is missing – restart souldew to create it again'),
   emulatorRunning: () => t('err.emulatorRunning', 'The external emulator is still running. Save in the game, close the emulator, then try again.'),

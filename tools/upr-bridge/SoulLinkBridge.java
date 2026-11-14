@@ -9,6 +9,10 @@ import com.dabomstew.pkrandom.pokemon.Pokemon;
 import com.dabomstew.pkrandom.pokemon.StaticEncounter;
 import com.dabomstew.pkrandom.romhandlers.Gen4RomHandler;
 import com.dabomstew.pkrandom.romhandlers.Gen5RomHandler;
+import com.dabomstew.pkrandom.romhandlers.Gen6RomHandler;
+import com.dabomstew.pkrandom.romhandlers.Gen7RomHandler;
+import com.dabomstew.pkrandom.romhandlers.Abstract3DSRomHandler;
+import com.dabomstew.pkrandom.exceptions.EncryptedROMException;
 import com.dabomstew.pkrandom.constants.Gen5Constants;
 import com.dabomstew.pkrandom.newnds.NARCArchive;
 import com.dabomstew.pkrandom.pokemon.Move;
@@ -44,6 +48,13 @@ import java.util.ResourceBundle;
  *   java -cp PokeRandoZX.jar:bridge SoulLinkBridge fields
  *   java -cp PokeRandoZX.jar:bridge SoulLinkBridge randomize <rom> <out.nds> <settings.properties> <seed> <log.txt> <data.json>
  *
+ * 3DS games (Gen 6: X/Y, Omega Ruby/Alpha Sapphire; Gen 7: Sun/Moon, Ultra Sun/Ultra Moon) go through UPR ZX's own
+ * Gen6/Gen7RomHandler: a decrypted .3ds/.cci/.cxi in, one rebuilt, self-contained .cxi out (the same file every
+ * computer builds from the same seed). Besides the @@ lines below, 3DS builds print @@STEP (load / randomize) and
+ * @@FILES (how many files the game's romfs has – UPR prints "NCCH: Writing file …" per file while writing), and a
+ * dump UPR can't read because it is encrypted ends with @@CODE "encrypted" (souldew never decrypts: a decrypted dump is needed),
+ * running out of Java heap with @@CODE "memory".
+ *
  * Compiled with --release 8 so it runs on every Java >= 8.
  */
 public class SoulLinkBridge {
@@ -73,9 +84,36 @@ public class SoulLinkBridge {
                 System.exit(2);
             }
         } catch (Throwable t) {
+            if (isEncrypted(t)) System.out.println("@@CODE " + json("encrypted"));
+            else if (t instanceof OutOfMemoryError) System.out.println("@@CODE " + json("memory"));
             System.out.println("@@ERROR " + json(String.valueOf(t)));
             t.printStackTrace();
             System.exit(1);
+        }
+    }
+
+    /** UPR reports an encrypted 3DS dump as EncryptedROMException – also wrapped in another exception. */
+    static boolean isEncrypted(Throwable t) {
+        for (int i = 0; t != null && i < 10; i++, t = t.getCause()) if (t instanceof EncryptedROMException) return true;
+        return false;
+    }
+
+    /** A 3DS file (NCSD cartridge image or a bare NCCH/CXI), by its magic at 0x100 – checked before UPR's other factories. */
+    static boolean is3ds(String path) {
+        try {
+            java.io.RandomAccessFile f = new java.io.RandomAccessFile(path, "r");
+            try {
+                if (f.length() < 0x200) return false;
+                byte[] magic = new byte[4];
+                f.seek(0x100);
+                f.readFully(magic);
+                String m = new String(magic, StandardCharsets.US_ASCII);
+                return "NCSD".equals(m) || "NCCH".equals(m);
+            } finally {
+                f.close();
+            }
+        } catch (java.io.IOException e) {
+            return false;
         }
     }
 
@@ -83,6 +121,22 @@ public class SoulLinkBridge {
         String path = new File(rom).getAbsolutePath();
         java.util.Random random = com.dabomstew.pkrandom.RandomSource.instance();
         RomHandler handler = null;
+        if (is3ds(path)) {
+            System.out.println("@@STEP " + json("load"));
+            RomHandler.Factory[] ctr = { new Gen6RomHandler.Factory(), new Gen7RomHandler.Factory() };
+            for (RomHandler.Factory f : ctr) {
+                if (f.isLoadable(path)) {
+                    handler = f.create(random);
+                    break;
+                }
+            }
+            if (handler == null) {
+                throw new IllegalArgumentException("This 3DS game is not supported by Universal Pokemon Randomizer ZX (X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon, Ultra Sun/Ultra Moon): " + path);
+            }
+            if (!handler.loadRom(path)) throw new IllegalStateException("UPR could not load the 3DS game");
+            System.out.println("@@FILES " + romfsFileCount(handler));
+            return handler;
+        }
         if (new Gen4RomHandler.Factory().isLoadable(path)) {
             handler = new SafeGen4RomHandler(random);
         } else if (new Gen5RomHandler.Factory().isLoadable(path)) {
@@ -120,6 +174,10 @@ public class SoulLinkBridge {
         sb.append("\"valid\":").append(h.isRomValid()).append(',');
         sb.append("\"generation\":").append(h.generationOfPokemon()).append(',');
         sb.append("\"pokemonCount\":").append(h.getPokemon().size() - 1).append(',');
+        if (h instanceof Abstract3DSRomHandler) {
+            sb.append("\"system\":\"3ds\",");
+            sb.append("\"titleId\":").append(json(((Abstract3DSRomHandler) h).getTitleIdFromLoadedROM())).append(',');
+        }
         boolean safe4 = h instanceof SafeGen4RomHandler;
         boolean statics5Broken = h instanceof SafeGen5RomHandler && ((SafeGen5RomHandler) h).staticsBroken;
         sb.append("\"introScriptFixes\":").append(safe4 ? ((SafeGen4RomHandler) h).marillEntriesRemoved : 0).append(',');
@@ -296,9 +354,11 @@ public class SoulLinkBridge {
         if (fb.isRemovedCodeTweaks()) System.out.println("@@WARN " + json("Some code tweaks are not supported by this ROM and were removed"));
         System.out.println("@@SETTINGS " + json(settings.toString()));
 
+        if (h instanceof Abstract3DSRomHandler) System.out.println("@@STEP " + json("randomize"));
         ResourceBundle bundle = ResourceBundle.getBundle("com/dabomstew/pkrandom/newgui/Bundle");
         ByteArrayOutputStream logBytes = new ByteArrayOutputStream();
         PrintStream log = new PrintStream(logBytes, true, "UTF-8");
+        // (false: one file – a .nds/.gba/… or, for a 3DS game, a rebuilt .cxi – never a LayeredFS folder)
         int check = new Randomizer(settings, h, bundle, false).randomize(new File(out).getAbsolutePath(), log, seed);
         log.close();
         FileOutputStream lf = new FileOutputStream(logFile);
@@ -394,6 +454,20 @@ public class SoulLinkBridge {
         }
         sb.append("]}");
         return sb.toString();
+    }
+
+    /** How many files the loaded 3DS game's romfs has (UPR's NCCH keeps them private) – -1 if that can't be read. */
+    static int romfsFileCount(RomHandler h) {
+        try {
+            Field base = Abstract3DSRomHandler.class.getDeclaredField("baseRom");
+            base.setAccessible(true);
+            Object ncch = base.get(h);
+            Field files = ncch.getClass().getDeclaredField("romfsFiles");
+            files.setAccessible(true);
+            return ((Map<?, ?>) files.get(ncch)).size();
+        } catch (Exception e) {
+            return -1;
+        }
     }
 
     /**

@@ -48,6 +48,13 @@
   says which hack it is, souldew asks "Looks like Pokémon Emerald Kaizo – link it?" on the ROM's page and in the message
   after adding it. Runs of such a ROM are hack runs: no vanilla level caps, the randomizer follows the hack's entry, and
   joining a SoulLink needs the very same ROM, like any patched run.
+- **The 3DS games can be randomized.** X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon and Ultra Sun/Ultra Moon now go through
+  the bundled Universal Pokémon Randomizer ZX like the Gen 1–5 games: the presets, plus totem Pokémon (Gen 7) and Mega
+  Evolution options, a live progress line while the game is rebuilt, and one `.cxi` per player that the built-in player
+  and Azahar start directly. Every computer builds the same bytes from the same seed (checked across Java versions), so a
+  SoulLink join compares the games as before; with "Same world for everyone" the game is built once. A decrypted dump is
+  needed – souldew decrypts nothing and says so when a file is encrypted. About 3 GB and well under a minute per game on
+  an SSD. Playing in the Azahar app? Remove the game's update there for the run, it would replace parts of it.
 
 ## 2.6.3
 

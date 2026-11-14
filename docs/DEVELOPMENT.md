@@ -116,6 +116,21 @@ cross-builds with Ubuntu's MinGW-w64 (`g++-mingw-w64-x86-64-posix`, a CMake tool
 holds the few OS calls. Vulkan there is the system's loader (`vulkan-1.dll` / `libvulkan.so.1`); without it
 `server/lib/ctr.mjs` reports the part as missing and 3DS games open in the Azahar app.
 
+**Randomizing 3DS games** uses the same bundled UPR ZX 4.6.1 jar and `SoulLinkBridge` as Gen 1–5 – UPR's own
+Gen6/Gen7RomHandler (`server/lib/ctrrando.mjs`, the 3DS branch of `server/lib/build.mjs`). Input: a decrypted `.3ds`/
+`.cci`/`.cxi`/`.cia` (UPR reads the game's NCCH; an encrypted one ends with `@@CODE "encrypted"` → `ctrEncrypted` –
+souldew has no keys and decrypts nothing). Output: one rebuilt, self-contained `.cxi` per world in the run folder (no
+LayeredFS mod folder), hashed with a stream and compared on a join like any ROM; a shared seed builds once and hard-links
+the others. The bridge runs with `-Xmx4608m` (UPR ZX's launcher value; Sun runs out below ~2 GB) and
+`-Dsouldew.upr.root=<cache>/upr-3ds/<id>`: the patched `SysConstants` ahead of the jar moves UPR's `tmp_<game>` folder
+out of the app (without the property – every Gen 1–5 build – nothing changes). UPR writes the `.cxi` with
+`RandomAccessFile("rw")`, which doesn't truncate, so the build always deletes the target first (it may be a hard link
+to the library's game). Rebuild the bridge after changing it:
+`javac --release 8 -cp tools/upr/PokeRandoZX.jar:tools/upr-bridge -d tools/upr-bridge tools/upr-bridge/SoulLinkBridge.java tools/upr-bridge/com/dabomstew/pkrandom/SysConstants.java`.
+Determinism: Sun built byte-identical with Temurin 17, OpenJDK 21 and 27 ("Nuzlocke hard mode" and "Chaos"); the Gen 6/7
+handlers' only enum-keyed map iteration is the weakness-berry table behind `Effectiveness.against`, already fixed.
+Game updates aren't loaded (UPR could only write them as LayeredFS).
+
 Notes: New 3DS mode is on (the core's default; a savestate from Old 3DS mode would crash the core, so the play view
 stores states as core `azahar-n3ds` and refuses others). The host exits with `_exit` – the core's unload crashes.
 `CTRHOST_DEBUG=1` logs the input it reads; `ctrhost --bench N --dump` runs a game without souldew. Windows and Linux
