@@ -3,7 +3,7 @@ import { useApp, Modal, Led } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, ago } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
-import { catalog, gameById, hackById, gameTitle, patchLabel } from '../lib/data.mjs';
+import { catalog, gameById, hackById, gameTitle, patchLabel, genFromSystem } from '../lib/data.mjs';
 import { PRESETS, DEFAULT_VALUES, localizeRandomizer, randomSeed, sameSettings, withDefaults, fieldActive, fieldEnabled, forGen, buildValues } from '/shared/randomizer-options.mjs';
 import { Cart, coverOf } from './library.mjs';
 import { RestartModal } from './restart.mjs';
@@ -332,7 +332,7 @@ function presetSummary(values, groups) {
 }
 
 /** "My presets": the user's saved randomizer settings – pick, rename, delete, save the current ones. */
-function MyPresets({ presets, setPresets, presetId, basedOn, values, groups, onPick }) {
+function MyPresets({ presets, setPresets, presetId, basedOn, values, groups, onPick, gen }) {
   const { toast } = useApp();
   const [mode, setMode] = useState(null); // { kind: 'new' | 'rename' | 'delete', id?, name? }
   const [busy, setBusy] = useState(false);
@@ -382,10 +382,55 @@ function MyPresets({ presets, setPresets, presetId, basedOn, values, groups, onP
           <button class="btn small ghost" onClick=${() => setMode(null)}>${t('common.cancel', 'Cancel')}</button></div>`
       : html`<div class="row">
           <button class="btn small ghost" onClick=${() => setMode({ kind: 'new', name: '' })}><${Icon} name="save" size=${14} />${t('new.presetSave', 'Save current settings as preset')}</button>
-          ${current && !sameSettings(current.values, values) && html`<button class="btn small ghost" disabled=${busy}
+          ${current && !sameSettings(current.values, values, gen) && html`<button class="btn small ghost" disabled=${busy}
             onClick=${() => run(() => api.post('/api/randomizer/presets', { id: current.id, name: current.name, values }), (res) => onPick(res.preset))}>${t('new.presetUpdate', 'Update “{name}”', { name: current.name })}</button>`}
         </div>`}
   </div>`;
+}
+
+/** A random id for following one build's progress (GET /api/runs/progress/<id>). */
+const newProgressId = () => [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+/** Polls the progress of the build started with `id` (POST /api/runs/build with `progressId`) while `id` is set. */
+function useBuildProgress(id) {
+  const [state, setState] = useState(null);
+  useEffect(() => {
+    setState(null);
+    if (!id) return undefined;
+    let off = false;
+    const tick = () => api.get(`/api/runs/progress/${id}`).then((r) => { if (!off) setState(r); }).catch(() => {});
+    const timer = setInterval(tick, 1000);
+    tick();
+    return () => { off = true; clearInterval(timer); };
+  }, [id]);
+  return state;
+}
+
+/** What a running build is doing, as one line – `name(slot)` gives a player's name. Null before the first step. */
+export function progressText(p, name) {
+  if (!p?.phase) return null;
+  const who = name(p.slot);
+  const pct = p.total ? Math.min(100, Math.round((p.done / p.total) * 100)) : null;
+  const text = {
+    load: () => t('new.progLoad', 'Reading the 3DS game for {name} …', { name: who }),
+    randomize: () => t('new.progRandomize', 'Randomizing the game for {name} …', { name: who }),
+    write: () => (pct == null ? t('new.progWriteNoPct', 'Writing the new game file for {name} …', { name: who })
+      : t('new.progWrite', 'Writing the new game file for {name} … {pct} %', { name: who, pct })),
+    finish: () => t('new.progFinish', 'Finishing the new game file for {name} …', { name: who }),
+    hash: () => t('new.progHash', 'Checking {name}’s game (checksum) …', { name: who }),
+    reuse: () => t('new.progReuse', 'Same world: copying the game for {name} …', { name: who }),
+  }[p.phase]?.();
+  if (!text) return null;
+  return p.count > 1 ? `${t('new.progPlayer', 'Game {i} of {n}', { i: p.index + 1, n: p.count })} · ${text}` : text;
+}
+
+/** The running build's step (and, while writing a 3DS game, a bar) – under the build button. */
+function BuildProgress({ state, name }) {
+  const p = state?.progress;
+  const text = progressText(p, name);
+  if (!text) return null;
+  return html`<div class="stack-s" role="status" aria-live="polite"><span class="small">${text}</span>
+    ${p.phase === 'write' && p.total > 0 && html`<progress max=${p.total} value=${p.done} style="width:100%"></progress>`}</div>`;
 }
 
 /** Owned ROMs + patches that fit a catalog game (or any owned ROM). */
@@ -444,7 +489,9 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
   const [inspect, setInspect] = useState(null);
   const [randomize, setRandomize] = useState(from ? from.randomizer?.enabled !== false : true);
   const oldValues = from?.randomizer?.values && Object.keys(from.randomizer.values).length ? from.randomizer.values : null;
-  const [presetId, setPresetId] = useState(oldValues ? PRESETS.find((p) => sameSettings(p.values, oldValues))?.id || 'custom' : 'soullink');
+  // (the old run's generation: options of other generations – Gen 7's totems – don't decide which preset it was)
+  const fromGen = from ? gameById(from.game?.id)?.generation || genFromSystem(from.game) : null;
+  const [presetId, setPresetId] = useState(oldValues ? PRESETS.find((p) => sameSettings(p.values, oldValues, fromGen))?.id || 'custom' : 'soullink');
   const [values, setValues] = useState(oldValues || PRESETS[0].values);
   const [myPresets, setMyPresets] = useState([]);
   const [basedOn, setBasedOn] = useState(null); // saved preset the current values came from
@@ -465,6 +512,8 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
   const [log, setLog] = useState([]);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [progressId, setProgressId] = useState(null);
+  const progress = useBuildProgress(progressId);
 
   useEffect(() => {
     if (!rom) return;
@@ -482,7 +531,7 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
       if (off) return;
       setMyPresets(r.presets);
       // a restarted run whose settings came from a saved preset
-      const mine = presetId === 'custom' && r.presets.find((p) => sameSettings(p.values, values));
+      const mine = presetId === 'custom' && r.presets.find((p) => sameSettings(p.values, values, fromGen));
       if (mine) { setPresetId(mine.id); setBasedOn(mine.id); }
     }).catch(() => {});
     return () => { off = true; };
@@ -501,18 +550,24 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
   // (a ROM patched before it was added is recognised by its checksum – server/lib/library.mjs describeRom)
   const hack = patch?.hackId ? hackById(patch.hackId) : !patch && rom?.hackId ? hackById(rom.hackId) : null;
   const canRandomize = inspect && !inspect.info?.unsupported;
+  const ctr = inspect?.patched?.system === '3ds';
   const step = { who: 1, game: 2, randomizer: 3, rules: 4, build: 5 };
   const seedSlots = solo || seedMode === 'shared' ? ['p1'] : slots;
+  // a randomized 3DS game is rebuilt per world: how many games this computer builds, and their size
+  const ctrGames = ctr && randomize && canRandomize ? (solo || buildFor !== 'all' ? 1 : seedMode === 'shared' ? 1 : count) : 0;
+  const ctrGb = inspect?.patched?.outputSize ? (inspect.patched.outputSize / 1024 ** 3).toFixed(1) : null;
 
   async function build() {
     setBusy(true);
     setError(null);
     setLog([]);
+    const pid = newProgressId();
+    setProgressId(pid);
     const players = Object.fromEntries(slots.map((s, i) => [s, { name: names[s].trim() || `P${i + 1}` }]));
     try {
       const res = await api.post('/api/runs/build', {
         // buildValues: drop what this generation lacks – stored in the run, so the other players build the same
-        romId: rom.id, patchId, values: buildValues(values, gen), randomize: randomize && canRandomize, mode,
+        romId: rom.id, patchId, values: buildValues(values, gen), randomize: randomize && canRandomize, mode, progressId: pid,
         seeds: Object.fromEntries(slots.map((s) => [s, seeds[seedSlots.includes(s) ? s : 'p1']])), sharedSeed: !solo && seedMode === 'shared',
         players, buildFor: solo || buildFor === 'all' ? slots : ['p1'],
         gameId: game?.variantOf || game?.id || null, gameTitle: hack?.name || (game ? gameTitle(game) : rom.title), hackId: hack?.id || null,
@@ -529,6 +584,7 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
     } catch (e) {
       setError(e.message);
     }
+    setProgressId(null);
     setBusy(false);
   }
 
@@ -593,6 +649,8 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
           : t('new.noJava', 'Java wasn’t found, so the randomizer can’t run. Install Java (e.g. Temurin 21 from adoptium.net) and restart the app – or play a regular SoulLink.'))
         : inspect.info?.missingTool === 'upr' ? (solo ? t('new.noUprSolo', 'The randomizer (Universal Pokémon Randomizer ZX) is missing – you can still play the Nuzlocke without it.')
           : t('new.noUpr', 'The randomizer (Universal Pokémon Randomizer ZX) is missing – or play a regular SoulLink.'))
+        : inspect.info?.reason === 'encrypted' ? t('new.ctrEncrypted', 'This 3DS game file is encrypted, so the randomizer can’t read it. It needs a decrypted copy of the game (.3ds, .cci or .cxi) – souldew doesn’t decrypt games.')
+        : inspect.info?.reason === 'compressed' ? t('new.ctrCompressed', 'Compressed 3DS files (.zcci, .zcxi) can’t be randomized – add the uncompressed game file (.3ds, .cci or .cxi).')
         : inspect.info?.unsupported ? (solo ? t('new.noRandomizerSolo', 'This game can’t be randomized – you can still play the Nuzlocke without the randomizer.')
           : t('new.noRandomizer', 'This game can’t be randomized – you can still play a regular SoulLink.'))
         : t('new.ok', '{n} Pokémon · randomizer supported', { n: inspect.info.pokemonCount })}${inspect && inspect.info && inspect.info.staticsSupported === false ? ` · ${t('new.noStatics', 'gifts & legendaries stay as in the hack')}` : ''}</p>
@@ -602,10 +660,13 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
       <div class="row"><h2>${t('new.stepRandomizer', '{n} · Randomizer', { n: step.randomizer })}</h2><span class="spacer"></span>
         <label class="check"><input type="checkbox" checked=${randomize && canRandomize} disabled=${!canRandomize} onChange=${(e) => setRandomize(e.target.checked)} /><span>${t('common.on', 'On')}</span></label></div>
       ${randomize && canRandomize && html`<div class="stack">
+        ${ctr && html`<p class="small muted">${ctrGb ? t('new.ctrNote', 'Nintendo 3DS: the randomizer rebuilds the whole game for each world – about {gb} GB and a few minutes per game.', { gb: ctrGb })
+          : t('new.ctrNoteNoSize', 'Nintendo 3DS: the randomizer rebuilds the whole game for each world – a few GB and a few minutes per game.')}
+          ${' '}${t('new.ctrUpdate', 'Playing in Azahar itself? Remove the game’s update there for this run – an installed update replaces parts of the randomized game.')}</p>`}
         <div class="preset-list" role="radiogroup">
           ${rnd.presets.map((p) => html`<button class=${`preset ${presetId === p.id ? 'on' : ''}`} role="radio" aria-checked=${presetId === p.id} onClick=${() => pickPreset(p, false)}>
             <span class="radio"></span><span><b>${p.name}</b>${p.id === 'soullink' ? html` <span class="faint small">${t('new.recommended', 'recommended')}</span>` : ''}</span><span class="desc">${p.description}</span></button>`)}
-          <${MyPresets} presets=${myPresets} setPresets=${setMyPresets} presetId=${presetId} basedOn=${basedOn} values=${values} groups=${rnd.groups}
+          <${MyPresets} presets=${myPresets} setPresets=${setMyPresets} presetId=${presetId} basedOn=${basedOn} values=${values} groups=${rnd.groups} gen=${gen}
             onPick=${(p) => pickPreset(p, true)} />
         </div>
         ${!solo && html`<div class="seg">
@@ -654,11 +715,13 @@ function NewRun({ gameId, hackId, patchPick, from, mode: sectionMode }) {
       ${!solo && html`<div class="row small"><span class="muted">${t('new.buildFor', 'Build games for')}</span>
         <div class="seg" role="group" aria-label=${t('new.buildFor', 'Build games for')}><button class=${buildFor === 'all' ? 'on' : ''} aria-pressed=${buildFor === 'all'} onClick=${() => setBuildFor('all')}>${count > 2 ? t('new.forAll', 'All of us') : t('new.forBoth', 'Both of us')}</button>
           <button class=${buildFor === 'me' ? 'on' : ''} aria-pressed=${buildFor === 'me'} onClick=${() => setBuildFor('me')}>${t('new.forMe', 'Only me')}</button></div></div>`}
+      ${ctrGames > 1 && html`<p class="small muted">${t('new.ctrGames', 'This builds {n} 3DS games on this computer{size}. “Only me” builds just yours – the others build their own.', { n: ctrGames, size: ctrGb ? ` (≈ ${(ctrGames * Number(ctrGb)).toFixed(1)} GB)` : '' })}</p>`}
       <div class="row">
         <button class="btn primary big" disabled=${busy || !inspect || inspect.failed} onClick=${build}><${Icon} name=${solo ? 'play' : 'link'} size=${16} />${busy ? t('new.building', 'Building …')
           : solo ? t('new.createSolo', 'Start Nuzlocke') : t('new.create', 'Create SoulLink')}</button>
       </div>
-      ${log.length > 0 && html`<div class="log">${log.join('\n')}</div>`}
+      ${busy && html`<${BuildProgress} state=${progress} name=${(s) => names[s]?.trim() || s?.toUpperCase() || ''} />`}
+      ${(busy ? progress?.log || [] : log).length > 0 && html`<div class="log">${(busy ? progress.log : log).join('\n')}</div>`}
     </section>
   </div>`;
 }
@@ -706,6 +769,8 @@ function JoinRun() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [log, setLog] = useState([]);
+  const [progressId, setProgressId] = useState(null);
+  const progress = useBuildProgress(progressId);
   const baseCrc = pack?.base?.crc;
   // (by CRC32 – a 3DS game, which has none, by its game: never just the first 3DS file of the library)
   const cat = catalog();
@@ -747,9 +812,11 @@ function JoinRun() {
   const build = async () => {
     setBusy(true);
     setError(null);
+    const pid = newProgressId();
+    setProgressId(pid);
     try {
       const res = await api.post('/api/runs/build', {
-        runId: pack.id, romId: rom.id, patchId: patch?.id || null, values: pack.randomizer.values, randomize: pack.randomizer.enabled,
+        progressId: pid, runId: pack.id, romId: rom.id, patchId: patch?.id || null, values: pack.randomizer.values, randomize: pack.randomizer.enabled,
         seeds: pack.randomizer.seeds, sharedSeed: pack.randomizer.sharedSeed, players: withMyName(), buildFor: [mine], name: pack.name, mode: runMode(pack),
         expectedOutputs: pack.expectedOutputs, rules: pack.rules, gameId: pack.game?.id, hackId: pack.game?.hackId,
         // same file name as the host's ("Robin – Silberne Edition Randomized.gbc", not the raw header title; a hack –
@@ -770,6 +837,7 @@ function JoinRun() {
     } catch (e) {
       setError(e.message);
     }
+    setProgressId(null);
     setBusy(false);
   };
 
@@ -803,8 +871,10 @@ function JoinRun() {
           title=${taken.includes(s) ? t('join.takenTitle', 'Already in the run') : ''} style=${taken.includes(s) && mine !== s ? 'opacity:.55' : ''}>${pack.players?.[s]?.name || s.toUpperCase()}</button>`)}</div></div>
         ${myName.trim() && pack.players?.[mine]?.name !== myName.trim() && html`<p class="small muted">${t('join.asName', 'You’ll play as {name} – that’s the name the others see.', { name: myName.trim() })}</p>`}
         ${taken.includes(mine) && html`<p class="small warning info">${t('join.takenHint', 'The host’s app says {name} is already in the run. Only pick it if that’s you on another computer.', { name: pack.players?.[mine]?.name || mine.toUpperCase() })}</p>`}`}
+      ${pack.game?.system === '3ds' && pack.randomizer?.enabled && html`<p class="small muted">${t('join.ctrNote', 'A randomized 3DS run: your game is rebuilt from your own decrypted copy – a few GB and a few minutes. Afterwards souldew checks that it matches the host’s byte for byte.')}</p>`}
       <div><button class="btn primary big" disabled=${busy || !rom || (pack.patch && !patch)} onClick=${build}>${busy ? t('new.building', 'Building …') : t('join.build', 'Build my game & join')}</button></div>
-      ${log.length > 0 && html`<div class="log">${log.join('\n')}</div>`}
+      ${busy && html`<${BuildProgress} state=${progress} name=${(s) => pack.players?.[s]?.name || s?.toUpperCase() || ''} />`}
+      ${(busy ? progress?.log || [] : log).length > 0 && html`<div class="log">${(busy ? progress.log : log).join('\n')}</div>`}
     </section>`}
   </div>`;
 }

@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { RUNS_DIR } from './paths.mjs';
 import { preparePatchedRom, fileSha1 } from './roms.mjs';
 import { runBridge } from './toolchain.mjs';
+import { checkCtrSpace, ctrProgress, ctrRandoError, hashFile, ncchSizeOf } from './ctrrando.mjs';
 import { toProperties } from '../../shared/randomizer-options.mjs';
 import { diffRoms } from '../../shared/nds.mjs';
 import { catalog } from './library.mjs';
@@ -354,11 +355,31 @@ async function placeLargeRom(src, dest, onLog) {
   await copyFile(src, dest, fsConstants.COPYFILE_FICLONE);
 }
 
-export async function buildRun(opts, onLog = () => {}) {
+/**
+ * A randomized 3DS game for `romOut` that is the same as one built moments ago (a shared seed: every player gets the
+ * same world): a hard link to it, else a copy-on-write clone or a plain copy – ~3 GB need not be rebuilt and rehashed.
+ */
+async function reuseCtrBuild(prev, romOut, logOut, dataOut) {
+  try {
+    linkSync(prev.rom, romOut);
+  } catch {
+    await copyFile(prev.rom, romOut, fsConstants.COPYFILE_FICLONE);
+  }
+  copyFileSync(prev.log, logOut);
+  copyFileSync(prev.data, dataOut);
+}
+
+/**
+ * `onLog(line)`: the build's log; `onProgress({ phase, slot, index, count, done?, total? })`: where it stands – phase
+ * 'randomize' per player, and for a 3DS game also 'load', 'write' (romfs files `done` of `total`), 'finish', 'hash' and
+ * 'reuse'.
+ * `deps.bridge`: how the randomizer runs (runBridge; tests pass a stand-in).
+ */
+export async function buildRun(opts, onLog = () => {}, onProgress = () => {}, { bridge = runBridge } = {}) {
   const identity = opts.identity || newRunIdentity();
   const isNew = !existsSync(join(runDir(identity.id), 'run.json'));
   try {
-    return await buildInto({ ...opts, identity }, onLog);
+    return await buildInto({ ...opts, identity }, onLog, onProgress, bridge);
   } catch (e) {
     // A new run that failed to build (no Java, bad patch, randomizer error) leaves no half-filled folder behind.
     if (isNew) rmSync(runDir(identity.id), { recursive: true, force: true });
@@ -366,7 +387,7 @@ export async function buildRun(opts, onLog = () => {}) {
   }
 }
 
-async function buildInto(opts, onLog) {
+async function buildInto(opts, onLog, onProgress, bridge) {
   const identity = opts.identity;
   const existing = readManifest(identity.id);
   const { mode, slots, players } = runPlayers(opts, existing);
@@ -377,7 +398,9 @@ async function buildInto(opts, onLog) {
   const now = new Date().toISOString();
 
   const patched = preparePatchedRom(opts.romId, opts.patchId || null, onLog, opts.config || {});
-  const ctr = patched.system === '3ds'; // 3DS: no randomizer, the game file linked/copied as it is (1–4 GB)
+  // 3DS: without the randomizer the game file is linked/copied as it is (1–4 GB); randomized, UPR ZX rebuilds it as
+  // one .cxi per player (server/lib/ctrrando.mjs)
+  const ctr = patched.system === '3ds';
   const manifest = {
     ...(existing || {}),
     id: identity.id,
@@ -393,7 +416,7 @@ async function buildInto(opts, onLog) {
     game: { id: opts.gameId || existing?.game?.id || null, system: patched.system, code: patched.header?.code || '', title: patched.header?.title || '', hackId: opts.hackId || null },
     patchedSha1: patched.sha1,
     randomizer: {
-      enabled: opts.randomize !== false && !ctr,
+      enabled: opts.randomize !== false,
       tool: 'UPR ZX 4.6.1 + SoulLinkBridge',
       values: opts.values || {},
       seeds: seedsFor(slots, opts.seeds || existing?.randomizer?.seeds, !!opts.sharedSeed),
@@ -407,24 +430,66 @@ async function buildInto(opts, onLog) {
 
   const gameLabel = (patched.patchName || opts.gameTitle || patched.header?.title || 'Pokemon').replace(/^Pokémon\s*/i, '').replace(/\.(xdelta|vcdiff|xdelta3|bps|ups|ips)$/i, '')
     .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]+/g, '').trim() || 'Pokemon'; // becomes part of a file name
-  const ext = patched.ext || patched.system || 'nds';
+  const ctrRando = ctr && manifest.randomizer.enabled;
+  const ext = ctrRando ? 'cxi' : patched.ext || patched.system || 'nds';
   // Equal player names would make those players share (and overwrite) one ROM file.
   const labels = outputLabels(players);
-  for (const slot of buildFor) {
+  // 3DS: room for one rebuilt game per different seed (a shared seed builds once, the others are linked to it)
+  if (ctrRando) checkCtrSpace(dir, ncchSizeOf(patched.path), new Set(buildFor.map((s) => String(manifest.randomizer.seeds[s] || ''))).size);
+  const ctrBuilt = new Map(); // seed → the 3DS game built for it in this build
+  for (const [index, slot] of buildFor.entries()) {
     const player = players[slot];
     const who = labels[slot];
     const fileBase = `${who} - ${gameLabel}${manifest.randomizer.enabled ? ' Randomized' : ''}`;
     const romOut = join(dir, `${fileBase}.${ext}`);
     const logOut = join(dir, `${who} - Spoiler-Log.txt`);
     const dataOut = join(dir, `${slot}.data.json`);
-    if (manifest.randomizer.enabled) {
+    let ctrSha1 = null;
+    const step = (p) => onProgress({ slot, index, count: buildFor.length, ...p });
+    if (ctrRando) {
+      const seed = String(manifest.randomizer.seeds[slot] || '');
+      if (!/^-?\d{1,19}$/.test(seed)) throw new Error(`Ungültiger Seed für ${player.name}`);
+      // UPR writes into an existing file without truncating it – and the old file may be a hard link to the
+      // library's game (a run built without the randomizer): always a new file. A previous build's game under
+      // another name (other player name, the plain .3ds) would only take up gigabytes.
+      rmSync(romOut, { force: true });
+      const old = existing?.outputs?.[slot]?.rom;
+      if (old && basename(old) !== basename(romOut)) rmSync(join(dir, basename(old)), { force: true });
+      const prev = ctrBuilt.get(seed);
+      if (prev) {
+        step({ phase: 'reuse' });
+        onLog(`Gleicher Seed wie ${prev.player} – übernehme dessen Spiel für ${player.name}`);
+        await reuseCtrBuild(prev, romOut, logOut, dataOut);
+        ctrSha1 = prev.sha1;
+      } else {
+        const propsFile = join(dir, `${slot}.settings.properties`);
+        writeFileSync(propsFile, toProperties(manifest.randomizer.values));
+        onLog(`Randomisiere das 3DS-Spiel für ${player.name} (Seed ${seed}) – das dauert ein paar Minuten …`);
+        step({ phase: 'randomize' });
+        const t = Date.now();
+        let res;
+        try {
+          res = await bridge(['randomize', patched.path, romOut, propsFile, seed, logOut, dataOut], { ctr: true, onLine: ctrProgress(step) });
+        } catch (e) {
+          rmSync(romOut, { force: true }); // a half-written game must never be played or compared
+          throw ctrRandoError(e);
+        }
+        for (const w of res.warnings) if (!manifest.warnings.includes(w)) manifest.warnings.push(w);
+        manifest.randomizer.settingsString = res.settingsString;
+        onLog(`Fertig in ${((Date.now() - t) / 1000).toFixed(1)} s – berechne die Prüfsumme …`);
+        step({ phase: 'hash' });
+        ctrSha1 = await hashFile(romOut);
+        ctrBuilt.set(seed, { rom: romOut, log: logOut, data: dataOut, sha1: ctrSha1, player: player.name });
+      }
+    } else if (manifest.randomizer.enabled) {
       const seed = String(manifest.randomizer.seeds[slot] || '');
       if (!/^-?\d{1,19}$/.test(seed)) throw new Error(`Ungültiger Seed für ${player.name}`);
       const propsFile = join(dir, `${slot}.settings.properties`);
       writeFileSync(propsFile, toProperties(manifest.randomizer.values));
       onLog(`Randomisiere ROM für ${player.name} (Seed ${seed}) …`);
+      step({ phase: 'randomize' });
       const t = Date.now();
-      const res = await runBridge(['randomize', patched.path, romOut, propsFile, seed, logOut, dataOut]);
+      const res = await bridge(['randomize', patched.path, romOut, propsFile, seed, logOut, dataOut]);
       for (const w of res.warnings) if (!manifest.warnings.includes(w)) manifest.warnings.push(w);
       manifest.randomizer.settingsString = res.settingsString;
       onLog(`Fertig in ${((Date.now() - t) / 1000).toFixed(1)} s`);
@@ -437,7 +502,9 @@ async function buildInto(opts, onLog) {
       rmSync(dataOut, { force: true });
       rmSync(logOut, { force: true });
     }
-    const sha1 = ctr ? null : fileSha1(romOut);
+    // (a plain 3DS game isn't hashed – 1–4 GB, and each player may play their own release; a randomized one must be
+    // byte-identical, its SHA-1 came from the stream above)
+    const sha1 = ctr ? ctrSha1 : fileSha1(romOut);
     manifest.outputs[slot] = {
       rom: basename(romOut),
       log: manifest.randomizer.enabled ? basename(logOut) : null,

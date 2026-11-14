@@ -1,4 +1,4 @@
-// Curated Universal Pokemon Randomizer ZX options (Gen 4 relevant).
+// Curated Universal Pokemon Randomizer ZX options (Gen 1–7: the GB/GBC/GBA/DS games and the 3DS games).
 // Keys are UPR Settings field names — the Java bridge applies them by reflection.
 // Every key and enum value here exists in the bundled UPR ZX 4.6.1 (test/data/upr-settings-fields.json,
 // checked by test/randomizer.test.mjs).
@@ -85,6 +85,7 @@ export const OPTION_GROUPS = [
       bool('trainersBlockLegendaries', 'No legendaries for trainers', null, 'trainersMod'),
       bool('trainersBlockEarlyWonderGuard', 'No early Wonder Guard', null, 'trainersMod', { gens: [3, 9] }),
       bool('allowTrainerAlternateFormes', 'Allow alternate forms', null, 'trainersMod', { gens: [4, 9] }),
+      bool('swapTrainerMegaEvos', 'Keep Mega Evolutions', 'A trainer whose Pokémon Mega Evolves gets another Pokémon that can.', 'trainersMod', { gens: [6, 7] }),
       num('eliteFourUniquePokemonNumber', 'Elite Four: unique Pokémon (0 = off)', 0, 2, 'Their strongest Pokémon appear on no other trainer.', 'trainersMod', { gens: [3, 9] }),
       head('head.trainerLevels', 'Levels & team size'),
       bool('trainersForceFullyEvolved', 'Fully evolved from level X'),
@@ -121,8 +122,25 @@ export const OPTION_GROUPS = [
       bool('limitMainGameLegendaries', 'Cap the story legendaries', 'Legendaries you must face in the story (e.g. Lugia / Ho-Oh) get a beatable replacement.',
         { key: 'staticPokemonMod', in: ['SIMILAR_STRENGTH'] }),
       bool('limit600', 'Fully random for 600+ BST Pokémon', null, { key: 'staticPokemonMod', in: ['SIMILAR_STRENGTH'] }),
+      bool('swapStaticMegaEvos', 'Keep Mega Evolutions', 'A gift Pokémon that can Mega Evolve (e.g. Lucario) becomes another one that can.', 'staticPokemonMod', { gens: [6, 7] }),
+      bool('allowStaticAltFormes', 'Allow alternate forms', null, 'staticPokemonMod', { gens: [6, 9] }),
       bool('staticLevelModified', 'Adjust static Pokémon levels'),
       num('staticLevelModifier', 'Level change in %', -50, 50, null, 'staticLevelModified'),
+    ],
+  },
+  {
+    id: 'totems',
+    title: 'Totem Pokémon',
+    icon: '👑',
+    fields: [
+      sel('totemPokemonMod', 'Totem Pokémon', [['UNCHANGED', 'Unchanged'], ['RANDOM', 'Random'], ['SIMILAR_STRENGTH', 'Similar strength']],
+        'The bosses at the end of the island trials.', { gens: [7, 7] }),
+      sel('allyPokemonMod', 'Allies they call', [['UNCHANGED', 'Unchanged'], ['RANDOM', 'Random'], ['SIMILAR_STRENGTH', 'Similar strength']], null, { gens: [7, 7] }),
+      sel('auraMod', 'Totem auras (stat boosts)', [['UNCHANGED', 'Unchanged'], ['RANDOM', 'Random'], ['SAME_STRENGTH', 'Random, same strength']], null, { gens: [7, 7] }),
+      bool('randomizeTotemHeldItems', 'Totems hold a random item', null, null, { gens: [7, 7] }),
+      bool('allowTotemAltFormes', 'Allow alternate forms', null, ['totemPokemonMod', 'allyPokemonMod'], { gens: [7, 7] }),
+      bool('totemLevelsModified', 'Adjust totem levels', null, null, { gens: [7, 7] }),
+      num('totemLevelModifier', 'Level change in %', -50, 50, null, 'totemLevelsModified', { gens: [7, 7] }),
     ],
   },
   {
@@ -152,8 +170,10 @@ export const OPTION_GROUPS = [
         ['COMPLETELY_RANDOM', 'Completely random'],
       ]),
       bool('dualTypeOnly', 'Dual types only', null, 'typesMod'),
+      bool('typesFollowMegaEvolutions', 'Mega Evolutions keep the types', null, { key: 'typesMod', in: ['RANDOM_FOLLOW_EVOLUTIONS'] }, { gens: [6, 7] }),
       sel('abilitiesMod', 'Abilities', [['UNCHANGED', 'Unchanged'], ['RANDOMIZE', 'Random']], null, { gens: [3, 9] }),
       bool('abilitiesFollowEvolutions', 'Abilities follow evolutions', null, 'abilitiesMod', { gens: [3, 9] }),
+      bool('abilitiesFollowMegaEvolutions', 'Mega Evolutions keep the abilities', null, 'abilitiesMod', { gens: [6, 7] }),
       bool('ensureTwoAbilities', 'Every Pokémon gets two abilities', null, 'abilitiesMod', { gens: [3, 9] }),
       bool('weighDuplicateAbilitiesTogether', 'Count look-alike abilities once', 'E.g. Insomnia and Vital Spirit share one chance.', 'abilitiesMod', { gens: [3, 9] }),
       bool('allowWonderGuard', 'Allow Wonder Guard', null, 'abilitiesMod', { gens: [3, 9] }),
@@ -163,6 +183,7 @@ export const OPTION_GROUPS = [
       head('head.stats', 'Base stats & EXP'),
       sel('baseStatisticsMod', 'Base stats', [['UNCHANGED', 'Unchanged'], ['SHUFFLE', 'Shuffle'], ['RANDOM', 'Random']]),
       bool('baseStatsFollowEvolutions', 'Base stats follow evolutions', null, 'baseStatisticsMod'),
+      bool('baseStatsFollowMegaEvolutions', 'Mega Evolutions keep the stat spread', null, 'baseStatisticsMod', { gens: [6, 7] }),
       bool('assignEvoStatsRandomly', 'Spread the stats gained on evolution randomly', null, 'baseStatsFollowEvolutions'),
       bool('updateBaseStats', 'Update base stats to a newer generation', null, null, { gens: [1, 8] }),
       sel('updateBaseStatsToGeneration', 'Base stats as in', GEN_TO(6), null, { dependsOn: 'updateBaseStats', numeric: true, gens: [1, 8] }),
@@ -322,6 +343,11 @@ const BASE = {
   keepFieldMoveTutors: false, tutorsForceGoodDamaging: false, tutorsGoodDamagingPercent: 0, blockBrokenTutorMoves: false,
   tutorLevelUpMoveSanity: false, tutorFollowEvolutions: false,
   banBadRandomShopItems: false, banRegularShopItems: false, banBadRandomPickupItems: false, randomizeInGameTradesOTs: false,
+  // added in 2.7 for the 3DS games – UPR defaults
+  swapTrainerMegaEvos: false, swapStaticMegaEvos: false, allowStaticAltFormes: false, typesFollowMegaEvolutions: false,
+  abilitiesFollowMegaEvolutions: false, baseStatsFollowMegaEvolutions: false,
+  totemPokemonMod: 'UNCHANGED', allyPokemonMod: 'UNCHANGED', auraMod: 'UNCHANGED', randomizeTotemHeldItems: false,
+  allowTotemAltFormes: false, totemLevelsModified: false, totemLevelModifier: 0,
   '@miscTweaks': [],
 };
 /** Defaults for every exposed option (a fresh "everything unchanged" setup). */
@@ -354,7 +380,8 @@ export const PRESETS = [
       startersMod: 'RANDOM_WITH_TWO_EVOLUTIONS',
       trainersMod: 'RANDOM', trainersUsePokemonOfSimilarStrength: true, rivalCarriesStarterThroughout: true, trainersBlockLegendaries: true,
       trainersBlockEarlyWonderGuard: true, trainersForceFullyEvolved: true, trainersForceFullyEvolvedLevel: 45, additionalBossTrainerPokemon: 1,
-      randomizeHeldItemsForBossTrainerPokemon: true, betterTrainerMovesets: true,
+      randomizeHeldItemsForBossTrainerPokemon: true, betterTrainerMovesets: true, swapTrainerMegaEvos: true,
+      totemPokemonMod: 'SIMILAR_STRENGTH', allyPokemonMod: 'SIMILAR_STRENGTH',
       inGameTradesMod: 'RANDOMIZE_GIVEN', fullHMCompat: true,
       '@miscTweaks': ['FASTEST_TEXT', 'NATIONAL_DEX_AT_START', 'FASTER_HP_AND_EXP_BARS'],
     },
@@ -373,7 +400,8 @@ export const PRESETS = [
       trainersBlockEarlyWonderGuard: true, trainersForceFullyEvolved: true, trainersForceFullyEvolvedLevel: 40,
       trainersLevelModified: true, trainersLevelModifier: 20, additionalBossTrainerPokemon: 1, additionalImportantTrainerPokemon: 1,
       randomizeHeldItemsForBossTrainerPokemon: true, randomizeHeldItemsForImportantTrainerPokemon: true, sensibleItemsOnlyForTrainerPokemon: true,
-      betterTrainerMovesets: true,
+      betterTrainerMovesets: true, swapTrainerMegaEvos: true,
+      totemPokemonMod: 'SIMILAR_STRENGTH', allyPokemonMod: 'SIMILAR_STRENGTH', randomizeTotemHeldItems: true, totemLevelsModified: true, totemLevelModifier: 20,
       changeImpossibleEvolutions: true, inGameTradesMod: 'RANDOMIZE_GIVEN', fullHMCompat: true,
       '@miscTweaks': ['FASTEST_TEXT', 'NATIONAL_DEX_AT_START', 'FASTER_HP_AND_EXP_BARS'],
     },
@@ -382,7 +410,7 @@ export const PRESETS = [
     id: 'chaos',
     name: 'Chaos',
     badge: 'Wild',
-    description: 'Almost everything random: types, abilities, evolutions, movesets, TMs, items. Not for the faint of heart.',
+    description: 'Almost everything random: types, abilities, evolutions, movesets, TMs, items. Only for the brave.',
     values: {
       ...BASE,
       wildPokemonMod: 'RANDOM', useTimeBasedEncounters: true, blockWildLegendaries: true, useMinimumCatchRate: true, minimumCatchRateLevel: 3,
@@ -393,6 +421,7 @@ export const PRESETS = [
       movesetsForceGoodDamaging: true, movesetsGoodDamagingPercent: 40, blockBrokenMovesetMoves: true, tmsMod: 'RANDOM',
       tmsHmsCompatibilityMod: 'RANDOM_PREFER_TYPE', fullHMCompat: true, moveTutorMovesMod: 'RANDOM', moveTutorsCompatibilityMod: 'RANDOM_PREFER_TYPE',
       fieldItemsMod: 'RANDOM_EVEN', banBadRandomFieldItems: true, inGameTradesMod: 'RANDOMIZE_GIVEN_AND_REQUESTED',
+      totemPokemonMod: 'RANDOM', allyPokemonMod: 'RANDOM', auraMod: 'RANDOM', randomizeTotemHeldItems: true,
       '@miscTweaks': ['FASTEST_TEXT', 'NATIONAL_DEX_AT_START', 'FASTER_HP_AND_EXP_BARS'],
     },
   },
@@ -493,11 +522,14 @@ export const withDefaults = (values) => ({ ...BASE, ...(values || {}) });
 /**
  * Do two option sets build the same game? Missing keys count as their default and options whose
  * parent is off in both are ignored – so an old run's values still match the preset they came from.
+ * With `gen`, options that generation doesn't have are ignored too (buildValues reset them): a Gen 4 run still
+ * matches a preset that randomizes Gen 7's totem Pokémon.
  */
-export function sameSettings(a = {}, b = {}) {
+export function sameSettings(a = {}, b = {}, gen = null) {
   const A = withDefaults(a);
   const B = withDefaults(b);
   for (const f of FIELDS.values()) {
+    if (gen && !forGen(f, gen)) continue;
     if (!fieldActive(f, A) && !fieldActive(f, B)) continue;
     if (JSON.stringify(A[f.key]) !== JSON.stringify(B[f.key])) return false;
   }

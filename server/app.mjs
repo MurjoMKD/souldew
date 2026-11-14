@@ -14,6 +14,7 @@ import { ROM_EXTENSIONS, PATCH_EXTENSIONS } from '../shared/romid.mjs';
 import { ALL_SLOTS, slotsOf, runMode } from '../shared/slots.mjs';
 import { scanLibrary, catalog, loadFile, importFiles, uploadTarget, resolveId, discoverRoms, approvedFolder } from './lib/library.mjs';
 import { saveCover, deleteCover, coverFile, customCovers, coverUrl, COVER_LIMIT } from './lib/covers.mjs';
+import { inspectCtr, ncchSizeOf } from './lib/ctrrando.mjs';
 import { buildRun, listRuns, readManifest, writeManifest, runDir, runPack, runSummary, trashRun, checkPack, stripLocalRules, isDiscordWebhook, mergeDocEntries, renamePlayers } from './lib/build.mjs';
 import { SaveWatcher } from './lib/savewatch.mjs';
 import { EMULATORS, detectEmulator, installEmulator, launchRom, revealInFileManager, emulatorRunning } from './lib/emulator.mjs';
@@ -1006,9 +1007,15 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const patched = preparePatchedRom(romId, patchId || null, (l) => log.push(l), loadConfig());
     let info = null;
     if (patched.system === '3ds') {
-      // the bundled randomizer doesn't build 3DS games; the generation for the rest of the form comes from the catalog
+      // UPR ZX randomizes X/Y, ORAS, Sun/Moon and USUM (decrypted dumps only – server/lib/ctrrando.mjs); the generation
+      // for the rest of the form comes from the catalog when UPR can't read the game
       const game = (catalog().games || []).find((g) => g.system === '3ds' && (g.serial === patched.header?.code || g.productCode === patched.header?.code || (g.titleIds || []).includes(patched.header?.titleId)));
-      return { patched: { crc: null, baseCrc: null, size: patched.size, header: patched.header, patchName: null, system: '3ds' }, info: { unsupported: true, reason: 'ctr', generation: game?.generation || null }, log };
+      info = await inspectCtr(patched.path, patched.header, runBridge);
+      if (info.unsupported && !detectJava().ok) info.missingTool = 'java';
+      else if (info.unsupported && !uprStatus().installed) info.missingTool = 'upr';
+      // outputSize: what one randomized game will take (its NCCH – a cartridge image is padded to 2/4 GB)
+      return { patched: { crc: null, baseCrc: null, size: patched.size, outputSize: ncchSizeOf(patched.path), header: patched.header, patchName: null, system: '3ds' },
+        info: { generation: game?.generation || null, ...info }, log };
     }
     try {
       info = (await runBridge(['info', patched.path])).json;
@@ -1022,9 +1029,22 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
   });
 
   const building = new Set(); // run ids with a build in progress
+  // A build's log and progress while it runs (a 3DS game takes minutes): the page sends its own `progressId` with the
+  // build and polls GET /api/runs/progress/<id>. Kept a minute after the build ended.
+  const buildProgress = new Map();
+  route('GET', /^\/api\/runs\/progress\/([a-z0-9]{8,32})$/, (req, m) => {
+    const p = buildProgress.get(m[1]);
+    return p ? { log: p.log, progress: p.progress, done: p.done } : { log: [], progress: null, done: false };
+  });
   route('POST', /^\/api\/runs\/build$/, async (req) => {
     const body = await readBody(req);
     const log = [];
+    const progressId = typeof body.progressId === 'string' && /^[a-z0-9]{8,32}$/.test(body.progressId) ? body.progressId : null;
+    const track = { log, progress: null, done: false };
+    if (progressId) {
+      if (buildProgress.size > 20) buildProgress.delete(buildProgress.keys().next().value); // (only pages of this computer – a small bound anyway)
+      buildProgress.set(progressId, track);
+    }
     let identity = null;
     if (body.runId) {
       const m = readManifest(body.runId);
@@ -1036,13 +1056,15 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     }
     try {
       if (body.runId) discordWebhookFor(body.runId); // moves a legacy webhook out of the rules before they are rewritten
-      const manifest = await buildRun({ ...body, identity, config: loadConfig() }, (l) => log.push(l));
+      const manifest = await buildRun({ ...body, identity, config: loadConfig() }, (l) => log.push(l), (p) => (track.progress = p));
       adoptLegacyWebhook(manifest.id, body.rules?.discordWebhook); // older clients still send it inside the rules
       saveConfig({ lastRun: manifest.id });
       followCheck();
       return { manifest, log };
     } finally {
       if (identity) building.delete(identity.id);
+      track.done = true;
+      if (progressId) setTimeout(() => buildProgress.get(progressId) === track && buildProgress.delete(progressId), 60000).unref?.();
     }
   });
 

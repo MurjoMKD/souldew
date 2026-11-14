@@ -86,7 +86,11 @@ test('options added later default to UPR\'s own default unless they only matter 
     'updateBaseStats', 'updateBaseStatsToGeneration', 'selectedEXPCurve', 'expCurveMod', 'updateMoves', 'updateMovesToGeneration',
     'randomizeMovePPs', 'randomizeMoveCategory', 'tmsForceGoodDamaging', 'tmsGoodDamagingPercent', 'blockBrokenTMMoves', 'tmLevelUpMoveSanity',
     'tmsFollowEvolutions', 'keepFieldMoveTutors', 'tutorsForceGoodDamaging', 'tutorsGoodDamagingPercent', 'blockBrokenTutorMoves',
-    'tutorLevelUpMoveSanity', 'tutorFollowEvolutions', 'banBadRandomShopItems', 'banRegularShopItems', 'banBadRandomPickupItems', 'randomizeInGameTradesOTs'];
+    'tutorLevelUpMoveSanity', 'tutorFollowEvolutions', 'banBadRandomShopItems', 'banRegularShopItems', 'banBadRandomPickupItems', 'randomizeInGameTradesOTs',
+    // 2.7, the 3DS games
+    'swapTrainerMegaEvos', 'swapStaticMegaEvos', 'allowStaticAltFormes', 'typesFollowMegaEvolutions', 'abilitiesFollowMegaEvolutions',
+    'baseStatsFollowMegaEvolutions', 'totemPokemonMod', 'allyPokemonMod', 'auraMod', 'randomizeTotemHeldItems', 'allowTotemAltFormes',
+    'totemLevelsModified', 'totemLevelModifier'];
   for (const k of added) {
     if (DEFAULT_VALUES[k] === uprDefault(k)) continue;
     assert.ok(!fieldActive(byKey[k], DEFAULT_VALUES), `${k}: default ${DEFAULT_VALUES[k]} ≠ UPR ${uprDefault(k)} while active`);

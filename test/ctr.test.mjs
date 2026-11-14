@@ -1,5 +1,5 @@
 // Nintendo 3DS files: what shared/ctr.mjs reads from their headers, the catalog match, the library scan (no file is
-// read whole) and a 3DS run (linked, not randomized).
+// read whole) and a 3DS run without the randomizer (linked).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, existsSync } from 'node:fs';
@@ -102,7 +102,7 @@ test('the catalog knows all eight 3DS games – by game code, by title ID', () =
   assert.equal(by({ code: 'XXXX', titleId: '0004000000099999' }), undefined);
   for (const g of catalog.games.filter((x) => x.system === '3ds')) {
     assert.ok([6, 7].includes(g.generation), g.id);
-    assert.equal(g.uprSupported, false, `${g.id}: the bundled randomizer doesn't build 3DS games`);
+    assert.equal(g.uprSupported, true, `${g.id}: UPR ZX randomizes the 3DS games (decrypted dumps)`);
     assert.ok(existsSync(new URL(`../web/${g.coverLocal}`, import.meta.url)), `${g.id} cover`);
   }
 });
@@ -126,7 +126,7 @@ test('library: 3DS files are found and matched without reading them whole; updat
   assert.ok(uploadTarget('game.cia').endsWith('game.cia'));
 });
 
-test('a 3DS run: the game file linked into the run folder, no randomizer, no patch, no checksum of 4 GB', async () => {
+test('a 3DS run without the randomizer: the game file linked into the run folder, no patch, no checksum of 4 GB', async () => {
   const lib = join(DATA, 'Library');
   const rom = join(lib, 'Pokemon X.3ds');
   const prepared = preparePatchedRom(rom, null, () => {}, {});
@@ -135,8 +135,9 @@ test('a 3DS run: the game file linked into the run folder, no randomizer, no pat
   assert.equal(prepared.path, rom); // played from the library file, no cached copy
   assert.throws(() => preparePatchedRom(rom, join(lib, 'x.bps'), () => {}, {}), /patch/i);
   const log = [];
-  const m = await buildRun({ romId: rom, gameId: 'pokemon-x', gameTitle: 'Pokémon X', randomize: true, mode: 'nuzlocke', players: { p1: { name: 'Ash' } }, config: {} }, (l) => log.push(l));
-  assert.equal(m.randomizer.enabled, false, 'never randomized');
+  // (randomized 3DS runs: test/ctrrando.test.mjs)
+  const m = await buildRun({ romId: rom, gameId: 'pokemon-x', gameTitle: 'Pokémon X', randomize: false, mode: 'nuzlocke', players: { p1: { name: 'Ash' } }, config: {} }, (l) => log.push(l));
+  assert.equal(m.randomizer.enabled, false);
   assert.equal(m.game.system, '3ds');
   assert.equal(m.game.code, 'EKJA');
   const out = m.outputs.p1;
@@ -149,7 +150,7 @@ test('a 3DS run: the game file linked into the run folder, no randomizer, no pat
 
 test('a 3DS SoulLink: every player gets the game (linked), the run pack travels without checksums', async () => {
   const rom = join(DATA, 'Library', 'Pokemon X.3ds');
-  const m = await buildRun({ romId: rom, gameId: 'pokemon-x', gameTitle: 'Pokémon X', mode: 'soullink', players: { p1: { name: 'Ash' }, p2: { name: 'Misty' } }, config: {} });
+  const m = await buildRun({ romId: rom, gameId: 'pokemon-x', gameTitle: 'Pokémon X', randomize: false, mode: 'soullink', players: { p1: { name: 'Ash' }, p2: { name: 'Misty' } }, config: {} });
   assert.deepEqual(Object.keys(m.outputs).sort(), ['p1', 'p2']);
   assert.notEqual(m.outputs.p1.rom, m.outputs.p2.rom);
   const pack = runPack(m);
@@ -159,7 +160,7 @@ test('a 3DS SoulLink: every player gets the game (linked), the run pack travels 
   assert.doesNotThrow(() => checkPack(JSON.parse(JSON.stringify(pack))));
   // the friend builds their own from their own copy: nothing to compare, no "differs from the run pack" warning
   const log = [];
-  const again = await buildRun({ romId: rom, gameId: 'pokemon-x', mode: 'soullink', players: m.players, identity: { id: m.id, room: m.room, secret: m.secret }, buildFor: ['p2'], expectedOutputs: pack.outputs, config: {} }, (l) => log.push(l));
+  const again = await buildRun({ romId: rom, gameId: 'pokemon-x', randomize: false, mode: 'soullink', players: m.players, identity: { id: m.id, room: m.room, secret: m.secret }, buildFor: ['p2'], expectedOutputs: pack.outputs, config: {} }, (l) => log.push(l));
   assert.equal(again.outputs.p2.matchesFriend, undefined);
   assert.ok(!log.some((l) => /weicht/.test(l)), log.join('\n'));
 });
