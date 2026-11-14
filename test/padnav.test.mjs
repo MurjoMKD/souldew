@@ -190,7 +190,11 @@ test('the game frames ignore their buttons while the app has the controller', ()
   // the play view tells the app what it needs to decide, and stops when it closes
   const play = readFileSync(new URL('../web/views/play.mjs', import.meta.url), 'utf8');
   assert.match(play, /useEffect\(\(\) => claimPad\(/);
-  assert.match(play, /overlay: !!\(rulesOpen \|\| statesOpen \|\| soundOpen \|\| cheatOpen \|\| confirmReset \|\| pendingLoad \|\| confirmCheat \|\| missed\)/);
+  // (with the 3DS screen-layout menu and the "3DS player stopped" message – both are drawn over the game)
+  assert.match(play, /overlay: !!\(rulesOpen \|\| statesOpen \|\| soundOpen \|\| cheatOpen \|\| layoutOpen \|\| ctrFail \|\| confirmReset \|\| pendingLoad \|\| confirmCheat \|\| missed\)/);
+  // the stopped-3DS message: A starts with "Play 3DS games in Azahar", B is "Close game" (the game is gone already)
+  assert.match(play, /data-pad-first disabled=\$\{busy\} onClick=\$\{toAzahar\}/);
+  assert.match(play, /data-pad-back onClick=\$\{onClose\}>\$\{t\('play\.close'/);
 });
 
 test('controller navigation is a setting, on unless switched off', async () => {

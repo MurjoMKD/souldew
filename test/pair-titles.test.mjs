@@ -90,6 +90,21 @@ test('randomized, patched and pre-patched hack runs still need the exact release
   assert.deepEqual(baseRomsFor(plainHg, roms).map((r) => r.id), ['hg-rev0']);
 });
 
+test('2.7 together: a hack the catalog doesn\'t know (game.hackName) needs the exact ROM, a ROM marked as a hack is no other edition', () => {
+  // a run of an already-patched ROM the player named in the library ("This is a ROM hack…" → Other / unknown hack)
+  const named = { ...plainHg, game: { ...plainHg.game, hackName: 'My Kaizo' } };
+  assert.equal(needsIdenticalRom(named), true);
+  assert.deepEqual(baseRomsFor(named, roms, rootOf).map((r) => r.id), ['hg-rev0']);
+  assert.equal(pairJoin(named, roms[3], rootOf), null);
+  assert.equal(joinGameId(named, roms[3], rootOf), 'pokemon-heartgold');
+  // a joining player's SoulSilver that they marked as an unknown hack is a hack, not the other edition / release
+  const marked = [...roms, { id: 'ss-marked', crc: '55555555', gameId: 'pokemon-soulsilver', customHack: 'Their Hack' },
+    { id: 'hg-marked', crc: '66666666', gameId: 'pokemon-heartgold', customHack: 'Another Hack' }];
+  assert.deepEqual(baseRomsFor(plainHg, marked, rootOf).map((r) => r.id), ['hg-rev0', 'hg-de', 'ss', 'ss-de']);
+  assert.equal(pairJoin(plainHg, marked.find((r) => r.id === 'ss-marked'), rootOf), null);
+  assert.deepEqual(baseRomsFor(plainHg, marked.filter((r) => /marked/.test(r.id)), rootOf), []);
+});
+
 test('a joining player\'s run is built for the title they play; the same title keeps the host\'s id', () => {
   assert.deepEqual(pairJoin(plainHg, roms[3], rootOf), { host: 'pokemon-heartgold', yours: 'pokemon-soulsilver' });
   assert.deepEqual(pairJoin(plainHg, roms[4], rootOf), { host: 'pokemon-heartgold', yours: 'pokemon-soulsilver' }, 'a language variant counts as its title');
