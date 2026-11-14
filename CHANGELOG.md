@@ -2,52 +2,8 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
-## Unreleased
+## 2.7.0
 
-- **Installing Azahar on Windows works again.** The one-click install stopped with "Entpacken fehlgeschlagen: ENOTDIR …
-  plugins\\generic": Azahar's Windows zip names its folders with backslashes ("…\\plugins\\"), and souldew unpacked
-  that folder entry as an empty file, which then blocked every file inside it. Folder entries are now folders, an empty
-  "file" in the way of a folder gives way, and the download is unpacked next to the old install and only swapped in once
-  Azahar is really in it – a failed or interrupted try changes nothing, and the next try starts clean (also after the
-  broken installs of earlier versions). While Azahar runs, souldew says so instead of deleting half of it.
-- **Install and start errors of the external emulators are in your language** – no internet, a GitHub error, no build
-  for your system, a failed download or unpack, files in use – instead of German text for everyone.
-- **The built-in 3DS player has screen layouts:** top above bottom, side by side, large top with a small bottom
-  screen, bottom above top, and top screen only – from the new button in the game's toolbar, switched right away
-  without restarting the game. A click on the bottom screen touches it in every layout.
-- **When the built-in 3DS player stops, souldew says why and offers Azahar.** The message shows how the game ended
-  (e.g. "exit code 0xC0000005 (access violation)"), with one click to play 3DS games in Azahar instead (Settings ›
-  Emulators › Nintendo 3DS) and a "Save diagnostics" button. The diagnostics now hold the 3DS player's graphics card,
-  driver and Vulkan loader, how its last games ended and what it wrote last (also kept in the data folder's
-  logs/players.log across restarts).
-- **3DS player on Windows / Linux graphics cards:** Azahar's core turned on optional Vulkan features (timeline
-  semaphores, extended dynamic state, 8-bit indices, shader barycentrics/interlock, pipeline cache control) whenever the
-  card offers them – although the device it creates for the player never enables them. MoltenVK on the Mac ignores
-  that, other drivers may crash on it; the player now shows the core only what its device really has. It also picks the
-  dedicated graphics card before an integrated one (CTRHOST_GPU=n picks another), checks every Vulkan step and reports
-  a lost device instead of freezing, and no longer leaves a Windows error dialog behind when it crashes.
-  *(Needs the new 3DS host from CI for Windows and Linux.)*
-- **An encrypted 3DS game file is named as such** ("souldew and Azahar play decrypted games only") instead of "the core
-  couldn't load the game".
-- Settings › Emulators no longer says 3DS games only run in Azahar.
-- **Zipped 3DS games show up in the library.** Adding a zip with a Nintendo 3DS game in it ("Pokemon Sun (USA).zip",
-  2.6 GB) said the library was updated, but the game never appeared: souldew only looked for Game Boy, GBA and DS
-  ROMs inside zips, and could only unpack up to 600 MB. Now the game is unpacked into your library folder as a normal
-  file – whether you add the zip with "Add files", drop it into the library or pick it in "Search my Mac / PC" – and it
-  is on the shelf like any 3DS game. The zip itself isn't copied into the library. Unpacking streams the game to disk
-  (no matter how big), checks its checksum, checks the free disk space first and leaves nothing half-written behind
-  if something goes wrong; a toast shows how far it is ("Unpacking Pokémon Sun … 40 % of 4.0 GB").
-- **Zips with 3DS games in your library folders** are no longer passed over in silence: the library lists them under
-  "Zipped 3DS games" with an "Unpack" button that puts the game into your library (the zip stays where it is).
-- 3DS games and zips can be dropped into the library up to 8 GB (it was 600 MB, too small for most 3DS games).
-- **Already-patched ROM hacks can be linked to their hack.** A ROM that was patched before you added it
-  ("kaizo-emerald.gba") still says Emerald in its header, so it showed up as plain Emerald and never on the Emerald
-  Kaizo page. Its page now has "This is a ROM hack…": pick the hack (the hacks of that game, or "Other / unknown hack"
-  with a name of your own), and the ROM appears on the hack's page as "Your ROM" with Play, New SoulLink and New
-  Nuzlocke – remembered by its checksum, also after renaming it, and undone with one click. When the file name already
-  says which hack it is, souldew asks "Looks like Pokémon Emerald Kaizo – link it?" on the ROM's page and in the message
-  after adding it. Runs of such a ROM are hack runs: no vanilla level caps, the randomizer follows the hack's entry, and
-  joining a SoulLink needs the very same ROM, like any patched run.
 - **The 3DS games can be randomized.** X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon and Ultra Sun/Ultra Moon now go through
   the bundled Universal Pokémon Randomizer ZX like the Gen 1–5 games: the presets, plus totem Pokémon (Gen 7) and Mega
   Evolution options, a live progress line while the game is rebuilt, and one `.cxi` per player that the built-in player
@@ -72,6 +28,52 @@
   controller stays the game's alone – pause it (ZL/LT/L2 or Home), open a menu over it or leave it in the corner, and
   the controller moves to souldew's menus; resuming hands it back once you let go of the button. Turn it off in
   Settings › Controller › "Navigate the app with a controller".
+- **Zipped 3DS games show up in the library.** Adding a zip with a Nintendo 3DS game in it ("Pokemon Sun (USA).zip",
+  2.6 GB) said the library was updated, but the game never appeared: souldew only looked for Game Boy, GBA and DS
+  ROMs inside zips, and could only unpack up to 600 MB. Now the game is unpacked into your library folder as a normal
+  file – whether you add the zip with "Add files", drop it into the library or pick it in "Search my Mac / PC" – and it
+  is on the shelf like any 3DS game. The zip itself isn't copied into the library. Unpacking streams the game to disk
+  (no matter how big), checks its checksum, checks the free disk space first and leaves nothing half-written behind
+  if something goes wrong; a toast shows how far it is ("Unpacking Pokémon Sun … 40 % of 4.0 GB").
+- **The built-in 3DS player has screen layouts:** top above bottom, side by side, large top with a small bottom
+  screen, bottom above top, and top screen only – from the new button in the game's toolbar, switched right away
+  without restarting the game. A click on the bottom screen touches it in every layout.
+- **Already-patched ROM hacks can be linked to their hack.** A ROM that was patched before you added it
+  ("kaizo-emerald.gba") still says Emerald in its header, so it showed up as plain Emerald and never on the Emerald
+  Kaizo page. Its page now has "This is a ROM hack…": pick the hack (the hacks of that game, or "Other / unknown hack"
+  with a name of your own), and the ROM appears on the hack's page as "Your ROM" with Play, New SoulLink and New
+  Nuzlocke – remembered by its checksum, also after renaming it, and undone with one click. When the file name already
+  says which hack it is, souldew asks "Looks like Pokémon Emerald Kaizo – link it?" on the ROM's page and in the message
+  after adding it. Runs of such a ROM are hack runs: no vanilla level caps, the randomizer follows the hack's entry, and
+  joining a SoulLink needs the very same ROM, like any patched run.
+- **Zips with 3DS games in your library folders** are no longer passed over in silence: the library lists them under
+  "Zipped 3DS games" with an "Unpack" button that puts the game into your library (the zip stays where it is).
+- 3DS games and zips can be dropped into the library up to 8 GB (it was 600 MB, too small for most 3DS games).
+- **Installing Azahar on Windows works again.** The one-click install stopped with "Entpacken fehlgeschlagen: ENOTDIR …
+  plugins\\generic": Azahar's Windows zip names its folders with backslashes ("…\\plugins\\"), and souldew unpacked
+  that folder entry as an empty file, which then blocked every file inside it. Folder entries are now folders, an empty
+  "file" in the way of a folder gives way, and the download is unpacked next to the old install and only swapped in once
+  Azahar is really in it – a failed or interrupted try changes nothing, and the next try starts clean (also after the
+  broken installs of earlier versions). While Azahar runs, souldew says so instead of deleting half of it.
+- **Install and start errors of the external emulators are in your language** – no internet, a GitHub error, no build
+  for your system, a failed download or unpack, files in use – instead of German text for everyone.
+- **When the built-in 3DS player stops, souldew says why and offers Azahar.** The message shows how the game ended
+  (e.g. "exit code 0xC0000005 (access violation)"), with one click to play 3DS games in Azahar instead (Settings ›
+  Emulators › Nintendo 3DS) and a "Save diagnostics" button. The diagnostics now hold the 3DS player's graphics card,
+  driver and Vulkan loader, how its last games ended and what it wrote last (also kept in the data folder's
+  logs/players.log across restarts).
+- **3DS player on Windows / Linux graphics cards:** Azahar's core turned on optional Vulkan features (timeline
+  semaphores, extended dynamic state, 8-bit indices, shader barycentrics/interlock, pipeline cache control) whenever the
+  card offers them – although the device it creates for the player never enables them. MoltenVK on the Mac ignores
+  that, other drivers may crash on it; the player now shows the core only what its device really has. It also picks the
+  dedicated graphics card before an integrated one (CTRHOST_GPU=n picks another), checks every Vulkan step and reports
+  a lost device instead of freezing, and no longer leaves a Windows error dialog behind when it crashes.
+- **An encrypted 3DS game file is named as such** ("souldew and Azahar only play decrypted games …") instead of "the
+  core couldn't load the game" – when you play it and when you randomize it.
+- Settings › Emulators no longer says 3DS games only run in Azahar.
+- **"Share to Discord" also works where `workers.dev` is blocked.** Some DNS filters (school, work or parental
+  filters) block every `*.workers.dev` address, so linking and posting failed with "offline". souldew now talks to the
+  bot at `api.souldew.app` and only falls back to the old address when that can't be reached at all.
 
 ## 2.6.3
 

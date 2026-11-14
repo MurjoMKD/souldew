@@ -1,4 +1,4 @@
-// A zipped Nintendo 3DS game (2.6.4): adding the zip unpacks the game into the library as a normal file – streamed,
+// A zipped Nintendo 3DS game (2.7.0): adding the zip unpacks the game into the library as a normal file – streamed,
 // CRC32-checked, ZIP64-aware, never a path outside the library – and zips with 3DS games the library scan finds in
 // its folders are offered for unpacking instead of being ignored. Only tiny generated zips here, never real games.
 import { test } from 'node:test';
@@ -276,7 +276,7 @@ test('library scan: a zipped 3DS game in a library folder is offered for unpacki
   rmSync(join(LIB, 'Pokemon X.3ds'));
 });
 
-test('an index from before 2.6.4 is read again for 3DS games in zips', () => {
+test('an index from before 2.7.0 is read again for 3DS games in zips', () => {
   const folder = mkdtempSync(join(ELSE, 'old-'));
   const zip = join(folder, 'Y.zip');
   writeFileSync(zip, makeZip([{ name: 'Pokemon Y.3ds', data: fakeGame(300000, { productCode: 'CTR-P-EK2A', titleId: '0004000000055E00' }) }]));

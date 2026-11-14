@@ -1,4 +1,4 @@
-// The 3DS audit (2.6.4): installing Azahar from its real Windows zip (backslash folder entries), a retry after a broken
+// The 3DS audit (2.7.0): installing Azahar from its real Windows zip (backslash folder entries), a retry after a broken
 // install, translated install errors, the 3DS player's screen layouts and touch mapping, and how a crashed 3DS host is
 // reported (exit text, the graphics card, the end of its stderr) for "Save diagnostics".
 import { test } from 'node:test';
