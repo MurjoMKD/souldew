@@ -12,6 +12,9 @@ import { identifyRom, matchCatalog, ROM_EXTENSIONS, PATCH_EXTENSIONS, CTR_EXTENS
 import { identifyCtr } from '../../shared/ctr.mjs';
 import { wasPicked, insideAny } from './grants.mjs';
 import { describePatch, detectPatchFormat } from '../../shared/patchers.mjs';
+import { nameVersion, compareVersions, patchFamily } from '../../shared/patchname.mjs';
+
+export { nameVersion, compareVersions };
 
 const INDEX_PATH = join(DATA_DIR, DEV ? 'runs/library-index.json' : 'library-index.json');
 const SKIP = new Set(['node_modules', 'runs', 'tools', 'web', 'shared', 'server', 'research', 'test', 'electron', 'dist', 'build', 'scripts']);
@@ -130,6 +133,7 @@ export function scanLibrary(config = {}) {
   const roms = [];
   const patches = [];
   const seen = new Set(); // nested / overlapping library folders would list files twice
+  const patchTime = new Map(); // patch → mtime of its file (or zip), to tell which of two versions came later
 
   const visit = (dir, depth) => {
     if (seen.has(dir)) return;
@@ -184,7 +188,9 @@ export function scanLibrary(config = {}) {
           info = patchInfo(buf);
         }
         nextIndex[cacheKey] = info;
-        patches.push({ id: makeId(path), name, file: path, size: st.size, container: null, ...info });
+        const p = { id: makeId(path), name, file: path, size: st.size, container: null, ...info };
+        patchTime.set(p, st.mtimeMs);
+        patches.push(p);
       } else if (ext === 'zip') {
         let cached = index[cacheKey];
         if (!cached || cached.patches?.some((x) => !('resultCrc' in x))) {
@@ -219,8 +225,10 @@ export function scanLibrary(config = {}) {
         for (const p of cached.patches) {
           if (junkEntry(p.entry)) continue; // (indexes from older versions may still list them)
           const note = cached.notes[0];
-          patches.push({ id: makeId(path, p.entry), name: entryBase(p.entry), file: path, container: name, readme: note?.text || null, ...p,
-            expectedCrc: p.expectedCrc || parseReadmeCrc(note?.text || '') });
+          const patch = { id: makeId(path, p.entry), name: entryBase(p.entry), file: path, container: name, readme: note?.text || null, ...p,
+            expectedCrc: p.expectedCrc || parseReadmeCrc(note?.text || '') };
+          patchTime.set(patch, st.mtimeMs);
+          patches.push(patch);
         }
       }
     }
@@ -240,8 +248,34 @@ export function scanLibrary(config = {}) {
     p.hackId = hack?.id || null;
     if (!p.expectedCrc && hack?.baseCrc32) p.expectedCrc = String(hack.baseCrc32).toUpperCase();
     p.baseRomId = roms.find((r) => p.expectedCrc && r.crc === p.expectedCrc)?.id || null;
+    // a hack the catalog doesn't know: its versions are told together by the file name ("Crest v1.bps", "Crest v2.bps")
+    if (!p.hackId) p.family = patchFamily(p.name);
   }
-  return { roms, patches, roots: libraryRoots(config), libraryDir: LIBRARY_DIR };
+  return { roms, patches: newestFirst(patches, patchTime), roots: libraryRoots(config), libraryDir: LIBRARY_DIR };
+}
+
+/**
+ * Several patches of one hack (an update added next to the old version): the newest first – the version in the file
+ * name, else the file added later –, because the library and the new-run wizard use the first patch of a hack.
+ * A hack the catalog doesn't know is told by its `family` (the file name without the version). Patches of different
+ * hacks keep their order; the older versions get `olderVersion: true` (still selectable).
+ */
+function newestFirst(patches, time = new Map()) {
+  const groups = new Map();
+  for (const p of patches) {
+    const key = p.hackId ? `hack:${p.hackId}` : p.family ? `file:${p.family}` : null;
+    if (key) groups.set(key, [...(groups.get(key) || []), p]);
+  }
+  const order = new Map();
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const sorted = [...list].sort((a, b) => compareVersions(nameVersion(b.name), nameVersion(a.name)) || (time.get(b) || 0) - (time.get(a) || 0));
+    sorted.forEach((p, i) => {
+      p.olderVersion = i > 0;
+      order.set(list[i], p);
+    });
+  }
+  return patches.map((p) => order.get(p) || p);
 }
 
 // ---- finding games elsewhere on this computer -----------------------------------------------------------------
