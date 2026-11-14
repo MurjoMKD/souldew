@@ -1679,8 +1679,9 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       }
       if (VENDOR[path]) return serveFile(res, VENDOR[path]);
       if (path === '/live/soullink.lua') {
-        // contains the live bridge token – same origin rules as the API
-        if (apiRequestError(req, server.address()?.port)) return send(res, 403, 'Forbidden');
+        // embeds the live bridge token – PRIVATE_GETS (app header or same-origin), not a typed URL / other program
+        const denied = apiRequestError(req, server.address()?.port) || privateRequestError(req, path);
+        if (denied) return send(res, 403, { error: denied });
         return serveFile(res, live.luaScriptPath());
       }
       if (path.startsWith('/shared/')) {
