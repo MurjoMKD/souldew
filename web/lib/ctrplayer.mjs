@@ -208,11 +208,18 @@ new ResizeObserver(layout).observe(document.body);
 layout();
 
 // ---- sound: the host's samples through souldew's turbo mixer (lib/native-audio-worklet.mjs, as the fast player) -----
-// While fast-forwarding the host sends the sound sped up by the real speed (ctrhost.c, as the fast player's host); the
-// mixer then plays what Settings › "Turbo audio" asks for: the music recorded at 1× going on ("music"), silence
-// ("mute"), the sped-up original ("original"), or the host's sound with no mixer at all ("plain").
+// While fast-forwarding the host sends the sound sped up by the real speed, resampled to real time (ctrhost.c
+// ff_frame), and says by how much ("ffrate", right before that sound – the worklet hands the ratio to the mixer when the
+// sound plays); the mixer then plays what Settings › "Turbo audio" asks for: the music recorded at 1× going on
+// ("music"), silence ("mute"), the sped-up original ("original"), or the host's sound with no mixer at all ("plain").
+// The worklet keeps a little more in hand than for the fast player: the sound comes between pictures of up to 7 MB.
 const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
-const audio = { ctx: null, node: null, gain: null, key: null, events: [], probes: [], rate: 0 };
+const audio = { ctx: null, node: null, gain: null, key: null, events: [], probes: [], rate: 0, exact: false };
+/**
+ * The worklet's buffer (frames): start / restart once 60 ms are there, fold the excess in gently above 200 ms (only if
+ * the sound runs ahead of the sound card's clock for long – ctrhost paces 1× by the core's sound), never over 400 ms.
+ */
+const ringFor = (rate) => ({ prime: Math.round(rate * 0.06), trim: Math.round(rate * 0.2), maxLag: Math.round(rate * 0.4) });
 function tellAudio(m) {
   audio.node?.port.postMessage(m);
 }
@@ -228,7 +235,7 @@ async function startAudio(rate) {
     audio.rate = rate;
     audio.ctx = new AudioContext({ sampleRate: Math.round(rate), latencyHint: 'interactive' });
     await audio.ctx.audioWorklet.addModule('/lib/native-audio-worklet.mjs');
-    audio.node = new AudioWorkletNode(audio.ctx, 'native-audio', { outputChannelCount: [2], processorOptions: { init: audioInit() } });
+    audio.node = new AudioWorkletNode(audio.ctx, 'native-audio', { outputChannelCount: [2], processorOptions: { init: audioInit(), ...ringFor(audio.ctx.sampleRate) } });
     audio.node.port.onmessage = (e) => {
       const ev = e.data?.e;
       if (!ev) return;
@@ -358,8 +365,13 @@ function onEvent(p) {
       st.hostFrame = e.frame;
       st.hostFrames = true;
     }
-    // the sped-up sound's real speed, for the mixer to slow it down again (as the fast player)
-    if (st.speed > 1 && !st.paused && e.speed > 0.5) tellAudio({ type: 'rate', ratio: Math.round(Math.min(e.speed, MAX_SOUND_RATIO) * 100) / 100 });
+    // the sped-up sound's real speed, for the mixer to slow it down again (as the fast player) – unless the host says
+    // its exact ratio itself (ffrate)
+    if (!audio.exact && st.speed > 1 && !st.paused && e.speed > 0.5) tellAudio({ type: 'rate', ratio: Math.round(Math.min(e.speed, MAX_SOUND_RATIO) * 100) / 100 });
+  } else if (e.event === 'ffrate') {
+    if (!(e.k >= 1)) return;
+    audio.exact = true;
+    tellAudio({ type: 'rate', ratio: e.k, exact: true, inband: true });
   }
   else if (e.event === 'stateLoaded') waiters.loaded.splice(0).forEach((f) => f(!!e.ok));
   else if (e.event === 'written') {

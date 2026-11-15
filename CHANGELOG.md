@@ -2,6 +2,19 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **Smooth sound while fast-forwarding in the 3DS player** (thanks to a Windows player for the report). On PCs where a
+  3DS game can't hold the chosen speed steadily – its speed swings from moment to moment, which is normal for 3DS games
+  – "Sped-up original" and "Plain" stuttered (around ten little gaps a second) and sounded harsh, and "Music continues"
+  could play the music at the wrong pitch and tempo when nothing had been recorded for it yet. The 3DS player now
+  resamples the game's sound to exactly real time while fast-forwarding, filters it properly before speeding it up,
+  and tells the turbo mixer exactly how much it was sped up, so it can slow the music back down to normal pitch and
+  tempo. Measured with Pokémon Sun at 2×, 3×, 4× and Max, with the game slowed down the way a busier PC slows it: the
+  gaps went from 3–11 a second to almost none, and "Music continues" stays at normal pitch. At 1× the 3DS player now
+  runs at the 3DS's own frame rate (59.83 instead of 60 frames a second), so its sound no longer slowly runs ahead and
+  skips about once a minute.
+
 ## 2.7.2
 
 - **Fast-forward steps one at a time in the 3DS player** (thanks to a player on Discord for the report). Plus went 2× →

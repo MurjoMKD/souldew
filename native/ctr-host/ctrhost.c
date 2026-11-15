@@ -7,15 +7,17 @@
 // Messages are { u32 type, u32 length, payload } (little-endian), both ways.
 //   host → souldew   1 HELLO  json { width, height, fps, sampleRate }      sent once the game runs
 //                    2 VIDEO  u16 width, u16 height, u32 format (0 BGRA, 1 RGBA), pixels
-//                    3 AUDIO  s16 stereo samples – fast-forward: the sound sped up (time-compressed to the real
-//                             speed, at most 16×, like the fast player's host) and never more than real time –
-//                             souldew's turbo mixer (web/lib/turboaudio.mjs) plays it per Settings › "Turbo audio"
+//                    3 AUDIO  s16 stereo samples – fast-forward: the sound sped up by the real speed (at most 16×),
+//                             resampled to exactly real time (see ff_frame) – souldew's turbo mixer
+//                             (web/lib/turboaudio.mjs) plays it per Settings › "Turbo audio"
 //                    4 MEM    u32 count, count × { u32 addr, u32 len, bytes }  the watched regions, between frames
 //                    5 STATE  a save state (answer to SAVE)
 //                    6 LOG    text
 //                    7 EVENT  json  { event: 'gpu' | 'loaded' | 'error' | 'stateLoaded' | 'stats' | 'title' | 'written', … }
 //                                   stats (four times a second): fps, speed (real, 1 = normal), frame (emulated frames
 //                                   so far – the page measures fast-forward with it, not with the pictures it gets)
+//                                   ffrate { k }: fast-forward – the sound that follows is sped up k times (sent
+//                                   whenever k changes, right before the first sound made with it)
 //                                   gpu: the Vulkan device chosen (name, type, vendor, driver …) – sent before the core
 //                                   touches it, so a crash in the driver still says which one it was
 //   souldew → host   1 INPUT  u32 joypad bits (RETRO_DEVICE_ID_JOYPAD_*), s16 lx, ly, rx, ry, s16 px, py (pointer,
@@ -261,39 +263,198 @@ static int16_t input_state(unsigned port, unsigned device, unsigned index, unsig
 // ---- audio: collected per frame, sent after it ------------------------------------------------------------------
 static int16_t *audio_buf;
 static size_t audio_n, audio_cap;
-// fast-forward: the frame's sound averaged down by `ff_k` (box filter, fractional), within a real-time budget – the
-// same as the fast player's host (native/retro-host/retrohost.c), so souldew's turbo mixer works on both alike
-static double ff_k = 1, ff_acc, ff_sum[2], ff_budget;
-static size_t ff_cnt;
-static int16_t *ff_buf;
-static size_t ff_cap;
-/** The frame's sound sped up by ff_k (n stereo frames in audio_buf → fewer in ff_buf); returns how many. */
-static size_t speed_up_audio(void) {
-  const size_t n = audio_n / 2;
-  if (ff_cap < n + 4) {
-    size_t cap = n + 4;
-    int16_t *b = realloc(ff_buf, cap * 2 * sizeof *b);
-    if (!b) return 0;
-    ff_buf = b;
-    ff_cap = cap;
+
+// ---- fast-forward sound -------------------------------------------------------------------------------------------
+// While fast-forwarding the core makes k seconds of sound per second, k being the speed it really reaches – and on a
+// 3DS that swings from frame to frame (Pokémon Sun's overworld on a mid-range PC: anywhere between 1.1× and 3× within
+// a second). 2.7.2 averaged every frame's sound down by the speed measured over the last quarter second and threw
+// away whole frames once it was ahead of real time (as the fast player's host does – its cores hold their speed):
+// with a swinging speed the page got too little sound, then too much, and played it with ~10 holes a second.
+// Now the frames' sound goes into a queue and comes out resampled by k, exactly as many samples as wall-clock time
+// has passed – without holes. k follows the measured speed and how full the queue is (about FF_TARGET seconds); it is
+// glides (no jumps in pitch), and every change is announced right before the first sound made with it (event
+// "ffrate"), so souldew's turbo mixer can slow the sound back down by exactly the ratio it was sped up with.
+// A low-pass at the new Nyquist frequency goes first (two biquads – the plain average let the overtones fold back
+// into the audible range: harsh). Above FF_MAXK× the queue overflows and skips ahead, with a short crossfade.
+#define FF_MAXK 16.0
+#define FF_TARGET 0.15 // seconds of output kept in the queue (latency doesn't matter much for sped-up sound)
+#define FF_GLIDE 0.15  // seconds k takes to follow the speed (time constant)
+#define FF_XFADE 256   // output frames of crossfade where the queue skips ahead
+#define FF_PI 3.14159265358979323846
+#define FF_CHUNK 160  // output frames sent at least at a time (~5 ms)
+static struct {
+  float *q; // queue: interleaved stereo, `n` frames
+  size_t n, cap;
+  double pos;       // read position in the queue (frames, fractional)
+  double k;         // the ratio in use (announced)
+  double glide;     // where k is gliding
+  double kin;       // the speed the sound comes in at (smoothed)
+  double due;       // output frames owed to wall-clock time
+  int primed;       // the queue was full enough to start (again)
+  double xpos;      // where the queue skipped from (crossfade), and how many frames of it are left
+  int xleft;
+  double b[2][5];   // the low-pass: two biquads (b0 b1 b2 a1 a2) …
+  double z[2][2][2]; // … and their state [biquad][channel][2]
+  int lp;           // low-pass on
+  int16_t *out;
+  size_t ocap;
+  uint32_t holes;   // times the queue ran dry (diagnostics: stats)
+} ff;
+
+/** The low-pass for ratio k: 4th-order Butterworth at 0.45 × the output's Nyquist frequency (none near 1×). */
+static void ff_lowpass(double k) {
+  ff.lp = k > 1.05;
+  if (!ff.lp) return;
+  static const double qs[2] = {0.5412, 1.3066};
+  const double w = 2 * FF_PI * 0.45 * 0.5 / k; // (in the input's samples: its Nyquist is π)
+  for (int s = 0; s < 2; s++) {
+    const double c = cos(w), al = sin(w) / (2 * qs[s]), a0 = 1 + al;
+    ff.b[s][0] = (1 - c) / 2 / a0;
+    ff.b[s][1] = (1 - c) / a0;
+    ff.b[s][2] = (1 - c) / 2 / a0;
+    ff.b[s][3] = -2 * c / a0;
+    ff.b[s][4] = (1 - al) / a0;
   }
-  size_t out = 0;
-  for (size_t i = 0; i < n; i++) {
-    ff_sum[0] += audio_buf[i * 2];
-    ff_sum[1] += audio_buf[i * 2 + 1];
-    ff_cnt++;
-    ff_acc += 1;
-    if (ff_acc >= ff_k && out < ff_cap) {
-      ff_buf[out * 2] = (int16_t)(ff_sum[0] / (double)ff_cnt);
-      ff_buf[out * 2 + 1] = (int16_t)(ff_sum[1] / (double)ff_cnt);
-      out++;
-      ff_acc -= ff_k;
-      ff_sum[0] = ff_sum[1] = 0;
-      ff_cnt = 0;
+}
+
+/** A fresh start: turbo began (or ended). */
+static void ff_reset(double k) {
+  ff.n = 0;
+  ff.pos = 0;
+  ff.due = 0;
+  ff.primed = 0;
+  ff.xleft = 0;
+  ff.k = ff.glide = ff.kin = k;
+  memset(ff.z, 0, sizeof ff.z);
+  ff_lowpass(k);
+}
+
+/** The frame's sound (n stereo frames) into the queue, low-passed. */
+static void ff_push(const int16_t *d, size_t n) {
+  // drop what was read (but keep 2 frames before the read position – and the crossfade's source – for interpolation)
+  double keep = ff.xleft && ff.xpos < ff.pos ? ff.xpos : ff.pos;
+  size_t drop = keep > 3 ? (size_t)keep - 2 : 0;
+  if (drop > ff.n) drop = ff.n;
+  if (drop > 4096 || ff.n + n > ff.cap) {
+    memmove(ff.q, ff.q + drop * 2, (ff.n - drop) * 2 * sizeof *ff.q);
+    ff.n -= drop;
+    ff.pos -= (double)drop;
+    ff.xpos -= (double)drop;
+  }
+  if (ff.n + n > ff.cap) {
+    size_t cap = (ff.n + n) * 2;
+    float *q = realloc(ff.q, cap * 2 * sizeof *q);
+    if (!q) return; // out of memory: this frame's sound is left out
+    ff.q = q;
+    ff.cap = cap;
+  }
+  float *o = ff.q + ff.n * 2;
+  for (size_t i = 0; i < n; i++)
+    for (int c = 0; c < 2; c++) {
+      double x = d[i * 2 + c] / 32768.0;
+      if (ff.lp)
+        for (int s = 0; s < 2; s++) { // transposed direct form II
+          const double *b = ff.b[s];
+          double *z = ff.z[s][c];
+          const double y = b[0] * x + z[0];
+          z[0] = b[1] * x - b[3] * y + z[1];
+          z[1] = b[2] * x - b[4] * y;
+          x = y;
+        }
+      o[i * 2 + c] = (float)x;
+    }
+  ff.n += n;
+}
+
+/** The queue at position p, channel c (4-point Hermite; p ≥ 1 and p + 2 < n). */
+static double ff_at(double p, int c) {
+  const size_t i = (size_t)p;
+  const double t = p - (double)i;
+  const float *q = ff.q + c;
+  const double xm = q[(i - 1) * 2], x0 = q[i * 2], x1 = q[(i + 1) * 2], x2 = q[(i + 2) * 2];
+  const double c1 = 0.5 * (x1 - xm), c2 = xm - 2.5 * x0 + 2 * x1 - 0.5 * x2, c3 = 0.5 * (x2 - xm) + 1.5 * (x0 - x1);
+  return ((c3 * t + c2) * t + c1) * t + x0;
+}
+
+/** Up to `want` output frames into ff.out at ratio ff.k; returns how many there were. */
+static size_t ff_make(size_t want) {
+  if (ff.pos < 1) ff.pos = 1;
+  const double avail = (double)ff.n - 3 - ff.pos;
+  size_t m = avail > 0 ? (size_t)(avail / ff.k) : 0;
+  if (m > want) m = want;
+  if (ff.ocap < m) {
+    int16_t *o = realloc(ff.out, m * 2 * sizeof *o);
+    if (!o) return 0;
+    ff.out = o;
+    ff.ocap = m;
+  }
+  for (size_t j = 0; j < m; j++) {
+    for (int c = 0; c < 2; c++) {
+      double v = ff_at(ff.pos, c);
+      if (ff.xleft) { // equal-power crossfade from where the queue skipped
+        const double g = (double)ff.xleft / FF_XFADE;
+        v = v * sin((1 - g) * FF_PI / 2) + ff_at(ff.xpos, c) * sin(g * FF_PI / 2);
+      }
+      v *= 32768;
+      ff.out[j * 2 + c] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+    ff.pos += ff.k;
+    if (ff.xleft) {
+      ff.xpos += ff.k;
+      ff.xleft--;
     }
   }
-  return out;
+  return m;
 }
+
+/** Fast-forward, after a frame: its sound into the queue, and the sped-up sound for `dt` seconds out to souldew. */
+static void ff_frame(double dt, double sample_rate) {
+  ff_push(audio_buf, audio_n / 2);
+  ff.due += dt * sample_rate;
+  if (ff.due > sample_rate * 0.1) ff.due = sample_rate * 0.1; // stalled (loading): the page went without meanwhile
+  double fill = ((double)ff.n - 3 - ff.pos) / ff.k / sample_rate; // seconds of output in the queue
+  if (fill > FF_TARGET * 3 && ff.k >= FF_MAXK * 0.99 && !ff.xleft) {
+    // faster than FF_MAXK×: skip ahead to the target (crossfaded)
+    ff.xpos = ff.pos;
+    ff.xleft = FF_XFADE;
+    ff.pos += (fill - FF_TARGET) * ff.k * sample_rate;
+    fill = FF_TARGET;
+  }
+  // the ratio: the speed the sound comes in at, nudged towards the queue's target fill, gliding there (no jumps in
+  // pitch); souldew hears of every change of more than 1 %, right before the sound made with it
+  if (dt > 0) ff.kin += ((double)(audio_n / 2) / (dt * sample_rate) - ff.kin) * (dt < FF_GLIDE ? dt / FF_GLIDE : 1);
+  double e = (fill - FF_TARGET) / FF_TARGET;
+  if (e < -1) e = -1;
+  if (e > 1.5) e = 1.5;
+  double to = ff.kin * (1 + 0.6 * e);
+  if (to < 1) to = 1;
+  if (to > FF_MAXK) to = FF_MAXK;
+  ff.glide += (to - ff.glide) * (dt < FF_GLIDE ? dt / FF_GLIDE : 1);
+  if (fabs(ff.glide / ff.k - 1) > 0.01) {
+    ff.k = ff.glide;
+    ff_lowpass(ff.k);
+    send_event("{\"event\":\"ffrate\",\"k\":%.4f}", ff.k);
+    fill = ((double)ff.n - 3 - ff.pos) / ff.k / sample_rate;
+  }
+  if (!ff.primed) {
+    // (re)starting: wait until the queue holds its target – one short gap instead of a crackle of small ones
+    if (fill < FF_TARGET * 0.6) {
+      ff.due = 0;
+      return;
+    }
+    ff.primed = 1;
+  }
+  const size_t want = (size_t)ff.due;
+  if (want < FF_CHUNK) return; // (at Max a frame takes well under a millisecond: its few samples go out together)
+  const size_t m = ff_make(want);
+  ff.due -= (double)m;
+  if (m) send_msg(3, ff.out, (uint32_t)(m * 2 * sizeof *ff.out));
+  if (m + 64 < want) { // ran dry (the game stalled)
+    ff.primed = 0;
+    ff.holes++;
+  }
+}
+
 static void audio_push(const int16_t *d, size_t frames) {
   if (!frames) return;
   if (audio_n + frames * 2 > audio_cap) {
@@ -1415,6 +1576,11 @@ int main(int argc, char **argv) {
   double stat_t = now_s(), last_shown = 0, last_mem = 0, last_audio = now_s();
   uint64_t stat_frames = 0;
   int was_turbo = 0;
+  // 1× runs at the pace the core makes its sound at: Azahar says 60 fps, but a 3DS frame is 547 samples at 32728 Hz
+  // (59.83 fps) – paced at 60 the game made 0.3 % more sound than real time, and every minute or so the page had to
+  // drop a stretch of it. Measured on the frames that have sound (a quiet core, the first frames: not counted).
+  double pace_fps = fps;
+  uint64_t pace_frames = 0, pace_samples = 0;
   for (;;) {
     pthread_mutex_lock(&cmd_lock);
     float sp = speed;
@@ -1457,10 +1623,10 @@ int main(int argc, char **argv) {
     const int turbo = sp > 1.01f;
     if (turbo != was_turbo) { // a fresh start for the sped-up sound: the asked-for speed until it is measured
       was_turbo = turbo;
-      ff_k = turbo ? (sp > 16 ? 16 : sp) : 1;
-      ff_acc = ff_sum[0] = ff_sum[1] = 0;
-      ff_cnt = 0;
-      ff_budget = sample_rate * 0.05;
+      ff_reset(turbo ? (sp > FF_MAXK ? FF_MAXK : sp) : 1);
+      if (turbo) send_event("{\"event\":\"ffrate\",\"k\":%.4f}", ff.k);
+    } else if (turbo && ff.kin > sp) {
+      ff.kin = sp; // a slower step: the game won't go faster than asked (a faster one: measured as it comes)
     }
     double t = now_s();
     // turbo: a picture for the screen about 60 times a second, not one per emulated frame (at 1×: every one)
@@ -1473,19 +1639,13 @@ int main(int argc, char **argv) {
     if (++frame == 120) stage = "running the game";
     stat_frames++;
     t = now_s();
-    if (audio_n && !turbo) {
-      send_msg(3, audio_buf, (uint32_t)(audio_n * sizeof *audio_buf));
-      ff_budget = 0;
-    } else if (audio_n) {
-      // fast-forward: sped up by the real speed (≤ 16×); what doesn't fit in real time is left out, in whole frames
-      ff_budget += (t - last_audio) * sample_rate;
-      if (ff_budget > sample_rate * 0.2) ff_budget = sample_rate * 0.2;
-      const size_t m = speed_up_audio();
-      if (m && ff_budget >= (double)m) {
-        ff_budget -= (double)m;
-        send_msg(3, ff_buf, (uint32_t)(m * 2 * sizeof *ff_buf));
+    if (!turbo) {
+      if (audio_n) send_msg(3, audio_buf, (uint32_t)(audio_n * sizeof *audio_buf));
+      if (audio_n && frame > 120) {
+        pace_frames++;
+        pace_samples += audio_n / 2;
       }
-    }
+    } else ff_frame(t - last_audio, sample_rate); // fast-forward: sped up, resampled to real time (see ff_frame)
     audio_n = 0;
     last_audio = t;
     if (t - last_mem >= 0.1) { // ten times a second, whatever the speed
@@ -1500,15 +1660,19 @@ int main(int argc, char **argv) {
       }
     }
     if (t - stat_t >= 0.25) { // four times a second: the page measures the real speed with the frame count
-      const double real = stat_frames / (t - stat_t) / fps;
-      ff_k = turbo ? (real < 1 ? 1 : real > 16 ? 16 : real) : 1;
-      send_event("{\"event\":\"stats\",\"fps\":%.1f,\"speed\":%.3f,\"shown\":%llu,\"frame\":%llu}", stat_frames / (t - stat_t), real,
-                 (unsigned long long)frames_shown, (unsigned long long)frame);
+      if (pace_frames >= 120) {
+        const double f = sample_rate * (double)pace_frames / (double)pace_samples;
+        if (fabs(f / fps - 1) < 0.02) pace_fps = f;
+      }
+      const double real = stat_frames / (t - stat_t) / pace_fps;
+      // (ffk / ffHoles: the fast-forward sound's ratio, and how often its queue ran dry – diagnostics)
+      send_event("{\"event\":\"stats\",\"fps\":%.1f,\"speed\":%.3f,\"shown\":%llu,\"frame\":%llu,\"ffk\":%.3f,\"ffHoles\":%u}", stat_frames / (t - stat_t), real,
+                 (unsigned long long)frames_shown, (unsigned long long)frame, turbo ? ff.k : 1.0, ff.holes);
       stat_t = t;
       stat_frames = 0;
     }
     if (sp >= 100.0f) { next = t; continue; } // as fast as it goes
-    next += 1.0 / (fps * sp);
+    next += 1.0 / (pace_fps * sp);
     if (next < t - 0.1) next = t; // fell behind (loading): don't race to catch up
     double wait = next - t;
     if (wait > 0.1) wait = 0.1, next = t + 0.1; // (commands are read between frames – never sleep long)
