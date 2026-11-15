@@ -888,7 +888,7 @@ export function GameSession({ session, mode }) {
       let lastLocate = 0;
       let wramEntry = null;
       let x3 = null; // (one entry object for the session: liveRef and the cheats compare it)
-      const scan3Entry = (en) => (x3?.from === en ? x3.entry : (x3 = { from: en, entry: expandedEntry(en, romMaps3Now()) }).entry);
+      const scan3Entry = (en) => (x3?.from === en ? x3.entry : (x3 = { from: en, entry: expandedEntry(en, romMaps3Now(), romOwnNow()?.items?.names) }).entry);
       let expandedMisses = 0; // reads in a battle without a team in an expanded engine (after ~15 s: "not supported")
       // what souldew can read for this game, confirmed poll by poll (shared/live/features.mjs): only what passed is shown,
       // and every change goes into the diagnostics
@@ -921,10 +921,11 @@ export function GameSession({ session, mode }) {
             // a Game Boy hack built from the disassembly may have moved its RAM variables (Crystal Legacy: 11 bytes)
             const wram = entry.gen <= 2 ? romWramNow() : null;
             if (wram && wramEntry?.from !== entry) wramEntry = { from: entry, entry: { ...shiftEntry(entry, wram), wram } };
-            // an expanded GBA engine (Run & Bun): the team is searched for, the place read through SaveBlock1
-            const expanded = sp?.engine === 'expanded';
-            if (expanded) setCheatGame(false);
+            // an expanded GBA engine (Run & Bun), or a decomp hack whose RAM moved (romloc.mjs gen3RamMoved): the team is
+            // searched for, the place read through SaveBlock1; Rare Candies only where it kept the base game's bag
+            const expanded = sp?.engine === 'expanded' || (entry.gen === 3 && !!romMaps3Now()?.moved);
             const ent = wram ? wramEntry.entry : expanded ? scan3Entry(entry) : entry;
+            if (expanded) setCheatGame(cheatSupported(ent));
             if (liveRef.current?.entry !== ent) liveRef.current = { ...liveRef.current, entry: ent }; // (the cheats use it)
             const hereNow = readHere(ent, e.read, state);
             setHere((p) => nextHere(p, hereNow));
@@ -1622,7 +1623,7 @@ export function ExternalFeed() {
       if (entry.gen === 3 && externalRun.rom) {
         await loadRomLocations(externalRun.rom);
         sp = romSpeciesNow();
-        if (sp?.engine === 'expanded') return;
+        if (sp?.engine === 'expanded' || romMaps3Now()?.moved) return;
       }
       const res = readLiveParty(entry, regionReader(liveInfo.regions), sp ? T.withSpecies(sp) : T, readState.current);
       if (res?.party) applySnap({ source: 'live', party: confirmFaints(res.party, readState.current), game: entry.id, ...(res.badges !== undefined ? { badges: res.badges } : {}) });

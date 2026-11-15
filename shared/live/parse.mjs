@@ -391,8 +391,11 @@ function findGen3Party(read, T, state, hint = null, base = null) {
     if (ram[o] === 0 && ram[o + 1] === 0 && ram[o + 2] === 0 && ram[o + 3] === 0) continue;
     if (base?.enemy === 0x02000000 + o) continue; // (FireRed's gEnemyParty, 3 bytes after the player's count)
     if (okAt(ram, o)) {
-      Object.assign(state, { count3: 0x02000000 + o - 3, enemy3: 0x02000000 + o + 600 });
-      return (state.party3 = 0x02000000 + o);
+      // gEnemyParty: where the code names it next to this party (Modern Emerald keeps another party array between the
+      // two), else right behind it as in the base game
+      const at = 0x02000000 + o;
+      Object.assign(state, { count3: at - 3, enemy3: hint?.player === at && hint.enemy ? hint.enemy : at + 600 });
+      return (state.party3 = at);
     }
   }
   // no count byte in front of a team: the pair the ROM's code names, if its player half holds a team (and nothing
@@ -424,8 +427,18 @@ function party3Count(read, T, state) {
  * with the ROM's own hints from romloc.mjs gen3MapTable `maps3` – the party pair its code names and gMain, whose
  * battle flag (+0x439, bit 1) moved in newer builds (Too Many Types 2: gMain 0x03004084 instead of 0x030022C0).
  */
-export function expandedEntry(entry, maps3 = null) {
-  const out = { ...entry, scan3: true, party3At: maps3?.party3 || null };
+export function expandedEntry(entry, maps3 = null, items = null) {
+  const out = { ...entry, scan3: true, party3At: maps3?.party3 || null, flags3: maps3?.flags3 || null };
+  // a build that kept the base game's save data: the retail species and items (a decomp hack with moved RAM, `moved`),
+  // or an Emerald build whose own item table still numbers Poké Ball 4 and Rare Candy 68 (Modern Emerald – Run & Bun and
+  // pokeemerald-expansion renumber them, Complete FireRed Upgrade moved the bag and packs the PC). Its bag and PC boxes
+  // sit where the base game keeps them in its save blocks – reached through the save block pointers the place reader
+  // found (cheats.mjs, readBoxesGen3). `items3Max`: the highest item number the game knows (bag check).
+  const name = (i) => String(items?.[i] || '').toUpperCase().replace('É', 'E');
+  if (maps3?.moved || (/^emerald_/.test(String(entry.id)) && name(4) === 'POKE BALL' && name(68) === 'RARE CANDY')) {
+    out.retail3 = true;
+    if (items?.length > 1) out.items3Max = items.length - 1;
+  }
   // the base game's addresses: tried first (Complete FireRed Upgrade kept them), checked like any other place
   if (entry.partyAddr && entry.partyCountAddr) out.party3Base = { party: hex(entry.partyAddr), count: hex(entry.partyCountAddr), enemy: entry.enemyPartyAddr ? hex(entry.enemyPartyAddr) : null };
   if (maps3?.gMain && entry.inBattle) out.inBattle = { ...entry.inBattle, addr: `0x${(maps3.gMain + 0x439).toString(16)}` };
@@ -481,37 +494,70 @@ function readGen3(entry, read, T, state = {}) {
  * keep it at a fixed place, Emerald and FireRed/LeafGreen behind gPokemonStoragePtr, right after the two save block
  * pointers (pret .sym files; the German, French, Italian and Spanish FireRed/LeafGreen: 0x03004F60, pokebot-gen3's
  * language patches). Without it a catch the game sent to the PC (full party) wasn't seen until it joined the team.
- * Only the retail engines: an expanded one may have moved or grown the boxes. Read every 2.5 s at most (like Gen 4);
+ * Only the retail engines and builds that kept their save data (expandedEntry `retail3`, every slot must read): an
+ * expanded one may have moved, grown or packed the boxes. Read every 2.5 s at most (like Gen 4);
  * null when the block doesn't read as a PC – mostly failed checksums is a wrong place, not a PC full of Bad Eggs.
  */
 const GBA_STORAGE = { rs: { at: 0x020300a0 }, e: { ptr: 0x03005d94 }, frlg: { ptr: 0x03005010 } };
-const BOX3_SLOTS = 14 * 30;
+/**
+ * How many boxes a hack's PC has (Modern Emerald 15): PokemonStorage goes on with a name per box (9 bytes, ended by
+ * 0xFF – "BOX1" …) and a wallpaper per box. The first count from 14 on whose names and wallpapers read as such – the
+ * names of a wrong count land in the boxes' encrypted or empty slots. null: none.
+ */
+function boxCount3(read, at) {
+  for (let n = 14; n <= 24; n++) {
+    const o = at + 4 + n * 30 * 80;
+    if (o + n * 10 > 0x02040000) return null;
+    const b = read(o, n * 10);
+    if (!b) return null;
+    let ok = true;
+    for (let k = 0; k < n && ok; k++) {
+      const name = b.subarray(k * 9, k * 9 + 9);
+      const end = name.indexOf(0xff);
+      ok = end >= 1 && name[0] !== 0 && name.subarray(0, end).every((c) => c < 0xf7); // (0x00: a space)
+    }
+    if (ok && b.subarray(n * 9, n * 10).every((w) => w < 32)) return n;
+  }
+  return null;
+}
 function readBoxesGen3(entry, read, T, state) {
-  if (entry.scan3 || T.expanded3) return null;
+  // (a build that kept the retail save data – expandedEntry `retail3` – keeps gPokemonStoragePtr right after the save
+  // block pointers, as found by the place reader)
+  const kept = entry.scan3 && entry.retail3;
+  if ((entry.scan3 || T.expanded3) && !kept) return null;
+  if (kept && !state.sb1PtrAddr) return null;
   const id = String(entry.id || '');
-  const L = GBA_STORAGE[/^(ruby|sapphire)_(us|de)$/.test(id) ? 'rs' : /^emerald_/.test(id) ? 'e' : /^(firered|leafgreen)_/.test(id) ? 'frlg' : ''];
+  const L = kept ? { ptr: state.sb1PtrAddr + 8 } : GBA_STORAGE[/^(ruby|sapphire)_(us|de)$/.test(id) ? 'rs' : /^emerald_/.test(id) ? 'e' : /^(firered|leafgreen)_/.test(id) ? 'frlg' : ''];
   if (!L) return null;
   const now = Date.now();
   if (state.box3 && now - state.box3At < 2500) return state.box3;
   let at = L.at;
   if (!at) {
-    const p = read(entry.saveBlockPtrs?.sb2 ? hex(entry.saveBlockPtrs.sb2) + 4 : L.ptr, 4);
+    const p = read(entry.saveBlockPtrs?.sb2 && !kept ? hex(entry.saveBlockPtrs.sb2) + 4 : L.ptr, 4);
     at = p ? u32le(p, 0) : 0;
   }
-  const len = 4 + BOX3_SLOTS * 80;
+  if (!(at >= 0x02000000 && at < 0x02040000)) return null;
+  const n = kept ? state.box3N || boxCount3(read, at) : 14;
+  if (!n) return null;
+  if (kept) state.box3N = n;
+  const slots = n * 30;
+  const len = 4 + slots * 80;
   if (!(at >= 0x02000000 && at + len <= 0x02040000)) return null;
   const raw = read(at, len);
-  if (!raw || raw[0] >= 14) return null; // currentBox
+  if (!raw || raw[0] >= n) return null; // currentBox
   const boxes = [];
   const buf = new Uint8Array(100); // parsePk3 reads a party struct: the box part, zeros for level / HP / stats
   let bad = 0;
-  for (let i = 0; i < BOX3_SLOTS; i++) {
+  for (let i = 0; i < slots; i++) {
     const o = 4 + i * 80;
     const slot = raw.subarray(o, o + 80);
     if (slot.every((x) => x === 0)) continue;
     buf.fill(0);
     buf.set(slot);
     const m = parsePk3(buf, T);
+    // (a hack's PC: every slot must read, or the boxes aren't what they seem – a Pokémon missing from them would be
+    // reported as released)
+    if (!m && kept) return null;
     if (!m) continue;
     if (m.bad) {
       bad++;
@@ -519,7 +565,7 @@ function readBoxesGen3(entry, read, T, state) {
     }
     boxes.push({ ...m, status: 0, box: Math.floor(i / 30), slot: i % 30, level: null, hp: null, maxHp: null });
   }
-  if (bad > 20 && boxes.length < bad) return null;
+  if ((bad > 20 && boxes.length < bad) || (kept && bad)) return null;
   state.box3 = boxes;
   state.box3At = now;
   return boxes;
@@ -552,9 +598,13 @@ function gen3Badges(entry, read, T, state, party) {
   };
   let sb1 = L.sb1;
   let sb2 = L.sb2;
+  // an engine whose team is searched for: SaveBlock1's flags where its code says (romloc.mjs gen3FlagsAt – Modern
+  // Emerald 0x1364), its save block pointers where the place reader found them (or the code names them)
+  const found = entry.scan3 ? state.sb1PtrAddr || entry.flags3?.sb1Ptr || null : null;
+  const flagsAt = entry.scan3 && entry.flags3?.flags ? entry.flags3.flags : L.flags;
   if (!sb1) {
-    const at = entry.saveBlockPtrs?.sb1 ? hex(entry.saveBlockPtrs.sb1) : entry.scan3 && state.sb1PtrAddr ? state.sb1PtrAddr : L.sb1Ptr;
-    const at2 = entry.saveBlockPtrs?.sb2 ? hex(entry.saveBlockPtrs.sb2) : entry.scan3 && state.sb1PtrAddr ? state.sb1PtrAddr + 4 : L.sb2Ptr;
+    const at = entry.saveBlockPtrs?.sb1 ? hex(entry.saveBlockPtrs.sb1) : found || L.sb1Ptr;
+    const at2 = entry.saveBlockPtrs?.sb2 ? hex(entry.saveBlockPtrs.sb2) : found ? found + 4 : L.sb2Ptr;
     sb1 = ptr(at);
     sb2 = ptr(at2);
   }
@@ -565,7 +615,7 @@ function gen3Badges(entry, read, T, state, party) {
   const ot = tid ? u32le(tid, 0).toString(16) : null;
   if (!ot || !party.some((m) => m.key?.split('-')[2] === ot)) return undefined;
   const flag = (f) => {
-    const b = read(sb1 + L.flags + (f >> 3), 1);
+    const b = read(sb1 + flagsAt + (f >> 3), 1);
     return b ? (b[0] >> (f & 7)) & 1 : null;
   };
   if (flag(badge + L.sys) !== 1) return undefined;
@@ -1013,6 +1063,28 @@ function battlerTypes3(T, state, x, own = false) {
   return state.types3Ok ? ks : null;
 }
 
+/**
+ * gEnemyParty wasn't where it was expected (an engine with another party array next to the player's – Modern Emerald's
+ * gPlayerPartyBackup – and no hint from the code): in a battle it is the array of valid structs one or two party sizes
+ * from the player's that holds none of the player's own Pokémon (a backup of the team holds the same PIDs). Kept in
+ * state.enemy3; at most once a second. → its mons (rawParty3) or [].
+ */
+function findEnemy3(read, T, state, mine) {
+  if (state.lastEnemyScan3 && Date.now() - state.lastEnemyScan3 < 1000) return [];
+  state.lastEnemyScan3 = Date.now();
+  const own = new Set(mine.map((x) => x.pid));
+  for (const d of [600, 1200, -600, -1200]) {
+    const at = state.party3 + d;
+    if (at < 0x02000000 || at + 600 > 0x02040000 || at === state.enemy3) continue;
+    const foes = rawParty3(read, at, 6, T);
+    if (foes.length && !foes.some((x) => own.has(x.pid))) {
+      state.enemy3 = at;
+      return foes;
+    }
+  }
+  return [];
+}
+
 /** Finds gBattleMons in EWRAM (see BMON3X) while a battle is on; at most once a second while it isn't found. */
 function findBattleMons3x(read, T, state, mine, foes) {
   if (state.bmons3) return state.bmons3;
@@ -1051,7 +1123,9 @@ function battleGen3(entry, read, T, state = {}) {
     if (!state.party3) return null;
     const count = party3Count(read, T, state) ?? 0;
     const mine = count >= 1 && count <= 6 ? rawParty3(read, state.party3, count, T) : [];
-    const foes = rawParty3(read, state.enemy3 || state.party3 + 600, 6, T);
+    let foes = rawParty3(read, state.enemy3 || state.party3 + 600, 6, T);
+    // (none there, or the player's own Pokémon – a backup of the team: gEnemyParty is elsewhere)
+    if (mine.length && (!foes.length || foes.some((x) => mine.some((y) => y.pid === x.pid)))) foes = findEnemy3(read, T, state, mine);
     if (!foes.length) return { kind: 'wild', enemy: null, active: null };
     const bm = mine.length ? findBattleMons3x(read, T, state, mine, foes) : null;
     const L = state.bmLayout3 || BMON3X;
