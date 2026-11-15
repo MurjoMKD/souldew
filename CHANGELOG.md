@@ -2,7 +2,7 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
-## Unreleased
+## 2.7.4
 
 - **“Playing now” on the souldew Discord.** The server now shows how many people are playing in souldew right now – as
   the locked channel “🎮 Playing now: N” and in the bot's status. It is counted anonymously: only while a game actually
