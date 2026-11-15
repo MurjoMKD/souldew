@@ -323,6 +323,13 @@ test('Sun/Moon: the 3DS player answers later – a Promise of the result', async
   const refused = { read: m.read, write: () => Promise.resolve(false) };
   assert.deepEqual(await addRareCandies(e, refused, {}), { error: 'write' });
   assert.deepEqual(await addRareCandies(e, { read: m.read, write: () => Promise.reject(new Error('gone')) }, {}), { error: 'write' });
+  // the host's reason comes along: the game changed the bag meanwhile – its own message; anything else stays a failed
+  // write, with the reason for the diagnostics
+  const why = (w) => ({ read: m.read, write: () => Promise.resolve({ ok: false, why: w }) });
+  assert.deepEqual(await addRareCandies(e, why('changed'), {}), { error: 'changed' });
+  assert.deepEqual(await addRareCandies(e, why('failed'), {}), { error: 'write', why: 'failed' });
+  assert.deepEqual(await addRareCandies(e, why('notFound'), {}), { error: 'write', why: 'notFound' });
+  assert.deepEqual(addRareCandies(e, { read: m.read, write: () => ({ ok: false, why: 'range' }) }, {}), { error: 'write', why: 'range' });
 });
 
 test('3DS: anything that is not the bag is never written', () => {

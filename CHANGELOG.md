@@ -2,6 +2,16 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **Rare Candies in the 3DS games on Windows** (thanks to an Omega Ruby player for the report). "Add 99 Rare Candies"
+  found the bag but said "The game's memory couldn't be changed." The 3DS player looked for the bag's place in the
+  emulator's memory by its content, and on Windows it only searched part of that memory – the part the bag isn't in.
+  souldew's build of the 3DS emulator now writes the bytes itself, at the address the game uses, on every system and
+  for every game (X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon, Ultra Sun/Ultra Moon) – still only into the game's heaps
+  and only after the same checks as before. The messages are clearer too: when a game's bag isn't where its version
+  keeps it, souldew says so, and "the game changed your bag just then" has its own message.
+
 ## 2.7.2
 
 - **Fast-forward steps one at a time in the 3DS player** (thanks to a player on Discord for the report). Plus went 2× →

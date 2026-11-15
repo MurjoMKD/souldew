@@ -12,7 +12,7 @@ import { romFeatures } from '../shared/live/features.mjs';
 
 const DATA = mkdtempSync(join(tmpdir(), 'sls-ctr3ds-'));
 process.env.SLS_DATA_DIR = DATA;
-const { splitMessages, command, checkCommands, ctrWriteOk, saveStamp, CMD, MSG } = await import('../server/lib/ctr.mjs');
+const { splitMessages, command, checkCommands, ctrWriteOk, saveStamp, CMD, MSG, CTR_WRITE_RANGES } = await import('../server/lib/ctr.mjs');
 const { ctrData, romDataFor } = await import('../server/lib/romloc.mjs');
 test.after(() => rmSync(DATA, { recursive: true, force: true }));
 
@@ -226,6 +226,23 @@ test('a cheat (WRITE): a few bytes inside one page of the game\'s heaps, the byt
   bad(write(0x330d6000, 257)); // too long
   bad(write(0x330d647c, 4, 1)); // the length doesn't match
   bad(Buffer.alloc(8));
+});
+
+test('a cheat is written by the core itself (souldew_write_memory), into the same heaps the server and the host allow', () => {
+  const host = readFileSync(new URL('../native/ctr-host/ctrhost.c', import.meta.url), 'utf8');
+  const patch = readFileSync(new URL('../native/azahar-patch/souldew-memory.patch', import.meta.url), 'utf8');
+  // the host's ranges are the server's
+  const table = host.match(/write_ranges\[\]\[2\] = \{([\s\S]*?)\};/)[1];
+  const ranges = [...table.matchAll(/\{(0x[0-9A-F]+), (0x[0-9A-F]+)\}/gi)].map((m) => [Number(m[1]), Number(m[2])]);
+  assert.deepEqual(ranges, CTR_WRITE_RANGES);
+  // the core exports the write (Windows: RETRO_API, macOS: the .def list) and keeps to Azahar's heap constants
+  assert.match(patch, /^\+RETRO_API bool souldew_write_memory\(uint32_t addr, const void\* data, uint32_t size\)/m);
+  assert.match(patch, /^\+_souldew_write_memory$/m);
+  for (const k of ['HEAP_VADDR', 'LINEAR_HEAP_VADDR', 'NEW_LINEAR_HEAP_VADDR']) assert.ok(patch.includes(`inside(Memory::${k}, Memory::${k}_END)`), k);
+  assert.match(patch, /memory\.WriteBlock\(\*process, addr, data, size\)/);
+  // the host takes it when the core has it – the page scan only for an older core
+  assert.match(host, /souldew_write_memory = dlsym\(lib, "souldew_write_memory"\)/);
+  assert.match(host, /if \(!souldew_write_memory\) return scan_write\(/);
 });
 
 test('the in-game save fingerprint: only the games\' save data on the SD card, changes when the game saves', () => {

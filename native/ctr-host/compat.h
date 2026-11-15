@@ -215,7 +215,19 @@ static inline int compat_rw_region(uintptr_t p, uintptr_t *start, uintptr_t *end
   MEMORY_BASIC_INFORMATION m;
   if (!VirtualQuery((const void *)p, &m, sizeof m) || m.State != MEM_COMMIT || (m.Protect & (PAGE_GUARD | PAGE_NOACCESS))) return 0;
   if (!(m.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) return 0;
-  *start = (uintptr_t)m.BaseAddress;
+  // VirtualQuery's region begins at p's own page, not where the pages with these attributes begin (as on macOS and
+  // Linux): that start is found by walking the allocation's regions from its base (2.7.2 searched only upwards here)
+  uintptr_t s = (uintptr_t)m.BaseAddress;
+  for (uintptr_t a = (uintptr_t)m.AllocationBase; a && a < s;) {
+    MEMORY_BASIC_INFORMATION r;
+    if (!VirtualQuery((const void *)a, &r, sizeof r) || !r.RegionSize) break;
+    if (a + r.RegionSize > s) { // the region that holds p's page – it begins here
+      s = a;
+      break;
+    }
+    a += r.RegionSize;
+  }
+  *start = s;
   *end = (uintptr_t)m.BaseAddress + m.RegionSize;
   return 1;
 }
