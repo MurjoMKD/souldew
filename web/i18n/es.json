@@ -2525,6 +2525,7 @@
   "rnd.totemPokemonMod.help": "Los jefes al final de las pruebas de las islas.",
   "rnd.typesFollowMegaEvolutions": "Las megaevoluciones conservan los tipos",
   "new.progFinish": "Terminando el nuevo archivo de juego para {name} …",
+  "rnd.shopItemsMod.help": "Solo cambian las tiendas especiales: las plantas de los centros comerciales, los vendedores de hierbas y vitaminas y el segundo mostrador de una Tienda Pokémon. Los artículos habituales se quedan – en Rojo Fuego/Verde Hoja solo cambian las plantas 4 y 5 del Centro Comercial de Ciudad Azulona. En Gen 1/2 no hay tiendas.",
   "set.gpuSafeNote": "souldew funciona en modo gráfico seguro (renderizado por software, más lento). Si la ventana se queda en blanco al iniciar normalmente, elige aquí otra interfaz gráfica – Vulkan u OpenGL suelen ayudar – y luego reinicia normalmente.",
   "set.gpuSafeRestart": "Reiniciar normalmente",
   "set.gpuSafeTitle": "Modo gráfico seguro",

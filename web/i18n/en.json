@@ -1909,6 +1909,7 @@
   "rnd.shopItemsMod.RANDOM": "Random",
   "rnd.shopItemsMod.SHUFFLE": "Shuffle",
   "rnd.shopItemsMod.UNCHANGED": "Unchanged",
+  "rnd.shopItemsMod.help": "Only the special shops change: department store floors, herb and vitamin sellers and the second counter of a Poké Mart. The regular Poké Mart items stay – in FireRed/LeafGreen just Celadon Department Store 4F and 5F change. No shops in Gen 1/2.",
   "rnd.standardizeEXPCurves": "Standardize EXP curves",
   "rnd.startWithGuaranteedMoves": "Start with guaranteed moves",
   "rnd.startersMod": "Starters",

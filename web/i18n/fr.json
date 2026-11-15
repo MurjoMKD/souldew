@@ -2525,6 +2525,7 @@
   "rnd.totemPokemonMod.help": "Les boss à la fin des épreuves des îles.",
   "rnd.typesFollowMegaEvolutions": "Les Méga-Évolutions gardent les types",
   "new.progFinish": "Finalisation du nouveau fichier de jeu pour {name} …",
+  "rnd.shopItemsMod.help": "Seules les boutiques spéciales changent : les étages des centres commerciaux, les vendeurs de plantes et de vitamines et le second comptoir d’une Boutique Pokémon. Les articles habituels restent – dans Rouge Feu/Vert Feuille, seuls les 4e et 5e étages du Centre Commercial de Céladopole changent. Aucune boutique en Gen 1/2.",
   "set.gpuSafeNote": "souldew tourne en mode graphique sans échec (rendu logiciel, plus lent). Si la fenêtre reste vide lors d’un démarrage normal, choisis ici une autre interface graphique – Vulkan ou OpenGL aident souvent – puis redémarre normalement.",
   "set.gpuSafeRestart": "Redémarrer normalement",
   "set.gpuSafeTitle": "Mode graphique sans échec",

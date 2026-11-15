@@ -2525,6 +2525,7 @@
   "rnd.totemPokemonMod.help": "Die Bosse am Ende der Inselprüfungen.",
   "rnd.typesFollowMegaEvolutions": "Mega-Entwicklungen behalten die Typen",
   "new.progFinish": "Stelle die neue Spieldatei für {name} fertig …",
+  "rnd.shopItemsMod.help": "Es ändern sich nur die besonderen Läden: Kaufhaus-Etagen, Kräuter- und Vitaminhändler und der zweite Schalter eines Pokémon-Markts. Das normale Sortiment bleibt – in Feuerrot/Blattgrün ändern sich nur der 4. und 5. Stock des Kaufhauses in Prismania City. In Gen 1/2 keine Läden.",
   "set.gpuSafeNote": "souldew läuft im sicheren Grafikmodus (Software-Darstellung, langsamer). Bleibt das Fenster bei einem normalen Start leer, wähl hier eine andere Grafik-Schnittstelle – oft helfen Vulkan oder OpenGL – und starte dann normal neu.",
   "set.gpuSafeRestart": "Normal neu starten",
   "set.gpuSafeTitle": "Sicherer Grafikmodus",

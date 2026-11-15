@@ -2525,6 +2525,7 @@
   "rnd.totemPokemonMod.help": "I boss alla fine delle prove delle isole.",
   "rnd.typesFollowMegaEvolutions": "Le megaevoluzioni mantengono i tipi",
   "new.progFinish": "Completamento del nuovo file di gioco per {name} …",
+  "rnd.shopItemsMod.help": "Cambiano solo i negozi speciali: i piani dei centri commerciali, i venditori di erbe e vitamine e il secondo bancone di un Pokémon Market. Gli articoli normali restano – in Rosso Fuoco/Verde Foglia cambiano solo il 4° e il 5° piano del Centro Commerciale di Azzurropoli. Nessun negozio nella Gen 1/2.",
   "set.gpuSafeNote": "souldew è in modalità grafica sicura (rendering software, più lento). Se con un avvio normale la finestra resta vuota, scegli qui un’altra API grafica – spesso aiutano Vulkan o OpenGL – poi riavvia normalmente.",
   "set.gpuSafeRestart": "Riavvia normalmente",
   "set.gpuSafeTitle": "Modalità grafica sicura",
