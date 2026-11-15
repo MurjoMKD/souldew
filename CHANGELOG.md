@@ -12,6 +12,12 @@
   its own ID, so a look-alike opponent never stands in for it, and a level-up mid-battle keeps its live HP. On top of
   that, in every game a Pokémon has to read 0 HP twice in a row before souldew files a death – a real knock-out still
   shows a moment later, in the battle.
+- **Hall of Fame** (idea from the community). Won a run? The run-won notice and the board now offer “Post to the Hall
+  of Fame”: your final team – in a SoulLink as its linked pairs or groups, each player's Pokémon in their colour – with
+  the game, the rules, the deaths, the play time and the players goes up as its own post in the new #hall-of-fame forum
+  on the souldew Discord, where everyone can react and congratulate. A preview shows the card first, and nothing is
+  posted until you press the button. It needs Live runs (Settings › Discord); without it the notice says how to connect
+  with `/live connect`. Partners of the same run share one post. Won runs now go there instead of #live-runs.
 
 ## 2.7.2
 

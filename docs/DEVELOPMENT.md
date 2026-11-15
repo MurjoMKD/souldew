@@ -141,7 +141,10 @@ are built by CI only (see above). Research notes: [research/azahar.md](../resear
 ## Live runs ("Share to Discord")
 
 A player links souldew to their Discord account once (Settings › Discord › "Live runs", with the code from `/live connect`)
-and can then post a card of a death, a wipe or a won run to `#live-runs` on the souldew Discord. The bot is a separate
+and can then post a card of a death or a wipe to `#live-runs` on the souldew Discord – a won run becomes its own post in
+the public `#hall-of-fame` forum ("Post to the Hall of Fame" in the run-won notice and the board; the bot picks the
+channel by `kind: 'victory'`, titles the post from the meta and tags it from `mode` and the optional `gen`, `hack`,
+`randomized`). The bot is a separate
 Cloudflare Worker; its contract (v1) is: `POST /live/link` (code → token), `GET /live/me`, `DELETE /live/link` and
 `POST /live/post` (multipart: `meta` JSON + `image` 1200×675 PNG ≤ 1.5 MB).
 
@@ -151,7 +154,7 @@ Cloudflare Worker; its contract (v1) is: `POST /live/link` (code → token), `GE
 | `server/lib/liveruns.mjs` | The only code that talks to the bot and the only code that sees the token. `/api/liveruns` (state), `/api/liveruns/link` (POST link, DELETE unlink), `/api/liveruns/post` |
 | `web/lib/liveshare.mjs` | The card model from the run doc (headline, the killer from `pair.killer`, the place sign stored with the death as `pair.place`, every player's live team), the post's text, the share |
 | `web/lib/livecard.mjs` | Paints the card on a canvas: the app's fonts, colours, app mark and sprites |
-| `web/views/liveshare.mjs` | The "Share to Discord" button (death notice, graveyard, run-over notice) and the Settings block |
+| `web/views/liveshare.mjs` | The "Share to Discord" button (death notice, graveyard, a wipe's notice), "Post to the Hall of Fame" with the card's preview (run-won notice, board banner) and the Settings block |
 
 **No secrets in the app.** souldew is open source: it ships no key, token, password or signing secret – only the bot's
 public address (`LIVE_RUNS_URL`, `https://api.souldew.app`; when that gives no answer at all – some DNS filters don't
