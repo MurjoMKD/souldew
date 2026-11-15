@@ -1063,16 +1063,20 @@ static const uint8_t *mem_at(uint32_t addr, uint32_t len) {
 }
 
 // ---- memory writes (cheats) ----------------------------------------------------------------------------------------
-// The core has no write call. But the game's memory is one block inside the core: Azahar keeps all of FCRAM (256 MB)
-// in a single allocation, and every heap page of the game process is a page of it – the stack page in the core's
-// memory map (set at load) points into it. A write (souldew's WRITE command, a few bytes inside one page):
+// souldew's WRITE command: a few bytes inside one page of the game's heaps (the bag). Every write
 //   1. only into the game's heaps (application heap, linear heaps) – nothing else is ever touched
-//   2. the bytes there must still be what souldew expects (`old`) – read through the core, so the game hasn't changed
-//      them since souldew looked
-//   3. the page is looked for in the block (its bounds come from the OS: the read-write memory around that stack page)
-//      by its content: every page with the same 4 KB is tried – the new bytes go in, and only the page whose change
-//      shows at the game's address keeps them (read back through the core); every other one is put back at once
-// Between two frames on the core's thread, like the reads. The scan reads the block once at most (a few ms).
+//   2. only while the bytes there are still what souldew expects (`old`) – read through the core, so the game hasn't
+//      changed them since souldew looked
+//   3. through souldew_write_memory (native/azahar-patch): the core's own memory system writes at the game's virtual
+//      address – the process's page table, so the application heap (X/Y, Omega Ruby / Alpha Sapphire) and the linear
+//      heaps (Sun / Moon …) alike, on every OS – and the change is read back through the core
+// Between two frames on the core's thread, like the reads.
+//
+// An older core (souldew 2.7.2 and before) has no write call: then the page is looked for in the core's FCRAM block
+// (one allocation of 256 MB – every heap page of the game is a page of it, and the stack page in the memory map points
+// into it) by its content. Every page with the same 4 KB is tried – the new bytes go in, and only the page whose change
+// shows at the game's address keeps them; every other one is put back at once. The block's bounds come from the OS
+// (the read-write memory around that stack page). The scan reads the block once at most (a few ms).
 #define MAX_WRITE 256
 #define MAX_TRIES 64
 static const uint32_t write_ranges[][2] = {
@@ -1080,6 +1084,7 @@ static const uint32_t write_ranges[][2] = {
   {0x14000000, 0x1C000000}, // linear heap
   {0x30000000, 0x40000000}, // linear heap, newer kernels (Sun / Moon, Ultra Sun / Ultra Moon)
 };
+static bool (*souldew_write_memory)(uint32_t addr, const void *data, uint32_t size);
 
 /** Is [addr, addr+len) inside one page of the game's heaps? */
 static bool write_allowed(uint32_t addr, uint32_t len) {
@@ -1120,29 +1125,43 @@ static int rw_range(uintptr_t p, uintptr_t span, uintptr_t *lo, uintptr_t *hi) {
   return 1;
 }
 
-/** One write: "ok", or why not ("range", "unsupported", "changed", "notFound"). */
-static const char *mem_write(uint32_t addr, const uint8_t *old, const uint8_t *val, uint32_t len) {
-  if (!write_allowed(addr, len)) return "range";
+/** The fallback for a core without souldew_write_memory: the page found by its content (see above). */
+static const char *scan_write(uint32_t addr, const uint8_t *page, const uint8_t *old, const uint8_t *val, uint32_t len) {
   const uintptr_t anchor = fcram_anchor();
-  if (!souldew_read_memory || !anchor) return "unsupported";
-  uint8_t page[0x1000], now[MAX_WRITE];
-  const uint32_t vpage = addr & ~0xFFFu, off = addr & 0xFFF;
-  if (!souldew_read_memory(vpage, page, sizeof page)) return "range"; // (not mapped)
-  if (memcmp(page + off, old, len)) return "changed";
+  uint8_t now[MAX_WRITE];
+  const uint32_t off = addr & 0xFFF;
   uintptr_t lo, hi;
-  if (!rw_range(anchor, 0x10000000, &lo, &hi)) return "unsupported";
+  if (!anchor || !rw_range(anchor, 0x10000000, &lo, &hi)) return "unsupported";
   // pages of the block lie a multiple of 4 KB from the anchor
   uintptr_t first = anchor - ((anchor - lo) / 0x1000) * 0x1000;
   int tries = 0;
   for (uintptr_t c = first; c + 0x1000 <= hi && tries < MAX_TRIES; c += 0x1000) {
     uint8_t *h = (uint8_t *)c;
-    if (h[off] != page[off] || memcmp(h, page, sizeof page)) continue;
+    if (h[off] != page[off] || memcmp(h, page, 0x1000)) continue;
     tries++;
     memcpy(h + off, val, len);
     if (souldew_read_memory(addr, now, len) && !memcmp(now, val, len)) return "ok";
     memcpy(h + off, old, len); // a copy of the page somewhere else – put back
   }
   return "notFound";
+}
+
+/**
+ * One write: "ok", or why not – "range" (outside the game's heaps, or not mapped), "changed" (the game holds other
+ * bytes there now), "unsupported" (a core without souldew's memory calls), "failed" (the core refused the write or it
+ * didn't read back), "notFound" (the fallback scan didn't find the page).
+ */
+static const char *mem_write(uint32_t addr, const uint8_t *old, const uint8_t *val, uint32_t len) {
+  if (!write_allowed(addr, len)) return "range";
+  if (!souldew_read_memory) return "unsupported";
+  uint8_t page[0x1000], now[MAX_WRITE];
+  const uint32_t vpage = addr & ~0xFFFu, off = addr & 0xFFF;
+  if (!souldew_read_memory(vpage, page, sizeof page)) return "range"; // (not mapped)
+  if (memcmp(page + off, old, len)) return "changed";
+  if (!souldew_write_memory) return scan_write(addr, page, old, val, len);
+  if (!souldew_write_memory(addr, val, len)) return "failed";
+  if (!souldew_read_memory(addr, now, len) || memcmp(now, val, len)) return "failed";
+  return "ok";
 }
 
 #define MAX_WRITES 16
@@ -1348,6 +1367,9 @@ int main(int argc, char **argv) {
   SYM(unserialize, "retro_unserialize");
   souldew_read_memory = dlsym(lib, "souldew_read_memory");
   souldew_title_id = dlsym(lib, "souldew_title_id");
+  souldew_write_memory = dlsym(lib, "souldew_write_memory");
+  logf_("memory writes (cheats): %s", souldew_write_memory ? "through the core (souldew_write_memory)"
+                                      : souldew_read_memory ? "page scan (a core without souldew_write_memory)" : "none (Azahar's own core)");
 
   core.set_environment(environment);
   core.set_video_refresh(video_refresh);

@@ -101,9 +101,11 @@ node scripts/build-ctr.mjs --src ../azahar            # reuse an Azahar checkout
 ```
 
 The core build takes a while (Azahar from source, `--target citra_libretro`). `native/azahar-patch/souldew-memory.patch`
-adds `souldew_read_memory` and `souldew_title_id` to the core: the libretro memory map only has what exists when the
-game loads, not the heaps where the Pokémon games keep their party, so without the patch the game runs but has no
-live data (the status says `liveMemory: false`). MoltenVK comes from Azahar's macOS release. `npm run dist` checks the
+adds `souldew_read_memory`, `souldew_write_memory` and `souldew_title_id` to the core: the libretro memory map only has
+what exists when the game loads, not the heaps where the Pokémon games keep their party, so without the patch the game
+runs but has no live data (the status says `liveMemory: false`). `souldew_write_memory` is the Rare Candy cheat's
+write – through the core's own page table, only into the game's heaps (a core without it falls back to ctrhost's page
+scan). MoltenVK comes from Azahar's macOS release. `npm run dist` checks the
 folder (`build-ctr.mjs --check`) and stops when it's incomplete; `SLS_NO_3DS=1 npm run dist` builds without it – 3DS
 games then open in the Azahar app.
 

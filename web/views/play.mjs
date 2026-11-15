@@ -1245,7 +1245,10 @@ export function GameSession({ session, mode }) {
       flash(t('cheat.done', '+{n} Rare Candy in your bag|+{n} Rare Candies in your bag', { n: res.added, count: res.added }), 2500);
     } else {
       toast({ kind: 'death', title: t('cheat.failed', 'No Rare Candies added'), text: {
-        notFound: t('cheat.notFound', 'Your bag wasn’t found in the game’s memory just now. Try again outside of menus and battles.'),
+        // (a 3DS game keeps its bag at one address per update: not there means an update souldew doesn't know)
+        notFound: entry.gen >= 6 ? t('cheat.notFoundVersion', 'Your bag wasn’t found where this version of the game keeps it – souldew may not know this game update yet.')
+          : t('cheat.notFound', 'Your bag wasn’t found in the game’s memory just now. Try again outside of menus and battles.'),
+        changed: t('cheat.changed', 'The game changed your bag just then – try again.'),
         full: t('cheat.full', 'The bag pocket is full – make room and try again.'),
         max: t('cheat.max', 'You already carry as many Rare Candies as the game allows.'),
       }[res.error] || t('cheat.writeFailed', 'The game’s memory couldn’t be changed.') });

@@ -309,9 +309,15 @@ function ctrAdd(L, entry, mem, state, item, count) {
 
 // ---------------------------------------------------------------------------
 
+// A write's answer: true, or a refusal – false, or (the 3DS player) { ok: false, why } with its host's reason
+// (native/ctr-host/ctrhost.c mem_write: 'changed' – the game holds other bytes there now –, 'range', 'failed' …)
+const refusal = (r) => (r === false ? {} : r && typeof r === 'object' && r.ok === false ? r : null);
+const refused = ({ why }) => (why === 'changed' ? { error: 'changed' } : { error: 'write', ...(why ? { why: String(why) } : {}) });
+
 function commit(mem, writes, before, after) {
   const check = (results) => {
-    if (results.some((r) => r === false)) return { error: 'write' };
+    const no = results.map(refusal).find(Boolean);
+    if (no) return refused(no);
     // read back: the emulator really holds it now
     for (const [addr, bytes] of writes) {
       const got = mem.read(addr, bytes.length);
@@ -322,7 +328,7 @@ function commit(mem, writes, before, after) {
   const results = [];
   for (const [addr, bytes] of writes) {
     const r = mem.write(addr, Uint8Array.from(bytes));
-    if (r === false) return { error: 'write' };
+    if (refusal(r)) return refused(refusal(r));
     results.push(r);
   }
   // the 3DS player answers once its host has written (between two frames)
@@ -333,11 +339,12 @@ function commit(mem, writes, before, after) {
  * Put `count` Rare Candies into the player's bag (onto the stack they have, else into a free slot; capped at the
  * game's stack size: 99, Gen 4–7 999).
  * @param {object} entry   addresses.json entry (findEntry)
- * @param {{read:(addr:number,len:number)=>Uint8Array|null, write:(addr:number,bytes:Uint8Array)=>boolean|Promise<boolean>}} mem
+ * @param {{read:(addr:number,len:number)=>Uint8Array|null, write:(addr:number,bytes:Uint8Array)=>boolean|Promise<boolean|{ok:false,why:string}>}} mem
  * @param {object} state   the live reader's state (readLiveParty) – DS games find the bag through the party, 3DS games
  *                         try the update the party was found at first
  * @returns the result – a Promise of it when `mem.write` answers later (the 3DS player):
- *          {ok:true, before:number, after:number, added:number} | {error:'unsupported'|'notFound'|'full'|'max'|'write'}
+ *          {ok:true, before:number, after:number, added:number} | {error:'unsupported'|'notFound'|'full'|'max'|'changed'}
+ *          | {error:'write', why?:string} ('changed': the game changed those bytes just then; `why`: the 3DS host's reason)
  */
 export function addRareCandies(entry, mem, state, count = 99) {
   return addItem(entry, mem, state, RARE_CANDY[entry?.gen], count);

@@ -304,7 +304,8 @@ function read(addr, len) {
 
 // A cheat: a few bytes inside the memory souldew watches (never anywhere else), written by the host between two frames
 // – and only while the game still holds what souldew read there (the host compares). Resolves true once written (the
-// copy here has it too), false when refused, never reached the host, or no answer came.
+// copy here has it too); { ok: false, why } when the host refused (its reason: ctrhost.c mem_write); false when it
+// never reached the host or no answer came.
 let writeId = 0;
 function write(addr, bytes) {
   const len = bytes?.length || 0;
@@ -321,11 +322,11 @@ function write(addr, bytes) {
   p.set(bytes, 12 + len);
   const val = Uint8Array.from(bytes);
   return new Promise((res) => {
-    const done = (ok) => {
+    const done = (ok, why) => {
       if (!waiters.written.delete(id)) return;
       clearTimeout(timer);
       if (ok) read(addr, len)?.set(val); // (the next memory message brings the same)
-      res(!!ok);
+      res(ok ? true : why ? { ok: false, why: String(why) } : false);
     };
     const timer = setTimeout(() => done(false), 5000);
     waiters.written.set(id, done);
@@ -364,7 +365,7 @@ function onEvent(p) {
   else if (e.event === 'stateLoaded') waiters.loaded.splice(0).forEach((f) => f(!!e.ok));
   else if (e.event === 'written') {
     if (!e.ok) st.log.push(`write ${Number(e.addr || 0).toString(16)}: ${e.why}`);
-    waiters.written.get(e.id)?.(!!e.ok);
+    waiters.written.get(e.id)?.(!!e.ok, e.why);
   }
   else if (e.event === 'error') {
     st.error = e.message;
