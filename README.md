@@ -151,7 +151,7 @@ English and German versions are supported for the team. “You are here” reads
 <table>
 <tr><td><img src="docs/media/icons/save.svg" width="40" height="40" alt=""></td><td><b>No ROMs, no saves.</b> Only tracker data travels between players – never games or save files. souldew includes and downloads no games.</td></tr>
 <tr><td><img src="docs/media/icons/lock.svg" width="40" height="40" alt=""></td><td><b>Encrypted by the invite.</b> Everything is encrypted with the key from your invite; a code alone never reveals your run.</td></tr>
-<tr><td><img src="docs/media/icons/eye.svg" width="40" height="40" alt=""></td><td><b>No account, no telemetry.</b> No sign-up, no analytics. A diagnostics file is only written when you ask for one.</td></tr>
+<tr><td><img src="docs/media/icons/eye.svg" width="40" height="40" alt=""></td><td><b>No account, no tracking.</b> No sign-up, no analytics, no profiles. A diagnostics file is only written when you ask for one. The one thing souldew reports by itself is an anonymous “playing now” count for the souldew Discord while a game runs – system, mode, app version and a random id per game; switch it off in Settings › General. Exactly what is sent: <a href="docs/PRIVACY.md">docs/PRIVACY.md</a>.</td></tr>
 </table>
 
 ## Install

@@ -2,6 +2,17 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **“Playing now” on the souldew Discord.** The server now shows how many people are playing in souldew right now – as
+  the locked channel “🎮 Playing now: N” and in the bot's status. It is counted anonymously: only while a game actually
+  runs (fast player, 3DS player or browser player), the app sends one small message a minute with the system (GB, GBA,
+  DS, 3DS), solo / Nuzlocke / SoulLink, the app version and a random id that is new for every game – no name, no
+  account, no game title, no run data, and the bot doesn't store the IP address. Closing the game or the app ends it;
+  offline nothing happens. Don't want to be counted? Settings › General › “Count me in ‘playing now’ (anonymous)”
+  switches it off at once. Exactly what is sent and kept: [docs/PRIVACY.md](docs/PRIVACY.md); Help › Questions explains
+  it too.
+
 ## 2.7.3
 
 - **No more false deaths in Black/White and Black 2/White 2 battles** (thanks to a player on Discord for the report). A

@@ -38,6 +38,7 @@ import { LINKS } from '../shared/links.mjs';
 import { randomBytes } from 'node:crypto';
 import { syncTrophies } from './lib/trophies.mjs';
 import * as liveRuns from './lib/liveruns.mjs';
+import { presence as presenceCounter } from './lib/presence.mjs';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -474,6 +475,8 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     for (const res of sseClients) res.write(msg);
   };
   const watcher = new SaveWatcher(GEN4, emit);
+  // the anonymous "playing now" heartbeat – it reads the setting on every call, so "off" applies at once
+  const playingNow = presenceCounter({ enabled: () => loadConfig().presence !== false });
   const live = new LiveBridge(emit);
   // 3DS in souldew's own player (server/lib/ctr.mjs): one game at a time
   const ctr = new CtrSessions();
@@ -868,6 +871,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
         padNav: config.padNav !== false,
         ctrRenderer: validRenderer(config.ctrRenderer),
         ctrScale: validScale(config.ctrScale),
+        presence: config.presence !== false,
       },
     };
   });
@@ -877,7 +881,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const allowed = {};
     // No path-like keys here: emulatorPaths decides which program /launch runs, libraryFolders which folders are
     // scanned (set via /api/library/folders). Neither may be writable by a plain config POST.
-    for (const k of ['lang', 'onboarded', 'playerName', 'emulatorFor', 'lastRun', 'bootAnimation', 'sounds', 'shareScreen', 'shortcuts', 'controls', 'theme', 'pads', 'speedGuard', 'turboMax', 'fullTurbo', 'nativeCore', 'gpuBackend', 'gpuFallback', 'nag', 'nagOff', 'padNav', 'ctrRenderer', 'ctrScale']) {
+    for (const k of ['lang', 'onboarded', 'playerName', 'emulatorFor', 'lastRun', 'bootAnimation', 'sounds', 'shareScreen', 'shortcuts', 'controls', 'theme', 'pads', 'speedGuard', 'turboMax', 'fullTurbo', 'nativeCore', 'gpuBackend', 'gpuFallback', 'nag', 'nagOff', 'padNav', 'ctrRenderer', 'ctrScale', 'presence']) {
       if (k in body) allowed[k] = body[k];
     }
     // the 3DS renderer (server/lib/ctrrenderer.mjs): a new choice forgets what "auto" learned – it starts afresh
@@ -906,6 +910,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     if ('fullTurbo' in allowed) allowed.fullTurbo = allowed.fullTurbo !== false; // on unless switched off
     if ('nativeCore' in allowed) allowed.nativeCore = allowed.nativeCore !== false; // the fast player: on unless switched off
     if ('padNav' in allowed) allowed.padNav = allowed.padNav !== false; // controller navigation (web/lib/padnav.mjs): on unless switched off
+    if ('presence' in allowed) allowed.presence = allowed.presence !== false; // the anonymous "playing now" count: on unless switched off
     // the graphics backend electron/main.mjs applies at the next start; the fallback notice can only be dismissed
     if ('gpuBackend' in allowed) {
       if (gpuBackends(process.platform).includes(allowed.gpuBackend)) allowed.gpuStart = null; // a new choice starts counting afresh
@@ -925,6 +930,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       }
     }
     const saved = saveConfig(allowed);
+    if (allowed.presence === false) playingNow.stop().catch(() => {}); // switched off: the bot forgets this game right away
     if ('lastRun' in allowed) followCheck(); // another run opened in the app: the overlays that follow it switch
     return saved;
   });
@@ -1495,6 +1501,13 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     });
     if (!r.ok) throw new Error(`Discord antwortete ${r.status}`);
     return { ok: true };
+  });
+
+  // ---- "Playing now" (server/lib/presence.mjs): the page reports a running game every minute, the server sends the
+  // anonymous heartbeat (only with the setting on) – { system, mode } while playing, { playing: false } when it closed
+  route('POST', /^\/api\/presence$/, async (req) => {
+    const body = await readBody(req);
+    return body?.playing === false ? { sent: await playingNow.stop() } : playingNow.beat(body);
   });
 
   // ---- "Share to Discord" (Live runs, server/lib/liveruns.mjs): the token stays here, the page gets the outcome ----
