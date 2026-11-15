@@ -2,6 +2,17 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **No more false deaths in Black/White and Black 2/White 2 battles** (thanks to a player on Discord for the report). A
+  Pokémon that was switched out and grew a level from the shared EXP could be reported as dead – the SoulLink popup came
+  up, yet in the game it was fine. souldew reads the live HP from the battle's own data and found each Pokémon there by
+  species, level and max HP; once the level-up changed those, it took the wild Pokémon of the same kind instead, which
+  had just been knocked out (reproduced in Black 2 in the fast player). It now recognizes every Pokémon in the battle by
+  its own ID, so a look-alike opponent never stands in for it, and a level-up mid-battle keeps its live HP. On top of
+  that, in every game a Pokémon has to read 0 HP twice in a row before souldew files a death – a real knock-out still
+  shows a moment later, in the battle.
+
 ## 2.7.2
 
 - **Fast-forward steps one at a time in the 3DS player** (thanks to a player on Discord for the report). Plus went 2× →
