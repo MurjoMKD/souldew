@@ -21,6 +21,15 @@
   the graphics card – slower, but the window shows. Settings › General says so and lets you pick another graphics
   backend, then "Restart normally".
 - The library no longer says Black/White read the PC boxes live – they read the team (with the catch location).
+- **The built-in 3DS player runs on AMD Radeon cards that crashed it** (RX 9070 XT with the 26.x driver: "3DS game has
+  stopped" in the first second). The crash is in AMD's Vulkan driver with Azahar's libretro core since 2126.1 – the
+  standalone Azahar is fine (azahar-emu/azahar#2742). The player now creates the graphics device the way standalone
+  Azahar does and passes every image the core creates through the workaround found there; and should a graphics
+  driver still stop the game in its first seconds, souldew starts it again right away in a more compatible Vulkan mode,
+  then with Azahar's software renderer (slower, but no graphics card needed) – remembered for that graphics card and
+  driver. New setting Settings › Emulators › "3DS renderer": Automatic (the default), Vulkan, Vulkan (compatibility)
+  or Software. "Play 3DS games in Azahar" stays on the message when nothing helps. Crash reports from Windows now name
+  the functions that led to the crash, for the next driver that misbehaves.
 
 ## 2.7.0
 

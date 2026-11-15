@@ -110,17 +110,57 @@ static const char *compat_exception_name(DWORD code) {
   default: return "exception";
   }
 }
-static LONG WINAPI compat_seh(EXCEPTION_POINTERS *e) {
-  char what[512], path[MAX_PATH] = "?";
-  void *addr = e->ExceptionRecord->ExceptionAddress;
-  DWORD code = e->ExceptionRecord->ExceptionCode;
+/** "module+0xoffset" for a code address (the DLL's file name only). */
+static void compat_where(const void *addr, char *out, size_t cap) {
+  char path[MAX_PATH] = "?";
   HMODULE mod = NULL;
   if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)addr, &mod) && mod)
     GetModuleFileNameA(mod, path, sizeof path);
   const char *base = strrchr(path, '\\');
   base = base ? base + 1 : path;
-  snprintf(what, sizeof what, "%s 0x%08lX in %s+0x%llx", compat_exception_name(code), (unsigned long)code, base,
-           (unsigned long long)((uintptr_t)addr - (uintptr_t)mod));
+  snprintf(out, cap, "%s+0x%llx", base, (unsigned long long)((uintptr_t)addr - (uintptr_t)mod));
+}
+#if defined(__x86_64__) || defined(_M_X64)
+/**
+ * The crashing thread's callers (x64 unwind data – every DLL has it, no symbols needed): which function of the core
+ * called into the driver. A few frames, "a < b < c", innermost first.
+ */
+static void compat_stack(const CONTEXT *start, char *out, size_t cap) {
+  CONTEXT ctx = *start;
+  size_t o = 0;
+  out[0] = 0;
+  for (int i = 0; i < 8 && ctx.Rip && o + 80 < cap; i++) {
+    char w[MAX_PATH + 24];
+    compat_where((const void *)(uintptr_t)ctx.Rip, w, sizeof w);
+    o += (size_t)snprintf(out + o, cap - o, "%s%s", i ? " < " : "", w);
+    DWORD64 image = 0;
+    PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &image, NULL);
+    if (fn) {
+      PVOID handler_data = NULL;
+      DWORD64 frame = 0;
+      RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, fn, &ctx, &handler_data, &frame, NULL);
+    } else { // a leaf function: the return address is on top of the stack
+      if (!ctx.Rsp || IsBadReadPtr((const void *)(uintptr_t)ctx.Rsp, 8)) break;
+      ctx.Rip = *(const DWORD64 *)(uintptr_t)ctx.Rsp;
+      ctx.Rsp += 8;
+    }
+  }
+}
+#endif
+static LONG WINAPI compat_seh(EXCEPTION_POINTERS *e) {
+  char what[900], where[MAX_PATH + 24], stack[600] = "";
+  void *addr = e->ExceptionRecord->ExceptionAddress;
+  DWORD code = e->ExceptionRecord->ExceptionCode;
+  compat_where(addr, where, sizeof where);
+#if defined(__x86_64__) || defined(_M_X64)
+  if (e->ContextRecord) compat_stack(e->ContextRecord, stack, sizeof stack);
+#endif
+  if (code == EXCEPTION_ACCESS_VIOLATION && e->ExceptionRecord->NumberParameters >= 2)
+    snprintf(what, sizeof what, "%s 0x%08lX in %s (%s address 0x%llx)%s%s", compat_exception_name(code), (unsigned long)code, where,
+             e->ExceptionRecord->ExceptionInformation[0] == 1 ? "writing" : e->ExceptionRecord->ExceptionInformation[0] == 8 ? "executing" : "reading",
+             (unsigned long long)e->ExceptionRecord->ExceptionInformation[1], *stack ? ", stack " : "", stack);
+  else
+    snprintf(what, sizeof what, "%s 0x%08lX in %s%s%s", compat_exception_name(code), (unsigned long)code, where, *stack ? ", stack " : "", stack);
   if (compat_crash_cb) compat_crash_cb(what);
   return EXCEPTION_CONTINUE_SEARCH;
 }

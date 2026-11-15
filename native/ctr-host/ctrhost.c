@@ -2,7 +2,7 @@
 // talks to souldew over stdin/stdout – the 3DS game then plays inside souldew's own player like every other system.
 //
 //   ctrhost --core <azahar_libretro> --vulkan <libMoltenVK / vulkan loader> --rom <game> --system <dir> --save <dir>
-//           [--scale N] [--bench FRAMES --dump out.ppm]
+//           [--scale N] [--renderer vulkan|compat|software] [--bench FRAMES --dump out.ppm]
 //
 // Messages are { u32 type, u32 length, payload } (little-endian), both ways.
 //   host → souldew   1 HELLO  json { width, height, fps, sampleRate }      sent once the game runs
@@ -23,9 +23,18 @@
 // between two frames – never torn. Azahar's own core (no patch) runs the game without live data.
 // Builds on macOS, Linux and Windows (compat.h); scripts/build-ctr.mjs builds it.
 //
+// --renderer picks how the core draws (souldew's setting "3DS renderer", server/lib/ctrrenderer.mjs):
+//   vulkan    (default) Vulkan with the device the standalone Azahar creates: the optional extensions the renderer
+//             uses are enabled together with their features (plan_device), robustBufferAccess too
+//   compat    Vulkan with only what the core's own libretro device enables – the optional extensions are hidden from
+//             it, so the renderer takes its plain fallbacks (2.7.0's behaviour)
+//   software  Azahar's software renderer: no GPU at all (slow, but runs on any graphics driver)
+// Both Vulkan modes pass the core's vkCreateImage through wrap_create_image (see there – AMD's driver).
+//
 // Environment (diagnostics): CTRHOST_GPU=<n> uses the n-th Vulkan device (default: the best one – a discrete card
 // before an integrated one, never a CPU renderer); CTRHOST_ALL_EXTENSIONS=1 offers the core every device extension
-// (see core_gipa); CTRHOST_OLD3DS=1 runs the game in Old 3DS mode; CTRHOST_DEBUG=1 logs input queries.
+// (see core_gipa); CTRHOST_RENDERER=<mode> as --renderer; CTRHOST_OLD3DS=1 runs the game in Old 3DS mode;
+// CTRHOST_DEBUG=1 logs input queries.
 #if !defined(_WIN32) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE // dladdr / Dl_info (glibc) – before any system header
 #endif
@@ -54,15 +63,20 @@ static void logf_(const char *fmt, ...);
 // driver or the core otherwise only shows as an exit code).
 static const char *volatile stage = "starting";
 static char gpu_desc[400] = "not chosen yet";
+static volatile int images_in_flight; // the core is inside vkCreateImage (wrap_create_image) – and which image
+static char image_note[200];
 
 // ---- options ---------------------------------------------------------------------------------------------------
-static const char *opt_core, *opt_vulkan, *opt_rom, *opt_system, *opt_save, *opt_dump;
+static const char *opt_core, *opt_vulkan, *opt_rom, *opt_system, *opt_save, *opt_dump, *opt_renderer;
 static int opt_bench = 0, opt_scale = 1;
 static char scale_str[8] = "1";
+enum { R_VULKAN, R_COMPAT, R_SOFTWARE };
+static int renderer = R_VULKAN;
+static const char *const RENDERER_NAMES[] = {"vulkan", "compat", "software"};
 
 // core options souldew sets (everything else: the core's own default)
 static const char *core_option(const char *key) {
-  if (!strcmp(key, "citra_graphics_api")) return "Vulkan";
+  if (!strcmp(key, "citra_graphics_api")) return renderer == R_SOFTWARE ? "Software" : "Vulkan";
   if (!strcmp(key, "citra_resolution_factor")) return scale_str;
   if (!strcmp(key, "citra_layout_option")) return "default"; // top above bottom
   if (!strcmp(key, "citra_use_libretro_save_path")) return "LibRetro Default";
@@ -104,7 +118,7 @@ static void send_msg2(uint32_t type, const void *a, uint32_t na, const void *b, 
 static void send_msg(uint32_t type, const void *p, uint32_t n) { send_msg2(type, p, n, NULL, 0); }
 
 static void send_event(const char *fmt, ...) {
-  char buf[1024];
+  char buf[2560];
   va_list ap;
   va_start(ap, fmt);
   int n = vsnprintf(buf, sizeof buf, fmt, ap);
@@ -153,8 +167,9 @@ static void die(const char *fmt, ...) {
 
 /** A crash (signal / Windows exception, compat.h): one line to stderr and – if the pipe is free – an error event. */
 static void on_crash(const char *what) {
-  char buf[1024], esc[900];
-  int n = snprintf(buf, sizeof buf, "crashed: %s while %s (GPU: %s)", what, (const char *)stage, gpu_desc);
+  char buf[2048], esc[2000];
+  int n = snprintf(buf, sizeof buf, "crashed: %s while %s (GPU: %s, renderer %s)%s%s", what, (const char *)stage, gpu_desc, RENDERER_NAMES[renderer],
+                   images_in_flight > 0 ? " – inside " : "", images_in_flight > 0 ? image_note : "");
   if (n <= 0) return;
   if (n >= (int)sizeof buf) n = sizeof buf - 1;
   fprintf(stderr, "ctrhost: %s\n", buf);
@@ -317,24 +332,215 @@ static void *load_vk(const char *path) {
   return lib;
 }
 
-// The core creates its Vulkan device itself (create_device below) and enables only a few extensions there – but its
-// renderer then decides which optional features to use from the extensions the GPU *offers* (Azahar 2126.2,
-// vk_instance.cpp: timeline semaphores, extended dynamic state, 8-bit indices, shader interlock / barycentrics, pipeline
-// cache control). Used on a device that never enabled them, that is undefined behaviour: MoltenVK shrugs it off, other
-// drivers may crash (the standalone Azahar enables them properly, which is why it runs where the player didn't).
-// So the core is shown only the extensions it really gets: its device-extension list leaves these out, and the
-// renderer takes its fallbacks (fences, static state, 16-bit indices, plain shaders).
+// ---- the core's Vulkan device ------------------------------------------------------------------------------------
+// The core creates its Vulkan device itself (negotiation->create_device – Azahar's CreateVulkanDevice in
+// citra_libretro/libretro_vk.cpp) and enables only a fixed few extensions and features there – but its renderer then
+// decides which optional features to use from the extensions the GPU *offers* (Azahar 2126.2, vk_instance.cpp
+// CreateDevice: timeline semaphores, extended dynamic state, 8-bit indices, shader interlock / barycentrics, pipeline
+// cache control). Used on a device that never enabled them, that is undefined behaviour. The standalone Azahar creates
+// its device with each of them enabled together with its feature struct, and with robustBufferAccess (both at Vulkan
+// 1.1 – vk_platform.h TargetVulkanApiVersion; the core asks for 1.1 as well).
+// The core looks vkCreateDevice up through the vkGetInstanceProcAddr it is handed (core_gipa), so ctrhost adds what
+// the standalone app enables (wrap_create_device, from plan_device) – mode "vulkan": the device the core renders on is
+// the one Azahar's main path is made and tested for. Mode "compat" (2.7.0's way) leaves the core's device as it is and
+// hides those extensions instead (filtered_enum_dev_ext): the renderer takes its fallbacks (fences, static state,
+// 16-bit indices, plain shaders).
 static const char *const HIDDEN_EXTS[] = {
   "VK_KHR_timeline_semaphore", "VK_EXT_extended_dynamic_state", "VK_EXT_index_type_uint8", "VK_EXT_fragment_shader_interlock",
   "VK_EXT_pipeline_creation_cache_control", "VK_KHR_fragment_shader_barycentric", NULL,
 };
 static int all_exts; // CTRHOST_ALL_EXTENSIONS=1: no filtering (to compare)
+static uint32_t driver_id; // VkDriverId of the chosen card (0: unknown)
+
+// What wrap_create_device adds to the core's device (mode "vulkan"): extensions, their feature structs, robustBufferAccess.
+static struct {
+  const char *ext[8];
+  unsigned n;
+  int robust;
+  void *chain[8]; // the feature structs below that go into the device's pNext chain
+  unsigned nchain;
+  VkPhysicalDeviceTimelineSemaphoreFeatures timeline;
+  VkPhysicalDeviceExtendedDynamicStateFeaturesEXT eds;
+  VkPhysicalDeviceIndexTypeUint8FeaturesEXT uint8;
+  VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT interlock;
+  VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT cache_control;
+  VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR barycentric;
+} plan;
+static int planned(const char *name) {
+  for (unsigned i = 0; i < plan.n; i++)
+    if (!strcmp(plan.ext[i], name)) return 1;
+  return 0;
+}
 static int hidden_ext(const char *name) {
   if (all_exts) return 0;
   for (int i = 0; HIDDEN_EXTS[i]; i++)
-    if (!strcmp(name, HIDDEN_EXTS[i])) return 1;
+    if (!strcmp(name, HIDDEN_EXTS[i])) return !(renderer == R_VULKAN && planned(name));
   return 0;
 }
+static int has_ext(const VkExtensionProperties *exts, uint32_t n, const char *name) {
+  for (uint32_t i = 0; i < n; i++)
+    if (!strcmp(exts[i].extensionName, name)) return 1;
+  return 0;
+}
+
+/**
+ * Which optional extensions the standalone Azahar would enable on this card (the same rules as its vk_instance.cpp:
+ * offered, its feature supported, not on a driver Azahar blocks it for) – they and robustBufferAccess are added to the
+ * core's device in mode "vulkan".
+ */
+static void plan_device(VkPhysicalDevice pd, const VkExtensionProperties *exts, uint32_t ne) {
+  memset(&plan, 0, sizeof plan);
+  if (renderer != R_VULKAN) return;
+  PFN_vkGetPhysicalDeviceFeatures2 features2 = (PFN_vkGetPhysicalDeviceFeatures2)gipa(instance, "vkGetPhysicalDeviceFeatures2");
+  if (!features2) features2 = (PFN_vkGetPhysicalDeviceFeatures2)gipa(instance, "vkGetPhysicalDeviceFeatures2KHR");
+  PFN_vkGetPhysicalDeviceFeatures features1 = (PFN_vkGetPhysicalDeviceFeatures)gipa(instance, "vkGetPhysicalDeviceFeatures");
+  const int nvidia = driver_id == VK_DRIVER_ID_NVIDIA_PROPRIETARY, moltenvk = driver_id == VK_DRIVER_ID_MOLTENVK;
+  const int qualcomm = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY, turnip = driver_id == VK_DRIVER_ID_MESA_TURNIP;
+  const int arm = driver_id == VK_DRIVER_ID_ARM_PROPRIETARY;
+  struct cand { const char *name; int blocked; VkBaseOutStructure *feat; size_t size; VkStructureType type; VkBool32 *bit; } c[] = {
+    {VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME, qualcomm || turnip, (VkBaseOutStructure *)&plan.timeline, sizeof plan.timeline,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES, &plan.timeline.timelineSemaphore},
+    {VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME, arm || qualcomm, (VkBaseOutStructure *)&plan.eds, sizeof plan.eds,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT, &plan.eds.extendedDynamicState},
+    {VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME, moltenvk, (VkBaseOutStructure *)&plan.uint8, sizeof plan.uint8,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT, &plan.uint8.indexTypeUint8},
+    {VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, nvidia, (VkBaseOutStructure *)&plan.interlock, sizeof plan.interlock,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT, &plan.interlock.fragmentShaderPixelInterlock},
+    {VK_EXT_PIPELINE_CREATION_CACHE_CONTROL_EXTENSION_NAME, nvidia, (VkBaseOutStructure *)&plan.cache_control, sizeof plan.cache_control,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES_EXT, &plan.cache_control.pipelineCreationCacheControl},
+    {VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME, moltenvk, (VkBaseOutStructure *)&plan.barycentric, sizeof plan.barycentric,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR, &plan.barycentric.fragmentShaderBarycentric},
+  };
+  const unsigned nc = sizeof c / sizeof *c;
+  // ask the card which of the features it supports (only the structs of extensions it offers go into the query)
+  VkPhysicalDeviceFeatures2 q;
+  memset(&q, 0, sizeof q);
+  q.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+  int avail[8] = {0};
+  for (unsigned i = 0; i < nc; i++) {
+    c[i].feat->sType = c[i].type;
+    avail[i] = has_ext(exts, ne, c[i].name);
+    if (avail[i] && features2) {
+      c[i].feat->pNext = q.pNext;
+      q.pNext = c[i].feat;
+    }
+  }
+  if (features2) features2(pd, &q);
+  else if (features1) features1(pd, &q.features);
+  plan.robust = !!q.features.robustBufferAccess;
+  for (unsigned i = 0; i < nc; i++) {
+    const int on = features2 && avail[i] && !c[i].blocked && *c[i].bit;
+    // the struct as it goes into the device: only the one feature Azahar uses, the rest off
+    void *keep = c[i].feat;
+    memset(keep, 0, c[i].size);
+    c[i].feat->sType = c[i].type;
+    if (!on) continue;
+    *c[i].bit = VK_TRUE;
+    plan.ext[plan.n++] = c[i].name;
+    plan.chain[plan.nchain++] = keep;
+  }
+}
+
+/** Is a struct of this type in a pNext chain? */
+static int chain_has(const void *p, VkStructureType type) {
+  for (const VkBaseInStructure *b = p; b; b = b->pNext)
+    if (b->sType == type) return 1;
+  return 0;
+}
+
+static PFN_vkCreateDevice real_create_device;
+/** vkCreateDevice as the core sees it: in mode "vulkan" with plan_device's extensions, features and robustBufferAccess. */
+static VKAPI_ATTR VkResult VKAPI_CALL wrap_create_device(VkPhysicalDevice pd, const VkDeviceCreateInfo *ci, const VkAllocationCallbacks *alloc, VkDevice *dev) {
+  if (!real_create_device) real_create_device = (PFN_vkCreateDevice)gipa(instance, "vkCreateDevice");
+  if (!real_create_device) return VK_ERROR_INITIALIZATION_FAILED;
+  if (!ci || renderer != R_VULKAN || (!plan.n && !plan.robust)) return real_create_device(pd, ci, alloc, dev);
+  VkDeviceCreateInfo c = *ci;
+  const char *exts[72];
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < ci->enabledExtensionCount && n < 64; i++) exts[n++] = ci->ppEnabledExtensionNames[i];
+  char added[600] = "";
+  size_t al = 0;
+  for (unsigned k = 0; k < plan.n; k++) {
+    int dup = 0;
+    for (uint32_t i = 0; i < n; i++) dup |= !strcmp(exts[i], plan.ext[k]);
+    if (dup) continue;
+    exts[n++] = plan.ext[k];
+    al += (size_t)snprintf(added + al, sizeof added - al, " %s", plan.ext[k]);
+  }
+  c.enabledExtensionCount = n;
+  c.ppEnabledExtensionNames = exts;
+  // robustBufferAccess: in the core's VkPhysicalDeviceFeatures2 (Azahar chains one first) or in pEnabledFeatures
+  VkPhysicalDeviceFeatures2 f2;
+  VkPhysicalDeviceFeatures f1;
+  void *head = (void *)ci->pNext;
+  const VkBaseInStructure *first = ci->pNext;
+  int robust = 0;
+  if (plan.robust) {
+    if (first && first->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) {
+      f2 = *(const VkPhysicalDeviceFeatures2 *)first; // (its pNext: the rest of the core's chain)
+      f2.features.robustBufferAccess = VK_TRUE;
+      head = &f2;
+      robust = 1;
+    } else if (ci->pEnabledFeatures) {
+      f1 = *ci->pEnabledFeatures;
+      f1.robustBufferAccess = VK_TRUE;
+      c.pEnabledFeatures = &f1;
+      robust = 1;
+    } else if (!chain_has(ci->pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2)) {
+      memset(&f1, 0, sizeof f1);
+      f1.robustBufferAccess = VK_TRUE;
+      c.pEnabledFeatures = &f1;
+      robust = 1;
+    }
+  }
+  for (unsigned k = 0; k < plan.nchain; k++) {
+    VkBaseOutStructure *b = plan.chain[k];
+    if (chain_has(ci->pNext, b->sType)) continue; // (the core chained that one itself)
+    b->pNext = head;
+    head = b;
+  }
+  c.pNext = head;
+  VkResult r = real_create_device(pd, &c, alloc, dev);
+  if (r == VK_SUCCESS) {
+    logf_("Vulkan: the core's device has what the standalone Azahar enables:%s%s", robust ? " robustBufferAccess" : "", *added ? added : " (no optional extensions)");
+    return r;
+  }
+  // a driver that refuses the combination: the core's own device, and the extensions hidden again (as "compat")
+  logf_("Vulkan: vkCreateDevice with the standalone features failed (%d) – the core's own device instead", (int)r);
+  plan.n = plan.nchain = 0;
+  plan.robust = 0;
+  return real_create_device(pd, ci, alloc, dev);
+}
+
+// AMD's Windows driver (amdvlk64.dll, seen on the RX 9070 XT with driver 2.0.416) crashes inside vkCreateImage with
+// Azahar's libretro core since 2126.1 (azahar-emu/azahar#2742 – the same access violation the player hit; standalone
+// Azahar is fine). The workaround found there (#2745): hand the driver a copy of the VkImageCreateInfo whose queue
+// family fields are cleared for an exclusive image – the spec says they are ignored then, the driver reads them anyway.
+// ctrhost does that for every image the core creates (VMA's and its own – both look vkCreateImage up through
+// core_gipa / core_gdpa), logs it when the fields really were set, and remembers the image in flight for a crash report.
+static PFN_vkCreateImage real_create_image;
+static volatile unsigned images_fixed, images_created;
+static VKAPI_ATTR VkResult VKAPI_CALL wrap_create_image(VkDevice d, const VkImageCreateInfo *ci, const VkAllocationCallbacks *alloc, VkImage *img) {
+  PFN_vkCreateImage real = real_create_image;
+  if (!real) real = real_create_image = (PFN_vkCreateImage)gdpa(d, "vkCreateImage");
+  if (!real) return VK_ERROR_INITIALIZATION_FAILED;
+  if (!ci) return real(d, ci, alloc, img);
+  VkImageCreateInfo c = *ci;
+  if (c.sharingMode == VK_SHARING_MODE_EXCLUSIVE && (c.queueFamilyIndexCount || c.pQueueFamilyIndices)) {
+    if (__atomic_fetch_add(&images_fixed, 1, __ATOMIC_RELAXED) < 3)
+      logf_("vkCreateImage: queue family fields set on an exclusive image (count %u, %p) – cleared", c.queueFamilyIndexCount, (const void *)c.pQueueFamilyIndices);
+    c.queueFamilyIndexCount = 0;
+    c.pQueueFamilyIndices = NULL;
+  }
+  snprintf(image_note, sizeof image_note, "vkCreateImage format %d %ux%ux%u, %u levels, %u layers, usage 0x%x, flags 0x%x%s", (int)c.format,
+           c.extent.width, c.extent.height, c.extent.depth, c.mipLevels, c.arrayLayers, (unsigned)c.usage, (unsigned)c.flags, c.pNext ? ", pNext" : "");
+  __atomic_fetch_add(&images_created, 1, __ATOMIC_RELAXED);
+  __atomic_fetch_add(&images_in_flight, 1, __ATOMIC_SEQ_CST);
+  VkResult r = real(d, &c, alloc, img);
+  __atomic_fetch_sub(&images_in_flight, 1, __ATOMIC_SEQ_CST);
+  return r;
+}
+
 /** All of a device's extensions (calloc'd, *n of them), or NULL. */
 static VkExtensionProperties *device_exts(VkPhysicalDevice pd, const char *layer, uint32_t *n) {
   *n = 0;
@@ -369,9 +575,30 @@ static VKAPI_ATTR VkResult VKAPI_CALL filtered_enum_dev_ext(VkPhysicalDevice pd,
   free(all);
   return r;
 }
-/** vkGetInstanceProcAddr as the core sees it: the device-extension list without HIDDEN_EXTS. */
+/**
+ * vkGetDeviceProcAddr as the core sees it: vkCreateImage through wrap_create_image – and itself for
+ * "vkGetDeviceProcAddr" (vulkan-hpp's dispatcher looks that one up again through the device before it loads the
+ * device's functions; handing out the real one there let every later lookup, VMA's too, bypass the wrapper).
+ */
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL core_gdpa(VkDevice d, const char *name) {
+  if (name && !strcmp(name, "vkGetDeviceProcAddr")) return (PFN_vkVoidFunction)core_gdpa;
+  if (name && !strcmp(name, "vkCreateImage")) {
+    if (!real_create_image) real_create_image = (PFN_vkCreateImage)gdpa(d, name);
+    if (real_create_image) return (PFN_vkVoidFunction)wrap_create_image;
+  }
+  return gdpa(d, name);
+}
+/**
+ * vkGetInstanceProcAddr as the core sees it: the device-extension list without the hidden ones, vkCreateDevice
+ * with the standalone features, vkCreateImage and vkGetDeviceProcAddr through the wrappers above.
+ */
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL core_gipa(VkInstance inst, const char *name) {
-  if (inst && name && !strcmp(name, "vkEnumerateDeviceExtensionProperties") && real_enum_dev_ext) return (PFN_vkVoidFunction)filtered_enum_dev_ext;
+  if (inst && name) {
+    if (!strcmp(name, "vkEnumerateDeviceExtensionProperties") && real_enum_dev_ext) return (PFN_vkVoidFunction)filtered_enum_dev_ext;
+    if (!strcmp(name, "vkCreateDevice")) return (PFN_vkVoidFunction)wrap_create_device;
+    if (!strcmp(name, "vkGetDeviceProcAddr") && gdpa) return (PFN_vkVoidFunction)core_gdpa;
+    if (!strcmp(name, "vkCreateImage")) return (PFN_vkVoidFunction)wrap_create_image;
+  }
   return gipa(inst, name);
 }
 
@@ -460,8 +687,11 @@ static void choose_gpu(void) {
     props2_fn(gpu, &p2);
     snprintf(name, sizeof name, "%s", dp.driverName);
     snprintf(info, sizeof info, "%s", dp.driverInfo);
+    driver_id = (uint32_t)dp.driverID;
   }
-  // which extensions the core won't see (it couldn't enable them – see HIDDEN_EXTS)
+  // mode "vulkan": what the core's device gets on top (the standalone Azahar's device); then which extensions the core
+  // won't see (not enabled on its device – see HIDDEN_EXTS)
+  plan_device(gpu, exts, ne);
   char hidden[400] = "";
   size_t hl = 0;
   for (uint32_t i = 0; i < ne && hl + 64 < sizeof hidden; i++)
@@ -470,15 +700,21 @@ static void choose_gpu(void) {
   snprintf(gpu_desc, sizeof gpu_desc, "%s, %s, %04x:%04x, driver %s%s%s%s%s, Vulkan %u.%u.%u", g->deviceName, gpu_type_name(g->deviceType), g->vendorID,
            g->deviceID, drv, *name ? " " : "", name, *info ? " " : "", info, g->apiVersion >> 22, (g->apiVersion >> 12) & 0x3ff, g->apiVersion & 0xfff);
   logf_("Vulkan: using device %d of %u – %s", best, nd, gpu_desc);
-  if (*hidden) logf_("Vulkan: left out for the core (a libretro device doesn't enable them): %s", hidden);
+  if (renderer == R_VULKAN) {
+    char pl[400] = "";
+    size_t pn = 0;
+    for (unsigned i = 0; i < plan.n && pn + 64 < sizeof pl; i++) pn += (size_t)snprintf(pl + pn, sizeof pl - pn, " %s", plan.ext[i]);
+    logf_("Vulkan: renderer mode vulkan – the core's device gets%s%s", plan.robust ? " robustBufferAccess" : "", *pl ? pl : (plan.robust ? "" : " nothing more"));
+  } else logf_("Vulkan: renderer mode compat – the core's own libretro device");
+  if (*hidden) logf_("Vulkan: left out for the core (its device doesn't enable them): %s", hidden);
   char e_name[600], e_drv[700];
   json_escape(e_name, sizeof e_name, g->deviceName);
   char drv_all[400];
   snprintf(drv_all, sizeof drv_all, "%s%s%s%s%s", drv, *name ? " " : "", name, *info ? " " : "", info);
   json_escape(e_drv, sizeof e_drv, drv_all);
-  send_event("{\"event\":\"gpu\",\"name\":\"%s\",\"type\":\"%s\",\"vendor\":\"%04x\",\"device\":\"%04x\",\"driver\":\"%s\",\"api\":\"%u.%u.%u\",\"index\":%d,\"count\":%u,\"filtered\":%s}",
+  send_event("{\"event\":\"gpu\",\"name\":\"%s\",\"type\":\"%s\",\"vendor\":\"%04x\",\"device\":\"%04x\",\"driver\":\"%s\",\"api\":\"%u.%u.%u\",\"index\":%d,\"count\":%u,\"filtered\":%s,\"renderer\":\"%s\"}",
              e_name, gpu_type_name(g->deviceType), g->vendorID, g->deviceID, e_drv, g->apiVersion >> 22, (g->apiVersion >> 12) & 0x3ff, g->apiVersion & 0xfff, best, nd,
-             all_exts ? "false" : "true");
+             all_exts ? "false" : "true", RENDERER_NAMES[renderer]);
 }
 
 static void vk_setup(void) {
@@ -547,7 +783,7 @@ static void vk_setup(void) {
   vkif.instance = instance;
   vkif.gpu = vkctx.gpu ? vkctx.gpu : gpu;
   vkif.device = vkctx.device;
-  vkif.get_device_proc_addr = gdpa;
+  vkif.get_device_proc_addr = core_gdpa;
   vkif.get_instance_proc_addr = core_gipa;
   vkif.queue = vkctx.queue;
   vkif.queue_index = vkctx.queue_family_index;
@@ -645,15 +881,35 @@ static uint8_t *last_frame; // bench: the last picture
 static int last_w, last_h, last_bgra;
 static uint64_t frames_shown;
 
+static uint8_t *sw_frame; // the software renderer's picture without its row padding
+static size_t sw_cap;
+
 static void video_refresh(const void *data, unsigned w, unsigned h, size_t pitch) {
-  (void)pitch;
   if (!data || !w || !h) return; // a dupe: nothing new
-  if (data != RETRO_HW_FRAME_BUFFER_VALID) return; // the core always renders with Vulkan here
   frame_w = (int)w;
   frame_h = (int)h;
   if (!want_frame) return;
   int bgra = 0;
-  const uint8_t *px = readback((int)w, (int)h, &bgra);
+  const uint8_t *px;
+  if (data == RETRO_HW_FRAME_BUFFER_VALID) {
+    if (renderer == R_SOFTWARE) return;
+    px = readback((int)w, (int)h, &bgra);
+  } else {
+    // the software renderer: XRGB8888 rows in memory (B, G, R, X – the page ignores the 4th byte)
+    if (renderer != R_SOFTWARE || pitch < (size_t)w * 4) return;
+    bgra = 1;
+    px = data;
+    if (pitch != (size_t)w * 4) {
+      const size_t need = (size_t)w * h * 4;
+      if (sw_cap < need) {
+        uint8_t *nb = realloc(sw_frame, need);
+        if (!nb) return;
+        sw_frame = nb, sw_cap = need;
+      }
+      for (unsigned y = 0; y < h; y++) memcpy(sw_frame + (size_t)y * w * 4, (const uint8_t *)data + y * pitch, (size_t)w * 4);
+      px = sw_frame;
+    }
+  }
   if (!px) return;
   frames_shown++;
   if (!protocol) {
@@ -913,9 +1169,13 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--bench")) opt_bench = atoi(argv[i + 1]);
     else if (!strcmp(argv[i], "--dump")) opt_dump = argv[i + 1];
     else if (!strcmp(argv[i], "--scale")) opt_scale = atoi(argv[i + 1]);
+    else if (!strcmp(argv[i], "--renderer")) opt_renderer = argv[i + 1];
   }
-  if (!opt_core || !opt_vulkan || !opt_rom || !opt_system || !opt_save) {
-    fprintf(stderr, "usage: ctrhost --core <lib> --vulkan <lib> --rom <file> --system <dir> --save <dir> [--scale n] [--bench frames --dump out.ppm]\n");
+  if (!opt_renderer) opt_renderer = getenv("CTRHOST_RENDERER");
+  if (opt_renderer && !strcmp(opt_renderer, "compat")) renderer = R_COMPAT;
+  else if (opt_renderer && !strcmp(opt_renderer, "software")) renderer = R_SOFTWARE;
+  if (!opt_core || (!opt_vulkan && renderer != R_SOFTWARE) || !opt_rom || !opt_system || !opt_save) {
+    fprintf(stderr, "usage: ctrhost --core <lib> --vulkan <lib> --rom <file> --system <dir> --save <dir> [--scale n] [--renderer vulkan|compat|software] [--bench frames --dump out.ppm]\n");
     return 2;
   }
   if (opt_scale < 1 || opt_scale > 4) opt_scale = 1;
@@ -925,8 +1185,11 @@ int main(int argc, char **argv) {
   compat_crash_handler(on_crash);
   if (getenv("CTRHOST_DEBUG")) debug_input = 400;
 
-  stage = "loading the Vulkan library";
-  load_vk(opt_vulkan);
+  logf_("renderer: %s", renderer == R_VULKAN ? "vulkan (the standalone Azahar's device)" : renderer == R_COMPAT ? "compat (Vulkan, the core's own device)" : "software (Azahar's software renderer, no GPU)");
+  if (renderer != R_SOFTWARE) {
+    stage = "loading the Vulkan library";
+    load_vk(opt_vulkan);
+  }
   stage = "loading the core";
   void *lib = dlopen(opt_core, RTLD_NOW | RTLD_LOCAL);
   if (!lib) die("core not loadable: %s", dlerror());
@@ -952,17 +1215,23 @@ int main(int argc, char **argv) {
   struct retro_game_info info = {opt_rom, NULL, 0, NULL};
   stage = "opening the game";
   if (!core.load_game(&info)) die("the core couldn't load the game");
-  if (hw.context_type != RETRO_HW_CONTEXT_VULKAN) die("the core didn't ask for Vulkan");
-  vk_setup();
-  stage = "starting the renderer (the core loads the game)";
-  if (hw.context_reset) hw.context_reset(); // the core loads the game here (Vulkan path)
+  if (renderer == R_SOFTWARE) {
+    // (the software path loads the game in retro_load_game – no device, no context_reset)
+    if (hw.context_type == RETRO_HW_CONTEXT_VULKAN) die("the core asked for Vulkan in software mode");
+  } else {
+    if (hw.context_type != RETRO_HW_CONTEXT_VULKAN) die("the core didn't ask for Vulkan");
+    vk_setup();
+    stage = "starting the renderer (the core loads the game)";
+    if (hw.context_reset) hw.context_reset(); // the core loads the game here (Vulkan path)
+    logf_("Vulkan: renderer started – %u images created through wrap_create_image, %u with queue family fields cleared", images_created, images_fixed);
+  }
 
   struct retro_system_av_info av;
   memset(&av, 0, sizeof av);
   core.get_system_av_info(&av);
   double fps = av.timing.fps > 1 ? av.timing.fps : 60.0;
-  send_event("{\"event\":\"loaded\",\"width\":%u,\"height\":%u,\"fps\":%.4f,\"sampleRate\":%.1f,\"maps\":%u,\"memory\":%s}",
-             av.geometry.base_width, av.geometry.base_height, fps, av.timing.sample_rate, memmap_n, souldew_read_memory ? "true" : "false");
+  send_event("{\"event\":\"loaded\",\"width\":%u,\"height\":%u,\"fps\":%.4f,\"sampleRate\":%.1f,\"maps\":%u,\"memory\":%s,\"renderer\":\"%s\"}",
+             av.geometry.base_width, av.geometry.base_height, fps, av.timing.sample_rate, memmap_n, souldew_read_memory ? "true" : "false", RENDERER_NAMES[renderer]);
 
   if (opt_bench) {
     double t0 = now_s();
@@ -976,6 +1245,7 @@ int main(int argc, char **argv) {
             100.0 * opt_bench / dt / fps, fps, frame_w, frame_h, memmap_n);
     for (unsigned i = 0; i < memmap_n; i++) fprintf(stderr, "  map %08llx +%08llx\n", (unsigned long long)memmap[i].start, (unsigned long long)memmap[i].len);
     if (souldew_title_id) fprintf(stderr, "title %016llX\n", (unsigned long long)souldew_title_id());
+    if (renderer != R_SOFTWARE) fprintf(stderr, "images created through wrap_create_image: %u (%u fixed)\n", images_created, images_fixed);
     if (souldew_read_memory) {
       static const uint32_t probe[] = {0x08000000, 0x08CE1CE8, 0x08CFB26C, 0x14000000, 0x30000000, 0x34195E10, 0x33F7FA44};
       for (unsigned i = 0; i < sizeof probe / sizeof *probe; i++) {

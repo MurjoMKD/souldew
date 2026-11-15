@@ -2530,5 +2530,14 @@
   "set.gpuSafeRestart": "Riavvia normalmente",
   "set.gpuSafeTitle": "Modalità grafica sicura",
   "set.gpuSafeToast": "Questa volta souldew disegna senza la scheda grafica (più lento). Scegli un’altra API grafica in Impostazioni › Generale, poi riavvia normalmente.",
-  "set.gpuSafeToastMac": "Questa volta souldew disegna senza la scheda grafica (più lento). Chiudilo e riaprilo per la modalità normale."
+  "set.gpuSafeToastMac": "Questa volta souldew disegna senza la scheda grafica (più lento). Chiudilo e riaprilo per la modalità normale.",
+  "set.ctrRenderer": "Renderer 3DS",
+  "set.ctrRendererAuto": "Automatico",
+  "set.ctrRendererCompat": "Vulkan (compatibilità)",
+  "set.ctrRendererSoftware": "Software",
+  "set.ctrRendererHint": "Come il lettore 3DS integrato di souldew disegna il gioco. Automatico parte con Vulkan; se il gioco si ferma subito dopo l’avvio, passa a Vulkan (compatibilità) e poi a Software, e se lo ricorda per questa scheda grafica e questo driver. Software funziona su ogni PC, ma è molto più lento. Vale dal prossimo gioco 3DS che avvii.",
+  "set.ctrRendererLearned": "Questa scheda grafica avvia ora i giochi 3DS con: {mode}",
+  "ctr.rendererSwitched": "Lettore 3DS: ora con {mode}",
+  "ctr.rendererSwitchedSoftware": "Il driver grafico non è riuscito ad avviare il gioco con Vulkan, quindi ora gira senza la scheda grafica – più lento, ma gira. souldew se lo ricorda per questa scheda grafica; puoi cambiarlo in Impostazioni › Emulatori.",
+  "ctr.rendererSwitchedCompat": "Il gioco si è fermato subito dopo l’avvio, quindi souldew lo ha riavviato in una modalità Vulkan più compatibile. souldew se lo ricorda per questa scheda grafica; puoi cambiarlo in Impostazioni › Emulatori."
 }

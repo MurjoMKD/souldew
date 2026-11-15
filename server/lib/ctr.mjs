@@ -16,6 +16,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { BUNDLED_TOOLS, TOOLS_DIR, DATA_DIR, DEV, APP_ROOT } from './paths.mjs';
 import { httpError } from './fsutil.mjs';
 import { identifyCtr } from '../../shared/ctr.mjs';
+import { nextRenderer, rendererFailure, withRenderer } from './ctrrenderer.mjs';
 
 export const PLATFORM_DIR = `${process.platform}-${process.arch}`;
 const EXE = process.platform === 'win32' ? 'ctrhost.exe' : 'ctrhost';
@@ -271,7 +272,7 @@ export class CtrSessions {
 
   status() {
     const s = this.current;
-    return s ? { id: s.id, running: !s.exit, exit: s.exit, exitText: exitText(s.exit), events: s.events.slice(-5), gpu: s.gpu || null } : null;
+    return s ? { id: s.id, running: !s.exit, exit: s.exit, exitText: exitText(s.exit), events: s.events.slice(-5), gpu: s.gpu || null, ...(s.renderer ? { renderer: s.renderer, fellBack: s.fellBack || [] } : {}) } : null;
   }
 
   /** For "Save diagnostics": the running session (with the end of its stderr) and how the last failed one ended. */
@@ -284,8 +285,11 @@ export class CtrSessions {
     };
   }
 
-  /** A session ended: remember (and log) it when it didn't end the normal way – a crash, an error from the host. */
-  ended(s, exit) {
+  /**
+   * A session ended: remember (and log) it when it didn't end the normal way – a crash, an error from the host.
+   * `retry`: the renderer the session goes on with (the 3DS player stepped down – see relaunch).
+   */
+  ended(s, exit, retry = null) {
     if (s.recorded) return;
     s.recorded = true;
     const error = [...s.events].reverse().find((e) => e?.event === 'error');
@@ -296,54 +300,75 @@ export class CtrSessions {
       exit: exitText(exit) || null,
       error: error?.message ? redactHome(error.message).slice(0, 1000) : null,
       gpu: s.gpu || null,
+      ...(s.renderer ? { renderer: s.renderer } : {}),
+      ...(retry ? { retriedWith: retry } : {}),
       startedAt: s.startedAt,
       secondsRun: Math.round((Date.now() - s.startedAt) / 1000),
       stderrStart: redactHome(s.head),
       stderr: redactHome(s.log.join('').slice(-4000)),
     };
     appendPlayerLog({ player: this.label || '3ds', ...this.last }, this.logFile);
-    console.warn(`[${this.label || '3ds'}] the host ended: ${this.last.exit || '?'}${this.last.error ? ` – ${this.last.error}` : ''}${s.gpu ? ` – GPU ${s.gpu.name} (driver ${s.gpu.driver})` : ''}`);
+    console.warn(`[${this.label || '3ds'}] the host ended: ${this.last.exit || '?'}${this.last.error ? ` – ${this.last.error}` : ''}${s.gpu ? ` – GPU ${s.gpu.name} (driver ${s.gpu.driver})` : ''}${retry ? ` – renderer ${s.renderer}, trying ${retry}` : ''}`);
     const tail = this.last.stderr.trim().split('\n').slice(-8).join('\n');
     if (tail) console.warn(tail);
   }
 
-  /** Start the game `rom` (a path) with the save folder of `key`; ends a session that still runs. */
-  start({ rom, key, tools, scale = 1 }) {
+  /**
+   * Start the game `rom` (a path) with the save folder of `key`; ends a session that still runs. `renderer`: how the
+   * host draws (server/lib/ctrrenderer.mjs); `auto`: a crash in the first seconds steps down to the next safer one.
+   */
+  start({ rom, key, tools, scale = 1, renderer = 'vulkan', auto = false }) {
     this.stop();
     const save = saveDirFor(key);
     const system = join(save, 'system');
     mkdirSync(system, { recursive: true });
-    const args = ['--core', tools.core, '--vulkan', tools.vulkan, '--rom', rom, '--system', system, '--save', save, '--scale', String(scale)];
-    return this.launch(tools.host, args, save);
+    const args = ['--core', tools.core, '--vulkan', tools.vulkan, '--rom', rom, '--system', system, '--save', save, '--scale', String(scale), '--renderer', renderer];
+    return this.launch(tools.host, args, save, { renderer, auto: !!auto, fellBack: [] });
   }
 
-  /** Start a host (`exe` with `args`) as the current session – shared with the DS / GBA / GB host (native.mjs). */
-  launch(exe, args, save) {
+  /**
+   * Start a host (`exe` with `args`) as the current session – shared with the DS / GBA / GB host (native.mjs).
+   * `extra`: more of the session (the 3DS renderer).
+   */
+  launch(exe, args, save, extra = {}) {
     this.stop();
+    const s = { id: randomBytes(8).toString('hex'), exe, args, save, child: null, stream: null, buffered: [], bufferedBytes: 0, events: [], exit: null, closed: false, held: false, log: [], head: '', startedAt: Date.now(), lastCmds: {}, ...extra };
+    s.orphan = setTimeout(() => {
+      if (!s.stream && this.current === s) this.stop();
+    }, NEVER_ATTACHED);
+    s.orphan.unref?.();
+    this.current = s;
+    this.run(s);
+    return s.id;
+  }
+
+  /** Spawn the session's host (again, after relaunch: the page's stream goes on). */
+  run(s) {
     const env = this.hostEnv?.();
-    const child = this.spawn(exe, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) });
-    const s = { id: randomBytes(8).toString('hex'), save, child, stream: null, buffered: [], bufferedBytes: 0, events: [], exit: null, closed: false, held: false, log: [], head: '', startedAt: Date.now() };
+    const child = this.spawn(s.exe, s.args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) });
+    Object.assign(s, { child, exit: null, recorded: false, held: false, events: [], heldErrors: [], startedAt: Date.now() });
+    // the host may still step down (3DS, "auto"): its error event waits until it is clear the session doesn't go on
+    // with another renderer – the page would show "the game has stopped" for a game that is about to run
+    const mayRetry = !!(s.auto && s.renderer && nextRenderer(s.renderer));
+    const mine = () => s.child === child;
     const split = new MessageSplitter();
     child.stdout.on('data', (chunk) => {
+      if (!mine()) return;
       // whole messages only: a page that connects later (or a new one) must start at a message's beginning
       for (const m of split.push(chunk)) {
-        if (m.type === MSG.EVENT) this.peek(s, m.data);
-        this.onMessage?.(s, m, writable(s.stream)); // (native.mjs: the last battery save after the page has gone)
-        if (writable(s.stream)) {
-          // the page reads the host's messages as they are; a slow page holds the host back (no frames pile up)
-          if (!s.stream.write(m.data) && !s.held) {
-            s.held = true;
-            child.stdout.pause();
-            s.stream.once('drain', () => this.release(s));
+        if (m.type === MSG.EVENT) {
+          const e = this.peek(s, m.data);
+          if (mayRetry && e?.event === 'error') {
+            s.heldErrors.push(m.data);
+            continue;
           }
-        } else if (s.bufferedBytes + m.data.length <= BUFFER_LIMIT || this.keepTypes.includes(m.type)) {
-          // before the page connects: keep the start (the "loaded" event, a few frames) and what is answered
-          s.buffered.push(m.data);
-          s.bufferedBytes += m.data.length;
         }
+        this.onMessage?.(s, m, writable(s.stream)); // (native.mjs: the last battery save after the page has gone)
+        this.forward(s, m);
       }
     });
     child.stderr.on('data', (d) => {
+      if (!mine()) return;
       // the start (the Vulkan loader, the graphics cards, the device) is kept apart: the core's warnings later would
       // push it out of the tail
       if (s.head.length < 10000) s.head += String(d).slice(0, 10000 - s.head.length);
@@ -351,10 +376,8 @@ export class CtrSessions {
       if (s.log.length > 200) s.log.splice(0, s.log.length - 200);
     });
     child.on('exit', (code, signal) => {
-      s.exit = { code, signal };
+      if (mine()) s.exit = { code, signal };
     });
-    // (after the last output is read: the host's error event comes right before it leaves)
-    child.on('close', (code, signal) => this.ended(s, s.exit || { code, signal }));
     // the end of the stream once the host's output is all read: 'exit' can come before the last of it (the error
     // event a failing host sends right before it leaves), and a write after end() is an unhandled 'error'
     const done = () => {
@@ -362,22 +385,68 @@ export class CtrSessions {
       clearTimeout(s.orphan);
       s.stream?.end();
     };
+    // (after the last output is read: the host's error event comes right before it leaves)
     child.on('close', (code, signal) => {
+      if (!mine()) return;
       s.exit ||= { code, signal };
+      if (this.relaunch(s)) return;
+      this.ended(s, s.exit);
+      for (const data of s.heldErrors.splice(0)) this.forward(s, { type: MSG.EVENT, data });
       done();
     });
     child.on('error', (e) => {
+      if (!mine()) return;
       s.exit = { error: e.message };
       this.ended(s, s.exit);
+      for (const data of s.heldErrors.splice(0)) this.forward(s, { type: MSG.EVENT, data });
       done();
     });
     child.stdin.on('error', () => {});
-    s.orphan = setTimeout(() => {
-      if (!s.stream && this.current === s) this.stop();
-    }, NEVER_ATTACHED);
-    s.orphan.unref?.();
-    this.current = s;
-    return s.id;
+  }
+
+  /** One whole message of the host to the page – or kept for a page that connects later. */
+  forward(s, m) {
+    if (writable(s.stream)) {
+      // the page reads the host's messages as they are; a slow page holds the host back (no frames pile up)
+      if (!s.stream.write(m.data) && !s.held) {
+        s.held = true;
+        s.child.stdout.pause();
+        s.stream.once('drain', () => this.release(s));
+      }
+    } else if (s.bufferedBytes + m.data.length <= BUFFER_LIMIT || this.keepTypes.includes(m.type)) {
+      // before the page connects: keep the start (the "loaded" event, a few frames) and what is answered
+      s.buffered.push(m.data);
+      s.bufferedBytes += m.data.length;
+    }
+  }
+
+  /**
+   * 3DS, renderer "auto": the host ended in its first seconds the way a graphics driver problem ends – start it again
+   * with the next safer renderer in the same session (the page's stream goes on, the memory it watches, its speed and
+   * pause are handed to the new host). onRendererFailed remembers the step for this graphics card. False: not this case.
+   */
+  relaunch(s) {
+    if (s.quit || this.current !== s || !s.auto || !s.renderer) return false;
+    const next = nextRenderer(s.renderer);
+    if (!next || !rendererFailure({ exit: s.exit, events: s.events, ms: Date.now() - s.startedAt })) return false;
+    const from = s.renderer;
+    this.ended(s, s.exit, next);
+    s.heldErrors = [];
+    s.fellBack.push(from);
+    this.onRendererFailed?.({ gpu: s.gpu || null, from, to: next });
+    s.log.push(`[souldew] the 3DS host ended in its first seconds with the renderer "${from}" – starting it again with "${next}"\n`);
+    s.renderer = next;
+    s.args = withRenderer(s.args, next);
+    this.run(s);
+    for (const b of Object.values(s.lastCmds)) s.child.stdin.write(b);
+    return true;
+  }
+
+  /** The page's commands the next host needs as well (relaunch): the last WATCH, SPEED and FRAMESKIP. */
+  keepCommands(s, body) {
+    for (const m of splitMessages(body).messages) {
+      if (m.type === CMD.WATCH || m.type === CMD.SPEED || m.type === CMD.FRAMESKIP) s.lastCmds[m.type] = command(m.type, Buffer.from(m.payload));
+    }
   }
 
   /** Let the host write again (the page caught up, or another page / none reads now). */
@@ -386,15 +455,19 @@ export class CtrSessions {
     s.child.stdout.resume();
   }
 
-  /** Remember the host's events (loaded, title, errors) for the status. `data`: one whole EVENT message. */
+  /** Remember the host's events (loaded, title, errors) for the status. `data`: one whole EVENT message. Returns it. */
   peek(s, data) {
     try {
       const e = JSON.parse(data.subarray(8).toString('utf8'));
       s.events.push(e);
       if (s.events.length > 50) s.events.shift();
-      if (e?.event === 'gpu') s.gpu = { name: e.name, type: e.type, vendor: e.vendor, device: e.device, driver: e.driver, api: e.api, index: e.index, count: e.count };
+      if (e?.event === 'gpu') {
+        s.gpu = { name: e.name, type: e.type, vendor: e.vendor, device: e.device, driver: e.driver, api: e.api, index: e.index, count: e.count };
+        this.onGpu?.(s.gpu);
+      }
+      return e;
     } catch {
-      // not JSON – skip
+      return null; // not JSON – skip
     }
   }
 
@@ -435,6 +508,7 @@ export class CtrSessions {
     const s = this.get(id);
     if (s.exit) throw httpError(409, 'Die 3DS-Sitzung ist beendet', 'ctrEnded');
     s.child.stdin.write(this.check(body));
+    if (s.auto) this.keepCommands(s, body);
   }
 
   /** The commands a page may send this host (checkCommands for the 3DS host). */

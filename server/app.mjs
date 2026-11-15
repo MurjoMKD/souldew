@@ -22,6 +22,7 @@ import { EMULATORS, detectEmulator, installEmulator, launchRom, revealInFileMana
 import { LiveBridge } from './lib/livebridge.mjs';
 import { AzaharBridge, enableRpc } from './lib/azahar.mjs';
 import { CtrSessions, ctrTools, saveStamp, ctrInventory, redactHome, ctrEncrypted } from './lib/ctr.mjs';
+import { pickRenderer, validRenderer, gpuKey, remember } from './lib/ctrrenderer.mjs';
 import { NativeSessions, nativeTools, NATIVE_CORES } from './lib/native.mjs';
 import { moveToGraveyard, parseHgssSave } from '../shared/gen4save.mjs';
 import { listPresets, savePreset, deletePreset } from './lib/presets.mjs';
@@ -476,6 +477,18 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
   const live = new LiveBridge(emit);
   // 3DS in souldew's own player (server/lib/ctr.mjs): one game at a time
   const ctr = new CtrSessions();
+  // the 3DS renderer "auto" (server/lib/ctrrenderer.mjs): which graphics card the last game ran on, and the step down
+  // a card / driver needed – the next start takes it right away
+  ctr.onGpu = (gpu) => {
+    const key = gpuKey(gpu);
+    if (loadConfig().ctrLastGpu !== key) saveConfig({ ctrLastGpu: key });
+  };
+  ctr.onRendererFailed = ({ gpu, to }) => {
+    const cfg = loadConfig();
+    const key = gpu ? gpuKey(gpu) : cfg.ctrLastGpu || '?';
+    saveConfig({ ctrRendererMemo: remember(cfg.ctrRendererMemo, key, to), ctrLastGpu: key });
+  };
+  const ctrRendererNow = (cfg = loadConfig()) => pickRenderer({ setting: cfg.ctrRenderer, memo: cfg.ctrRendererMemo, lastGpu: cfg.ctrLastGpu });
   // A battery save the host sends after its page has gone (closed right after saving in the game): stored where the
   // play view would have put it – the run's save (and its HeartGold/SoulSilver watcher) or the solo game's.
   const native = new NativeSessions({
@@ -827,7 +840,8 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       live: live.status(),
       ctr: (() => {
         const tl = ctrToolsNow();
-        return { ok: tl.ok, missing: tl.missing || null, liveMemory: !!tl.souldewCore };
+        // renderer: what the next 3DS game starts with ("auto" may have stepped down for this graphics card)
+        return { ok: tl.ok, missing: tl.missing || null, liveMemory: !!tl.souldewCore, renderer: ctrRendererNow(config).mode };
       })(),
       native: nativeStatus(),
       config: {
@@ -852,6 +866,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
         nag: config.nag || null,
         nagOff: config.nagOff === true,
         padNav: config.padNav !== false,
+        ctrRenderer: validRenderer(config.ctrRenderer),
       },
     };
   });
@@ -861,8 +876,13 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const allowed = {};
     // No path-like keys here: emulatorPaths decides which program /launch runs, libraryFolders which folders are
     // scanned (set via /api/library/folders). Neither may be writable by a plain config POST.
-    for (const k of ['lang', 'onboarded', 'playerName', 'emulatorFor', 'lastRun', 'bootAnimation', 'sounds', 'shareScreen', 'shortcuts', 'controls', 'theme', 'pads', 'speedGuard', 'turboMax', 'fullTurbo', 'nativeCore', 'gpuBackend', 'gpuFallback', 'nag', 'nagOff', 'padNav']) {
+    for (const k of ['lang', 'onboarded', 'playerName', 'emulatorFor', 'lastRun', 'bootAnimation', 'sounds', 'shareScreen', 'shortcuts', 'controls', 'theme', 'pads', 'speedGuard', 'turboMax', 'fullTurbo', 'nativeCore', 'gpuBackend', 'gpuFallback', 'nag', 'nagOff', 'padNav', 'ctrRenderer']) {
       if (k in body) allowed[k] = body[k];
+    }
+    // the 3DS renderer (server/lib/ctrrenderer.mjs): a new choice forgets what "auto" learned – it starts afresh
+    if ('ctrRenderer' in allowed) {
+      allowed.ctrRenderer = validRenderer(allowed.ctrRenderer);
+      allowed.ctrRendererMemo = {};
     }
     // the joke license window (web/lib/nag.mjs): launch count + when it last showed, and its off switch
     if ('nagOff' in allowed) allowed.nagOff = allowed.nagOff === true;
@@ -1399,8 +1419,9 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const romPath = romPathFromUrl(rom);
     // an encrypted cartridge dump: Azahar's core plays decrypted games only – say so instead of "couldn't load the game"
     if (ctrEncrypted(romPath)) throw httpError(409, 'Die 3DS-Spieldatei ist verschlüsselt', 'ctrEncrypted');
-    const id = ctr.start({ rom: romPath, key, tools, scale: [1, 2, 3].includes(scale) ? scale : 1 });
-    return { id, liveMemory: tools.souldewCore };
+    const { mode, auto } = ctrRendererNow();
+    const id = ctr.start({ rom: romPath, key, tools, scale: [1, 2, 3].includes(scale) ? scale : 1, renderer: mode, auto });
+    return { id, liveMemory: tools.souldewCore, renderer: mode, auto };
   });
   // the game's own saves changed? (a fingerprint – see saveStamp)
   route('GET', /^\/api\/ctr\/savestamp$/, (req, m, url) => ({ stamp: saveStamp(ctr.get(url.searchParams.get('id')).save) }));
