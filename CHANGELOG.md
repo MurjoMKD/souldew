@@ -2,6 +2,15 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## 2.7.2
+
+- **Rare Candies for the 3DS games.** The cheats menu's "Add 99 Rare Candies" now works in souldew's own 3DS player
+  too – X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon and Ultra Sun/Ultra Moon (asked for by an Ultra Moon player). They go
+  into the Medicine pocket, onto the candies you carry or into the first free slot, up to 999. As before: only when the
+  run's rules allow cheats, every use shows up in the run's log and counts for the trophies, and souldew checks first
+  that it really found the bag – if anything looks off, nothing is written. Checked in Sun; X/Y, ORAS and Ultra Sun/Ultra
+  Moon use the bag addresses known from other 3DS tools. Not when a 3DS game opens in the Azahar app.
+
 ## 2.7.1
 
 - **Catches sent to the PC are tracked in the Gen 3 games** (#61 – thanks to BigPhitty for the report). With a full

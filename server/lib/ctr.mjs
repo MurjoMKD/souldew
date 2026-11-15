@@ -1,7 +1,8 @@
 // Nintendo 3DS in souldew's own player: the native host (native/ctr-host) runs Azahar's libretro core with Vulkan and
 // speaks a small binary protocol on stdin/stdout (see the header of native/ctr-host/ctrhost.c). This module finds the
 // tools, starts one session at a time and hands the host's output to the player page as it comes (one HTTP stream,
-// the host's messages unchanged); the page's commands (input, speed, save states, which memory to watch) go back in.
+// the host's messages unchanged); the page's commands (input, speed, save states, which memory to watch, cheats) go
+// back in.
 //
 // tools/ctr/<platform>-<arch>/ (bundled with the app, or in the data folder's tools):
 //   ctrhost[.exe]                                  the host
@@ -25,7 +26,23 @@ const VULKAN = { darwin: 'libMoltenVK.dylib', win32: 'vulkan-1.dll', linux: 'lib
 
 /** Message types of the protocol (ctrhost.c). */
 export const MSG = { HELLO: 1, VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7 };
-export const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8 };
+export const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9 };
+
+/** The game's heaps – the only memory a cheat may write (the host checks the same: ctrhost.c write_ranges). */
+export const CTR_WRITE_RANGES = [[0x08000000, 0x10000000], [0x14000000, 0x1c000000], [0x30000000, 0x40000000]];
+export const CTR_WRITE_MAX = 256;
+
+/**
+ * Is this WRITE payload one souldew's player sends? { u32 id, u32 addr, u32 len, old[len], new[len] }: 1–256 bytes
+ * inside one 4 KB page of the game's heaps.
+ */
+export function ctrWriteOk(p) {
+  if (p.length < 12) return false;
+  const addr = p.readUInt32LE(4);
+  const len = p.readUInt32LE(8);
+  if (!len || len > CTR_WRITE_MAX || p.length !== 12 + 2 * len || (addr & 0xfff) + len > 0x1000) return false;
+  return CTR_WRITE_RANGES.some(([a, b]) => addr >= a && addr + len <= b);
+}
 
 /** Is the system's Vulkan loader there (Windows, Linux)? Looked up where the dynamic linker finds it. */
 export function systemVulkan({ platform = process.platform, env = process.env, exists = existsSync } = {}) {
@@ -153,9 +170,10 @@ export function command(type, payload = Buffer.alloc(0)) {
 export function checkCommands(body) {
   const { messages, rest } = splitMessages(body);
   if (rest.length || !messages.length) throw httpError(400, 'Ungültiger Befehl', 'badCommand');
-  const limits = { [CMD.INPUT]: 32, [CMD.SPEED]: 4, [CMD.SAVE]: 0, [CMD.LOAD]: 256 * 1024 * 1024, [CMD.WATCH]: 4 + 16 * 8, [CMD.QUIT]: 0, [CMD.RESET]: 0, [CMD.FRAMESKIP]: 4 };
+  const limits = { [CMD.INPUT]: 32, [CMD.SPEED]: 4, [CMD.SAVE]: 0, [CMD.LOAD]: 256 * 1024 * 1024, [CMD.WATCH]: 4 + 16 * 8, [CMD.QUIT]: 0, [CMD.RESET]: 0, [CMD.FRAMESKIP]: 4, [CMD.WRITE]: 12 + 2 * CTR_WRITE_MAX };
   for (const m of messages) {
     if (!(m.type in limits) || m.payload.length > limits[m.type]) throw httpError(400, 'Ungültiger Befehl', 'badCommand');
+    if (m.type === CMD.WRITE && !ctrWriteOk(m.payload)) throw httpError(400, 'Ungültiger Befehl', 'badCommand');
   }
   return body;
 }

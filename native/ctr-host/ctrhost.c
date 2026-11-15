@@ -11,7 +11,7 @@
 //                    4 MEM    u32 count, count × { u32 addr, u32 len, bytes }  the watched regions, between frames
 //                    5 STATE  a save state (answer to SAVE)
 //                    6 LOG    text
-//                    7 EVENT  json  { event: 'gpu' | 'loaded' | 'error' | 'stateLoaded' | 'stats' | 'title', … }
+//                    7 EVENT  json  { event: 'gpu' | 'loaded' | 'error' | 'stateLoaded' | 'stats' | 'title' | 'written', … }
 //                                   gpu: the Vulkan device chosen (name, type, vendor, driver …) – sent before the core
 //                                   touches it, so a crash in the driver still says which one it was
 //   souldew → host   1 INPUT  u32 joypad bits (RETRO_DEVICE_ID_JOYPAD_*), s16 lx, ly, rx, ry, s16 px, py (pointer,
@@ -19,6 +19,9 @@
 //                    2 SPEED  f32 (1 = normal, 0 = paused, ≥ 100 = as fast as possible)
 //                    3 SAVE   –           4 LOAD  state bytes      5 WATCH  u32 count, count × { u32 addr, u32 len }
 //                    6 QUIT   –           7 RESET –                8 FRAMESKIP u32 (send every n-th picture in turbo)
+//                    9 WRITE  u32 id, u32 addr, u32 len (≤ 256, inside one 4 KB page of the game's heaps), the bytes
+//                             expected there now, the new bytes – a cheat; answered by the event { event: 'written',
+//                             id, ok, why } (see mem_write)
 // Memory reads go through souldew_read_memory (native/azahar-patch: the game process's virtual memory, page by page)
 // between two frames – never torn. Azahar's own core (no patch) runs the game without live data.
 // Builds on macOS, Linux and Windows (compat.h); scripts/build-ctr.mjs builds it.
@@ -1019,6 +1022,93 @@ static const uint8_t *mem_at(uint32_t addr, uint32_t len) {
   return NULL;
 }
 
+// ---- memory writes (cheats) ----------------------------------------------------------------------------------------
+// The core has no write call. But the game's memory is one block inside the core: Azahar keeps all of FCRAM (256 MB)
+// in a single allocation, and every heap page of the game process is a page of it – the stack page in the core's
+// memory map (set at load) points into it. A write (souldew's WRITE command, a few bytes inside one page):
+//   1. only into the game's heaps (application heap, linear heaps) – nothing else is ever touched
+//   2. the bytes there must still be what souldew expects (`old`) – read through the core, so the game hasn't changed
+//      them since souldew looked
+//   3. the page is looked for in the block (its bounds come from the OS: the read-write memory around that stack page)
+//      by its content: every page with the same 4 KB is tried – the new bytes go in, and only the page whose change
+//      shows at the game's address keeps them (read back through the core); every other one is put back at once
+// Between two frames on the core's thread, like the reads. The scan reads the block once at most (a few ms).
+#define MAX_WRITE 256
+#define MAX_TRIES 64
+static const uint32_t write_ranges[][2] = {
+  {0x08000000, 0x10000000}, // application heap (X/Y, Omega Ruby / Alpha Sapphire)
+  {0x14000000, 0x1C000000}, // linear heap
+  {0x30000000, 0x40000000}, // linear heap, newer kernels (Sun / Moon, Ultra Sun / Ultra Moon)
+};
+
+/** Is [addr, addr+len) inside one page of the game's heaps? */
+static bool write_allowed(uint32_t addr, uint32_t len) {
+  if (!len || len > MAX_WRITE || (addr & 0xFFF) + len > 0x1000) return false;
+  for (unsigned i = 0; i < sizeof write_ranges / sizeof *write_ranges; i++)
+    if (addr >= write_ranges[i][0] && (uint64_t)addr + len <= write_ranges[i][1]) return true;
+  return false;
+}
+
+/** A host pointer into the core's FCRAM block: the backing of a heap / stack region in the memory map. */
+static uintptr_t fcram_anchor(void) {
+  for (unsigned i = 0; i < memmap_n; i++) {
+    const struct retro_memory_descriptor *d = &memmap[i];
+    // (VRAM 0x1F000000 and the DSP's memory are other blocks)
+    if (d->ptr && d->len >= 0x1000 && (d->start < 0x14000000 || (d->start >= 0x30000000 && d->start < 0x40000000)))
+      return (uintptr_t)d->ptr + d->offset;
+  }
+  return 0;
+}
+
+/** The read-write memory around `p`, joined with the regions right before and after it, at most `span` each way. */
+static int rw_range(uintptr_t p, uintptr_t span, uintptr_t *lo, uintptr_t *hi) {
+  uintptr_t s, e;
+  if (!compat_rw_region(p, &s, &e)) return 0;
+  const uintptr_t min = p > span ? p - span : 0, max = p + span;
+  for (int i = 0; i < 64 && s > min; i++) {
+    uintptr_t s2, e2;
+    if (!compat_rw_region(s - 1, &s2, &e2) || e2 != s) break;
+    s = s2;
+  }
+  for (int i = 0; i < 64 && e < max; i++) {
+    uintptr_t s2, e2;
+    if (!compat_rw_region(e, &s2, &e2) || s2 != e) break;
+    e = e2;
+  }
+  *lo = s < min ? min : s;
+  *hi = e > max ? max : e;
+  return 1;
+}
+
+/** One write: "ok", or why not ("range", "unsupported", "changed", "notFound"). */
+static const char *mem_write(uint32_t addr, const uint8_t *old, const uint8_t *val, uint32_t len) {
+  if (!write_allowed(addr, len)) return "range";
+  const uintptr_t anchor = fcram_anchor();
+  if (!souldew_read_memory || !anchor) return "unsupported";
+  uint8_t page[0x1000], now[MAX_WRITE];
+  const uint32_t vpage = addr & ~0xFFFu, off = addr & 0xFFF;
+  if (!souldew_read_memory(vpage, page, sizeof page)) return "range"; // (not mapped)
+  if (memcmp(page + off, old, len)) return "changed";
+  uintptr_t lo, hi;
+  if (!rw_range(anchor, 0x10000000, &lo, &hi)) return "unsupported";
+  // pages of the block lie a multiple of 4 KB from the anchor
+  uintptr_t first = anchor - ((anchor - lo) / 0x1000) * 0x1000;
+  int tries = 0;
+  for (uintptr_t c = first; c + 0x1000 <= hi && tries < MAX_TRIES; c += 0x1000) {
+    uint8_t *h = (uint8_t *)c;
+    if (h[off] != page[off] || memcmp(h, page, sizeof page)) continue;
+    tries++;
+    memcpy(h + off, val, len);
+    if (souldew_read_memory(addr, now, len) && !memcmp(now, val, len)) return "ok";
+    memcpy(h + off, old, len); // a copy of the page somewhere else – put back
+  }
+  return "notFound";
+}
+
+#define MAX_WRITES 16
+static struct pending_write { uint32_t id, addr, len; uint8_t old[MAX_WRITE], val[MAX_WRITE]; } writes[MAX_WRITES]; // (cmd_lock)
+static unsigned writes_n;
+
 #define MAX_WATCH 16
 static pthread_mutex_t cmd_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct watch_region { uint32_t addr, len; } watch[MAX_WATCH]; // written by the reader thread (cmd_lock)
@@ -1130,6 +1220,22 @@ static void *reader(void *arg) {
     case 6: want_quit = 1; break;
     case 7: want_reset = 1; break;
     case 8: if (h[1] >= 4) { uint32_t v; memcpy(&v, p, 4); frameskip = v ? (int)v : 1; } break;
+    case 9: // WRITE u32 id, u32 addr, u32 len, old[len], new[len]
+      if (h[1] >= 12) {
+        uint32_t id, addr, len;
+        memcpy(&id, p, 4), memcpy(&addr, p + 4, 4), memcpy(&len, p + 8, 4);
+        if (len && len <= MAX_WRITE && h[1] == 12 + 2 * len) {
+          if (writes_n < MAX_WRITES) {
+            struct pending_write *w = &writes[writes_n++];
+            w->id = id, w->addr = addr, w->len = len;
+            memcpy(w->old, p + 12, len);
+            memcpy(w->val, p + 12 + len, len);
+          } else {
+            send_event("{\"event\":\"written\",\"id\":%u,\"ok\":false,\"why\":\"busy\"}", id);
+          }
+        }
+      }
+      break;
     }
     pthread_mutex_unlock(&cmd_lock);
     free(p);
@@ -1276,8 +1382,18 @@ int main(int argc, char **argv) {
     size_t ll = load_len;
     want_save = want_reset = 0;
     load_data = NULL;
+    static struct pending_write wq[MAX_WRITES];
+    unsigned wn = writes_n;
+    memcpy(wq, writes, wn * sizeof *wq);
+    writes_n = 0;
     pthread_mutex_unlock(&cmd_lock);
     if (quit) break;
+    for (unsigned i = 0; i < wn; i++) {
+      const char *r = mem_write(wq[i].addr, wq[i].old, wq[i].val, wq[i].len);
+      const bool ok = !strcmp(r, "ok");
+      if (ok) logf_("memory write: %u bytes at %08X", wq[i].len, wq[i].addr);
+      send_event("{\"event\":\"written\",\"id\":%u,\"addr\":%u,\"len\":%u,\"ok\":%s,\"why\":\"%s\"}", wq[i].id, wq[i].addr, wq[i].len, ok ? "true" : "false", r);
+    }
     if (reset) core.reset();
     if (ld) {
       bool ok = core.unserialize(ld, ll);

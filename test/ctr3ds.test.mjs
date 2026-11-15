@@ -12,7 +12,7 @@ import { romFeatures } from '../shared/live/features.mjs';
 
 const DATA = mkdtempSync(join(tmpdir(), 'sls-ctr3ds-'));
 process.env.SLS_DATA_DIR = DATA;
-const { splitMessages, command, checkCommands, saveStamp, CMD, MSG } = await import('../server/lib/ctr.mjs');
+const { splitMessages, command, checkCommands, ctrWriteOk, saveStamp, CMD, MSG } = await import('../server/lib/ctr.mjs');
 const { ctrData, romDataFor } = await import('../server/lib/romloc.mjs');
 test.after(() => rmSync(DATA, { recursive: true, force: true }));
 
@@ -199,6 +199,33 @@ test('commands a page may send: known types and sane sizes only', () => {
   bad(command(CMD.INPUT, Buffer.alloc(33)));
   bad(command(CMD.WATCH, Buffer.alloc(4 + 17 * 8)));
   bad(input.subarray(0, 20)); // cut off
+});
+
+test('a cheat (WRITE): a few bytes inside one page of the game\'s heaps, the bytes expected there and the new ones', () => {
+  const write = (addr, len, extra = 0) => {
+    const p = Buffer.alloc(12 + 2 * len + extra);
+    p.writeUInt32LE(7, 0);
+    p.writeUInt32LE(addr, 4);
+    p.writeUInt32LE(len, 8);
+    return p;
+  };
+  // Sun's Medicine pocket, X/Y's (application heap), the old linear heap
+  for (const [a, n] of [[0x330d647c, 4], [0x08c67ece, 2], [0x14001000, 256], [0x3ffffffc, 4]]) {
+    assert.equal(ctrWriteOk(write(a, n)), true, a.toString(16));
+    assert.equal(checkCommands(command(CMD.WRITE, write(a, n))).length, 8 + 12 + 2 * n);
+  }
+  const bad = (p) => {
+    assert.equal(ctrWriteOk(p), false);
+    assert.throws(() => checkCommands(command(CMD.WRITE, p)), (e) => e.status === 400 && e.code === 'badCommand');
+  };
+  bad(write(0x00100000, 4)); // the game's code
+  bad(write(0x1f000000, 4)); // VRAM
+  bad(write(0x07fffffc, 8)); // starts before the heap
+  bad(write(0x330d6ffe, 4)); // across a page
+  bad(write(0x330d647c, 0));
+  bad(write(0x330d6000, 257)); // too long
+  bad(write(0x330d647c, 4, 1)); // the length doesn't match
+  bad(Buffer.alloc(8));
 });
 
 test('the in-game save fingerprint: only the games\' save data on the SD card, changes when the game saves', () => {
