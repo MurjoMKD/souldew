@@ -2,25 +2,14 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
-## Unreleased
+## 2.7.1
 
-- **Catches sent to the PC are tracked in the Gen 3 games** (#61 – thanks @BigPhitty). With a full team a new catch
-  goes straight to the PC, and souldew only saw it once it joined the team. The PC boxes of FireRed/LeafGreen (English,
-  German, French, Italian, Spanish), Emerald (English) and Ruby/Sapphire (English, German) are now read live like in
-  the Gen 4 games: the catch is filed under its route right away, a Pokémon that leaves the boxes and the team is noticed, and the
-  board shows how many Pokémon are in the box. (Not in the expanded-engine ROM hacks yet.)
-- **The fast player starts games whose path has letters like ü or é on Windows.** A run named after the German
-  "Blattgrüne Edition", or a Windows user name like "Jürgen", ended in "game not readable" and souldew fell back to the
-  slower built-in player. Found in the diagnostics file of #61.
-- **Randomizer: "Shop items" says which shops change** (#62). The bundled Universal Pokémon Randomizer ZX only
-  changes the special shops – department store floors, herb and vitamin sellers, the second counter of a Poké Mart –
-  and never the regular Poké Mart list; in FireRed/LeafGreen that's Celadon Department Store 4F and 5F. The option now
-  says so, instead of looking like it didn't work.
-- **Safe graphics mode for a blank window (Windows, Linux).** Windows gets a second Start menu entry, "souldew (safe
-  graphics)", and `souldew --safe-graphics` (or `SOULDEW_SAFE_GRAPHICS=1`) works everywhere: souldew then draws without
-  the graphics card – slower, but the window shows. Settings › General says so and lets you pick another graphics
-  backend, then "Restart normally".
-- The library no longer says Black/White read the PC boxes live – they read the team (with the catch location).
+- **Catches sent to the PC are tracked in the Gen 3 games** (#61 – thanks to BigPhitty for the report). With a full
+  team a new catch goes straight to the PC, and souldew only saw it once it joined the team. The PC boxes of
+  FireRed/LeafGreen (English, German, French, Italian, Spanish), Emerald (English) and Ruby/Sapphire (English, German)
+  are now read live like in the Gen 4 games: the catch is filed under its route right away, a Pokémon that leaves the
+  boxes and the team is noticed, and the board shows how many Pokémon are in the box. (Not in the expanded-engine ROM
+  hacks yet.)
 - **The built-in 3DS player runs on AMD Radeon cards that crashed it** (RX 9070 XT with the 26.x driver: "3DS game has
   stopped" in the first second). The crash is in AMD's Vulkan driver with Azahar's libretro core since 2126.1 – the
   standalone Azahar is fine (azahar-emu/azahar#2742). The player now creates the graphics device the way standalone
@@ -30,6 +19,22 @@
   driver. New setting Settings › Emulators › "3DS renderer": Automatic (the default), Vulkan, Vulkan (compatibility)
   or Software. "Play 3DS games in Azahar" stays on the message when nothing helps. Crash reports from Windows now name
   the functions that led to the crash, for the next driver that misbehaves.
+- **Safe graphics mode for a blank window (Windows, Linux).** Windows gets a second Start menu entry, "souldew (safe
+  graphics)", and `souldew --safe-graphics` (or `SOULDEW_SAFE_GRAPHICS=1`) works everywhere: souldew then draws without
+  the graphics card – slower, but the window shows. Settings › General says so and lets you pick another graphics
+  backend, then "Restart normally".
+- **The fast player starts games whose path has letters like ü or é on Windows.** A run named after the German
+  "Blattgrüne Edition", or a Windows user name like "Jürgen", ended in "game not readable" and souldew fell back to the
+  slower built-in player. Found in the diagnostics file of #61.
+- **Randomizer: "Shop items" says which shops change** (#62 – thanks to BigPhitty for the report). The bundled
+  Universal Pokémon Randomizer ZX only changes the special shops – department store floors, herb and vitamin sellers,
+  the second counter of a Poké Mart – and never the regular Poké Mart list; in FireRed/LeafGreen that's Celadon
+  Department Store 4F and 5F. The option now says so, instead of looking like it didn't work.
+- **Security hardening from @Never-lab** (#56, #58 – thank you!): unpacking a zip refuses an oversized central
+  directory, too many entries and deflate entries that would blow up far beyond their size (a "zip bomb" can no longer
+  fill the memory or the disk), and the mGBA live-bridge script, library ROM and patch downloads, save files and the
+  app's event stream are only handed to souldew's own pages – not to a typed URL or another program on the computer.
+- The library no longer says Black/White read the PC boxes live – they read the team (with the catch location).
 
 ## 2.7.0
 
