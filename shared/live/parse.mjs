@@ -471,7 +471,58 @@ function readGen3(entry, read, T, state = {}) {
     party.push(m);
   }
   const badges = party.length ? gen3Badges(entry, read, T, state, party) : undefined;
-  return badges === undefined ? { party } : { party, badges };
+  const boxes = party.length ? readBoxesGen3(entry, read, T, state) : null;
+  return { party, ...(boxes ? { boxes } : {}), ...(badges === undefined ? {} : { badges }) };
+}
+
+/**
+ * Gen 3 PC boxes: PokemonStorage { u8 currentBox; BoxPokemon boxes[14][30]; … } – 80-byte structs, encrypted and
+ * checksummed like the first 80 bytes of a party struct, an empty slot all zeros. Ruby/Sapphire (English and German)
+ * keep it at a fixed place, Emerald and FireRed/LeafGreen behind gPokemonStoragePtr, right after the two save block
+ * pointers (pret .sym files; the German, French, Italian and Spanish FireRed/LeafGreen: 0x03004F60, pokebot-gen3's
+ * language patches). Without it a catch the game sent to the PC (full party) wasn't seen until it joined the team.
+ * Only the retail engines: an expanded one may have moved or grown the boxes. Read every 2.5 s at most (like Gen 4);
+ * null when the block doesn't read as a PC – mostly failed checksums is a wrong place, not a PC full of Bad Eggs.
+ */
+const GBA_STORAGE = { rs: { at: 0x020300a0 }, e: { ptr: 0x03005d94 }, frlg: { ptr: 0x03005010 } };
+const BOX3_SLOTS = 14 * 30;
+function readBoxesGen3(entry, read, T, state) {
+  if (entry.scan3 || T.expanded3) return null;
+  const id = String(entry.id || '');
+  const L = GBA_STORAGE[/^(ruby|sapphire)_(us|de)$/.test(id) ? 'rs' : /^emerald_/.test(id) ? 'e' : /^(firered|leafgreen)_/.test(id) ? 'frlg' : ''];
+  if (!L) return null;
+  const now = Date.now();
+  if (state.box3 && now - state.box3At < 2500) return state.box3;
+  let at = L.at;
+  if (!at) {
+    const p = read(entry.saveBlockPtrs?.sb2 ? hex(entry.saveBlockPtrs.sb2) + 4 : L.ptr, 4);
+    at = p ? u32le(p, 0) : 0;
+  }
+  const len = 4 + BOX3_SLOTS * 80;
+  if (!(at >= 0x02000000 && at + len <= 0x02040000)) return null;
+  const raw = read(at, len);
+  if (!raw || raw[0] >= 14) return null; // currentBox
+  const boxes = [];
+  const buf = new Uint8Array(100); // parsePk3 reads a party struct: the box part, zeros for level / HP / stats
+  let bad = 0;
+  for (let i = 0; i < BOX3_SLOTS; i++) {
+    const o = 4 + i * 80;
+    const slot = raw.subarray(o, o + 80);
+    if (slot.every((x) => x === 0)) continue;
+    buf.fill(0);
+    buf.set(slot);
+    const m = parsePk3(buf, T);
+    if (!m) continue;
+    if (m.bad) {
+      bad++;
+      continue;
+    }
+    boxes.push({ ...m, status: 0, box: Math.floor(i / 30), slot: i % 30, level: null, hp: null, maxHp: null });
+  }
+  if (bad > 20 && boxes.length < bad) return null;
+  state.box3 = boxes;
+  state.box3At = now;
+  return boxes;
 }
 
 /**
