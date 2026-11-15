@@ -194,6 +194,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "souldew",
+      "include": "build/installer.nsh",
       "uninstallDisplayName": "souldew",
       "deleteAppDataOnUninstall": false,
       "installerIcon": "build/icon.ico",

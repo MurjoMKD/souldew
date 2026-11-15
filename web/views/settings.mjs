@@ -98,19 +98,27 @@ export const GPU_LABELS = () => ({ auto: t('set.gpuAuto', 'Automatic'), d3d11: '
  */
 function GraphicsSetting({ cfg, save }) {
   const [active, setActive] = useState(null);
+  const [safe, setSafe] = useState(false);
   const native = typeof window.sls?.gpuInfo === 'function' && gpuBackends(PLATFORM).length > 1;
   useEffect(() => {
-    if (native) window.sls.gpuInfo().then((g) => setActive(g?.backend || 'auto')).catch(() => {});
+    if (native) {
+      window.sls.gpuInfo().then((g) => {
+        setActive(g?.backend || 'auto');
+        setSafe(!!g?.safe);
+      }).catch(() => {});
+    }
   }, [native]);
   if (!native) return null;
   const value = cfg.gpuBackend || 'auto';
   const labels = GPU_LABELS();
   return html`<div class="stack">
+    ${safe && html`<div class="note row" role="status"><span class="grow">${t('set.gpuSafeNote', 'souldew runs in safe graphics mode (software rendering, slower). If the window stays blank in a normal start, pick another graphics backend here – Vulkan or OpenGL often help – then restart normally.')}</span>
+      <button class="btn small" onClick=${() => window.sls.relaunch?.()}>${t('set.gpuSafeRestart', 'Restart normally')}</button></div>`}
     <div class="grid-2"><label class="field"><span>${t('set.gpu', 'Graphics backend')}</span>
       <select value=${value} onChange=${(e) => save({ gpuBackend: e.target.value })}>
         ${gpuBackends(PLATFORM).map((b) => html`<option value=${b}>${labels[b]}</option>`)}</select></label></div>
     <span class="small faint">${t('set.gpuHint', 'If the game stutters or the sound crackles, try Vulkan. Automatic lets the system decide.')}</span>
-    ${active && active !== value && html`<div class="note row" role="status"><span class="grow">${t('set.gpuRestart', 'The new graphics backend is used after a restart of souldew.')}</span>
+    ${!safe && active && active !== value && html`<div class="note row" role="status"><span class="grow">${t('set.gpuRestart', 'The new graphics backend is used after a restart of souldew.')}</span>
       <button class="btn small" onClick=${() => window.sls.relaunch?.()}>${t('upd.restart', 'Restart now')}</button></div>`}
   </div>`;
 }

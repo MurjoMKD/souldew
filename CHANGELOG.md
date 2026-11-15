@@ -2,6 +2,26 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **Catches sent to the PC are tracked in the Gen 3 games** (#61 – thanks @BigPhitty). With a full team a new catch
+  goes straight to the PC, and souldew only saw it once it joined the team. The PC boxes of FireRed/LeafGreen (English,
+  German, French, Italian, Spanish), Emerald (English) and Ruby/Sapphire (English, German) are now read live like in
+  the Gen 4 games: the catch is filed under its route right away, a Pokémon that leaves the boxes and the team is noticed, and the
+  board shows how many Pokémon are in the box. (Not in the expanded-engine ROM hacks yet.)
+- **The fast player starts games whose path has letters like ü or é on Windows.** A run named after the German
+  "Blattgrüne Edition", or a Windows user name like "Jürgen", ended in "game not readable" and souldew fell back to the
+  slower built-in player. Found in the diagnostics file of #61.
+- **Randomizer: "Shop items" says which shops change** (#62). The bundled Universal Pokémon Randomizer ZX only
+  changes the special shops – department store floors, herb and vitamin sellers, the second counter of a Poké Mart –
+  and never the regular Poké Mart list; in FireRed/LeafGreen that's Celadon Department Store 4F and 5F. The option now
+  says so, instead of looking like it didn't work.
+- **Safe graphics mode for a blank window (Windows, Linux).** Windows gets a second Start menu entry, "souldew (safe
+  graphics)", and `souldew --safe-graphics` (or `SOULDEW_SAFE_GRAPHICS=1`) works everywhere: souldew then draws without
+  the graphics card – slower, but the window shows. Settings › General says so and lets you pick another graphics
+  backend, then "Restart normally".
+- The library no longer says Black/White read the PC boxes live – they read the team (with the catch location).
+
 ## 2.7.0
 
 - **The 3DS games can be randomized.** X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon and Ultra Sun/Ultra Moon now go through

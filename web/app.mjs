@@ -33,7 +33,7 @@ import { useCoffeeFx, CoffeeFx } from './views/coffee.mjs';
 import { LicenseNag } from './views/nag.mjs';
 import { countLaunch, shouldNag } from './lib/nag.mjs';
 import { mySlotIn } from './lib/restart.mjs';
-import { IS_MAC, IS_WIN, shortcut } from './lib/platform.mjs';
+import { IS_MAC, IS_WIN, PLATFORM, shortcut } from './lib/platform.mjs';
 import { TrophiesView, TrophyToasts } from './views/trophies.mjs';
 import { syncTrophies, rememberSlots, watchRun, onTrophyUnlock } from './lib/trophies.mjs';
 
@@ -398,6 +398,17 @@ function App() {
     toast({ kind: 'warn', title: t('set.gpuFallbackTitle', 'Graphics backend reset'), text: gpuFallbackText(gpuFallback), ttl: 20000 });
     api.post('/api/config', { gpuFallback: null }).catch(() => {});
   }, [gpuFallback?.from, gpuFallback?.reason]);
+  // A safe graphics start (--safe-graphics, electron/main.mjs): say what it is and where the backend is changed.
+  useEffect(() => {
+    if (!ready || boot || typeof window.sls?.gpuInfo !== 'function') return;
+    window.sls.gpuInfo().then((g) => {
+      if (!g?.safe) return;
+      const choose = PLATFORM === 'win32' || PLATFORM === 'linux';
+      toast({ kind: 'warn', title: t('set.gpuSafeTitle', 'Safe graphics mode'), ttl: 20000,
+        text: choose ? t('set.gpuSafeToast', 'souldew draws without the graphics card this time (slower). Pick another graphics backend in Settings › General, then restart normally.')
+          : t('set.gpuSafeToastMac', 'souldew draws without the graphics card this time (slower). Quit and start it again for the normal mode.') });
+    }).catch(() => {});
+  }, [ready, boot]);
 
   // ---- partner events → toasts & sounds --------------------------------------------
   useEffect(() => {

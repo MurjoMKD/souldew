@@ -8,7 +8,7 @@ import { setupUpdater } from './updater.mjs';
 import { appImageFromEnv, appImageRelaunch } from './update-core.mjs';
 import { writeFileAtomic } from '../server/lib/fsutil.mjs';
 import { grantPicked } from '../server/lib/grants.mjs';
-import { chromiumSwitches, startDecision, crashDecision, gpuInfoSummary } from '../shared/gpu.mjs';
+import { chromiumSwitches, startDecision, crashDecision, gpuInfoSummary, safeGraphicsRequested, withoutSafeGraphics } from '../shared/gpu.mjs';
 import { sameOrigin, safeExternalUrl, subframeNavigationAllowed, permissionAllowed, isTrustedIpcSender, titleBarColors, initialWindowSize } from './guards.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -72,13 +72,19 @@ function patchConfig(patch) {
 // Graphics backend (Settings › General, shared/gpu.mjs) plus the power-user flags from SOULDEW_CHROMIUM_FLAGS. Only
 // the first instance counts its start – a second one quits right away. A start that never shows the window with a
 // chosen backend is remembered (gpuStart); after a few of them the backend goes back to "Automatic".
-const gpu = { backend: 'auto', switches: [], pending: false };
+// A safe start (--safe-graphics, shared/gpu.mjs) draws without the graphics card and leaves the setting and its start
+// count alone: it is how a player whose window stays blank gets to Settings to pick another backend.
+const gpu = { backend: 'auto', switches: [], pending: false, safe: safeGraphicsRequested(process.argv, process.env) };
 if (primary) {
-  const { backend, patch } = startDecision(readConfig(), process.platform);
-  patchConfig(patch);
-  gpu.backend = backend;
-  gpu.pending = backend !== 'auto';
-  gpu.switches = chromiumSwitches({ backend, platform: process.platform, envFlags: process.env.SOULDEW_CHROMIUM_FLAGS || '' });
+  if (gpu.safe) {
+    app.disableHardwareAcceleration();
+  } else {
+    const { backend, patch } = startDecision(readConfig(), process.platform);
+    patchConfig(patch);
+    gpu.backend = backend;
+    gpu.pending = backend !== 'auto';
+  }
+  gpu.switches = chromiumSwitches({ backend: gpu.backend, platform: process.platform, envFlags: process.env.SOULDEW_CHROMIUM_FLAGS || '', safe: gpu.safe });
   for (const [name, value] of gpu.switches) {
     if (value == null) app.commandLine.appendSwitch(name);
     else app.commandLine.appendSwitch(name, value);
@@ -99,7 +105,7 @@ const goneLog = [];
 app.on('child-process-gone', (e, details) => {
   goneLog.push({ at: new Date().toISOString(), type: details?.type ?? null, reason: details?.reason ?? null, exitCode: details?.exitCode ?? null });
   if (goneLog.length > 20) goneLog.shift();
-  if (details?.type !== 'GPU' || details.reason === 'clean-exit') return;
+  if (details?.type !== 'GPU' || details.reason === 'clean-exit' || gpu.safe) return;
   gpuCrashes++;
   console.warn(`GPU process gone (${details.reason}, ${gpuCrashes}×)`);
   const patch = crashDecision(gpu.backend, gpuCrashes);
@@ -382,10 +388,12 @@ handle('gpu-info', async () => {
   try {
     featureStatus = app.getGPUFeatureStatus();
   } catch {}
-  return { backend: gpu.backend, switches: gpu.switches.map(([n, v]) => (v == null ? `--${n}` : `--${n}=${v}`)), featureStatus, info, processesGone: goneLog.slice() };
+  return { backend: gpu.backend, safe: gpu.safe, switches: gpu.switches.map(([n, v]) => (v == null ? `--${n}` : `--${n}=${v}`)), featureStatus, info, processesGone: goneLog.slice() };
 });
 // "Restart now" (e.g. after changing the graphics backend): quit as usual – the unsaved-progress question may still
-// keep the game open – and start again once quitting is final. Linux: the AppImage file, as the updater does.
+// keep the game open – and start again once quitting is final. Linux: the AppImage file, as the updater does. After a
+// safe start the new one is a normal start (the same arguments without --safe-graphics; SOULDEW_SAFE_GRAPHICS isn't
+// passed on either).
 let relaunching = false;
 handle('relaunch', () => {
   relaunching = true;
@@ -397,8 +405,10 @@ app.on('sls-quit-cancelled', () => {
 app.on('will-quit', () => {
   if (!relaunching) return;
   const appImage = app.isPackaged && LINUX ? appImageFromEnv() : null;
-  if (appImage) app.relaunch(appImageRelaunch(appImage));
-  else app.relaunch();
+  if (gpu.safe) delete process.env.SOULDEW_SAFE_GRAPHICS;
+  const argv = gpu.safe ? withoutSafeGraphics(process.argv) : process.argv;
+  if (appImage) app.relaunch(appImageRelaunch(appImage, argv));
+  else app.relaunch(gpu.safe ? { args: argv.slice(1) } : undefined);
 });
 
 app.on('second-instance', () => {
