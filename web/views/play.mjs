@@ -8,7 +8,7 @@ import { t, ago } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
 import { gameById, gameTitle, speciesName, hackById, itemName, moveName } from '../lib/data.mjs';
 import { players as getPlayers, live, othersOf, runMode, missedQuestion, openAreas, markMissed, locationChoices, areaForCatch, genOfRun, profileOf, rules as getRules, logCheat } from '../lib/run.mjs';
-import { findEntry, readLiveParty, readLiveBattle, withBattleHp, inBattleFlag, LiveTables, expandedEntry } from '/shared/live/parse.mjs';
+import { findEntry, readLiveParty, readLiveBattle, withBattleHp, confirmFaints, inBattleFlag, LiveTables, expandedEntry } from '/shared/live/parse.mjs';
 import { addRareCandies, cheatSupported } from '/shared/live/cheats.mjs';
 import { MusicKeyTracker } from '/shared/live/location.mjs';
 import { PlayHome } from './playhome.mjs';
@@ -947,7 +947,8 @@ export function GameSession({ session, mode }) {
             if (res?.party) {
               expandedMisses = 0;
               const fight = readLiveBattle(ent, e.read, TT, state, res.party);
-              const party = withBattleHp(res.party, fight);
+              // (a Pokémon at 0 HP counts once two reads in a row say so – the tracker files deaths from this party)
+              const party = confirmFaints(withBattleHp(res.party, fight), state);
               setMine(party);
               setBattle(fight);
               inBattle = !!fight;
@@ -1607,7 +1608,7 @@ export function ExternalFeed() {
     if (!liveInfo?.regions || !manifest || externalRun?.runId !== manifest.id) return;
     (async () => {
       const { T, addresses } = await liveTables();
-      const { regionReader } = await import('/shared/live/parse.mjs');
+      const { regionReader, confirmFaints } = await import('/shared/live/parse.mjs');
       const entry = findEntry(addresses, liveInfo.game);
       // the emulator runs another game than this run's (another generation): nothing to file
       const runGen = gameById(manifest.game?.id)?.generation;
@@ -1621,7 +1622,7 @@ export function ExternalFeed() {
         if (sp?.engine === 'expanded') return;
       }
       const res = readLiveParty(entry, regionReader(liveInfo.regions), sp ? T.withSpecies(sp) : T, readState.current);
-      if (res?.party) applySnap({ source: 'live', party: res.party, game: entry.id, ...(res.badges !== undefined ? { badges: res.badges } : {}) });
+      if (res?.party) applySnap({ source: 'live', party: confirmFaints(res.party, readState.current), game: entry.id, ...(res.badges !== undefined ? { badges: res.badges } : {}) });
     })().catch((err) => console.warn('live frame', err));
   }, [liveInfo?.at]);
   return null;
