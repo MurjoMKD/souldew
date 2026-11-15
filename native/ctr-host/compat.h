@@ -47,6 +47,19 @@ static void *dlopen(const char *path, int flags) {
   return (void *)m;
 }
 static void *dlsym(void *lib, const char *name) { return (void *)(uintptr_t)GetProcAddress((HMODULE)lib, name); }
+/**
+ * fopen for the UTF-8 paths compat_utf8_argv gives: msvcrt's fopen reads a path in the ANSI code page, so the game
+ * "Phitty - Blattgrüne Edition.gba" or a user folder like "Jürgen" read as "game not readable" (the fast player then
+ * fell back to the web one). _wfopen takes it as UTF-16.
+ */
+static FILE *compat_fopen(const char *path, const char *mode) {
+  wchar_t *w = compat_wide(path);
+  wchar_t *m = compat_wide(mode);
+  FILE *f = w && m ? _wfopen(w, m) : NULL;
+  free(w);
+  free(m);
+  return f;
+}
 /** The file a loaded function comes from (which vulkan-1.dll the system really gave us). */
 static void compat_lib_path(const void *fn, char *out, size_t cap) {
   HMODULE mod = NULL;
@@ -214,6 +227,7 @@ static compat_ssize compat_read(int fd, void *b, size_t n) { return read(fd, b, 
 static compat_ssize compat_write(int fd, const void *b, size_t n) { return write(fd, b, n); }
 static void compat_init(void) {}
 static char **compat_utf8_argv(int *argc, char **argv) { (void)argc; return argv; } // already bytes as given
+static FILE *compat_fopen(const char *path, const char *mode) { return fopen(path, mode); }
 static double compat_now(void) {
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);

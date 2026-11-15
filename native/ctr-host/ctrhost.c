@@ -889,7 +889,7 @@ static double now_s(void) { return compat_now(); }
 
 static void dump_ppm(const char *path) {
   if (!last_frame) return;
-  FILE *f = fopen(path, "wb");
+  FILE *f = compat_fopen(path, "wb");
   if (!f) return;
   fprintf(f, "P6\n%d %d\n255\n", last_w, last_h);
   for (int i = 0; i < last_w * last_h; i++) {

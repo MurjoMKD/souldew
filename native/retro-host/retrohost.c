@@ -488,7 +488,7 @@ static void load_sram(void) {
   sram_get(&p, &n);
   if (!p) return;
   if (opt_sram && *opt_sram) {
-    FILE *f = fopen(opt_sram, "rb");
+    FILE *f = compat_fopen(opt_sram, "rb");
     if (f) {
       size_t got = fread(p, 1, n, f);
       fclose(f);
@@ -597,7 +597,7 @@ static void *reader(void *arg) {
 // ---- main --------------------------------------------------------------------------------------------------------
 static void dump_ppm(const char *path) {
   if (!frame_buf || !frame_w) return;
-  FILE *f = fopen(path, "wb");
+  FILE *f = compat_fopen(path, "wb");
   if (!f) return;
   fprintf(f, "P6\n%d %d\n255\n", frame_w, frame_h);
   const uint8_t *px = frame_buf + 8;
@@ -615,7 +615,7 @@ static void dump_ppm(const char *path) {
 }
 
 static void *read_file(const char *path, size_t *n) {
-  FILE *f = fopen(path, "rb");
+  FILE *f = compat_fopen(path, "rb");
   if (!f) return NULL;
   fseek(f, 0, SEEK_END);
   long len = ftell(f);
