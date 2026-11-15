@@ -1,5 +1,5 @@
 // The 3DS player (player3ds.html): the game runs in souldew's native host (server/lib/ctr.mjs, native/ctr-host) and
-// arrives here as a stream of pictures, sound and memory; input, speed and save states go back. It offers the Play
+// arrives here as a stream of pictures, sound and memory; input, speed, save states and cheats go back. It offers the Play
 // view the same window.__emu as player.html (EmulatorJS) – save states, speed, screenshots, the partner's mini view
 // and the live reader work the same way. 3DS saves aren't one battery file: they live in the host's save folder of the
 // game / run slot (server side), so getSave() has nothing to hand over.
@@ -7,18 +7,19 @@ import * as controls from '/lib/controls.mjs';
 import { setLang, guessLang, t } from '/lib/i18n.mjs';
 import { serverErrorText } from '/lib/errors.mjs';
 import { findEntry, regionsFor } from '/shared/live/parse.mjs';
+import { cheatRegions } from '/shared/live/cheats.mjs';
 import { CTR_LAYOUTS, ctrLayout, ctrTouchAt } from '/shared/ctrlayout.mjs';
 
 const q = new URLSearchParams(location.search);
 const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7 };
-const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8 };
+const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9 };
 const post = (m) => window.parent?.postMessage(m, location.origin);
 
 const st = {
   id: null, ready: false, paused: false, speed: 1, volume: 1, frames: 0, fps: 0, title: null, width: 400, height: 480,
   mem: [], watching: '', liveMemory: false, error: null, log: [],
 };
-const waiters = { state: [], loaded: [] };
+const waiters = { state: [], loaded: [], written: new Map() }; // written: write id → resolve
 
 // ---- commands -----------------------------------------------------------------------------------------------------
 // One request at a time, and what comes meanwhile goes along with the next one (the server takes several framed
@@ -225,14 +226,14 @@ function onAudio(p) {
   audio.node.port.postMessage(f, [f.buffer]);
 }
 
-// ---- memory (the regions the live reader needs, ten times a second) -------------------------------------------------
+// ---- memory (the regions the live reader needs – and the bag for the cheats – ten times a second) ---------------------
 let addresses = null;
 let extraRegions = []; // __emu.watch(): more regions on top of the game's (diagnostics, research)
 async function watchFor(titleId) {
   try {
     addresses ||= await fetch('/shared/data/addresses.json').then((r) => r.json());
     const entry = titleId ? findEntry(addresses, { platform: '3ds', titleId }) : null;
-    const regions = [...(entry ? regionsFor(entry) : []), ...extraRegions].slice(0, 16);
+    const regions = [...(entry ? [...regionsFor(entry), ...cheatRegions(entry)] : []), ...extraRegions].slice(0, 16);
     const sig = regions.map((r) => `${r.addr}:${r.len}`).join();
     if (sig === st.watching) return;
     st.watching = sig;
@@ -267,6 +268,37 @@ function read(addr, len) {
   return null;
 }
 
+// A cheat: a few bytes inside the memory souldew watches (never anywhere else), written by the host between two frames
+// – and only while the game still holds what souldew read there (the host compares). Resolves true once written (the
+// copy here has it too), false when refused, never reached the host, or no answer came.
+let writeId = 0;
+function write(addr, bytes) {
+  const len = bytes?.length || 0;
+  if (!st.liveMemory || st.ended || !st.id || !len || len > 256 || (addr & 0xfff) + len > 0x1000) return Promise.resolve(false);
+  const old = read(addr, len);
+  if (!old) return Promise.resolve(false);
+  const id = ++writeId;
+  const p = new Uint8Array(12 + 2 * len);
+  const v = new DataView(p.buffer);
+  v.setUint32(0, id, true);
+  v.setUint32(4, addr >>> 0, true);
+  v.setUint32(8, len, true);
+  p.set(old, 12);
+  p.set(bytes, 12 + len);
+  const val = Uint8Array.from(bytes);
+  return new Promise((res) => {
+    const done = (ok) => {
+      if (!waiters.written.delete(id)) return;
+      clearTimeout(timer);
+      if (ok) read(addr, len)?.set(val); // (the next memory message brings the same)
+      res(!!ok);
+    };
+    const timer = setTimeout(() => done(false), 5000);
+    waiters.written.set(id, done);
+    cmd(CMD.WRITE, p).then((sent) => sent || done(false));
+  });
+}
+
 // ---- events ---------------------------------------------------------------------------------------------------------
 function onEvent(p) {
   let e;
@@ -283,6 +315,10 @@ function onEvent(p) {
     if (!/^0+$/.test(e.titleId)) watchFor(e.titleId);
   } else if (e.event === 'stats') st.fps = e.fps;
   else if (e.event === 'stateLoaded') waiters.loaded.splice(0).forEach((f) => f(!!e.ok));
+  else if (e.event === 'written') {
+    if (!e.ok) st.log.push(`write ${Number(e.addr || 0).toString(16)}: ${e.why}`);
+    waiters.written.get(e.id)?.(!!e.ok);
+  }
   else if (e.event === 'error') {
     st.error = e.message;
     showError(t('ctr.failed', 'The 3DS game can’t run: {why}', { why: e.message }));
@@ -347,6 +383,7 @@ async function pump() {
   st.ended = true;
   waiters.state.splice(0).forEach((f) => f(null));
   waiters.loaded.splice(0).forEach((f) => f(false));
+  [...waiters.written.values()].forEach((f) => f(false));
   if (st.error) return;
   // how the host ended (a crash in the graphics driver shows only as an exit code): asked before the page closes it
   let why = '';
@@ -498,7 +535,8 @@ window.__emu = {
   locateRam() {},
   ramInfo: () => ({ base: st.liveMemory && st.mem.length ? 0 : -1, tried: 0 }),
   read,
-  write: null, // no cheats for 3DS games
+  /** A cheat (shared/live/cheats.mjs): a Promise – the host writes between two frames. */
+  write,
   paused: () => st.paused,
   pause() {
     st.paused = true;
@@ -630,6 +668,7 @@ async function start() {
     st.ended = true;
     waiters.state.splice(0).forEach((f) => f(null));
     waiters.loaded.splice(0).forEach((f) => f(false));
+    [...waiters.written.values()].forEach((f) => f(false));
     showError(t('ctr.failed', 'The 3DS game can’t run: {why}', { why: e.message }));
   });
 }

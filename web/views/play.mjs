@@ -1209,14 +1209,15 @@ export function GameSession({ session, mode }) {
     : !cheatsAllowed ? t('cheat.off', 'Cheats are off in this run’s rules.')
       : liveState.status !== 'live' ? t('cheat.waiting', 'Available once live tracking has found your team.')
         : battle?.enemy ? t('cheat.inBattle', 'Not during a battle.') : null;
-  const doCheat = () => {
+  const doCheat = async () => {
     setConfirmCheat(false);
     const e = emu();
     const { entry, state } = liveRef.current;
     if (cheatWhy || !e?.write || !entry) return void focusGame();
     let res;
     try {
-      res = addRareCandies(entry, { read: e.read, write: e.write }, state, 99);
+      // (the 3DS player answers once its host has written – between two frames)
+      res = await addRareCandies(entry, { read: e.read, write: e.write }, state, 99);
     } catch {
       res = { error: 'write' };
     }
