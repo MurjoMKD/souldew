@@ -133,7 +133,9 @@ Game updates aren't loaded (UPR could only write them as LayeredFS).
 
 Notes: New 3DS mode is on (the core's default; a savestate from Old 3DS mode would crash the core, so the play view
 stores states as core `azahar-n3ds` and refuses others). The host exits with `_exit` – the core's unload crashes.
-`CTRHOST_DEBUG=1` logs the input it reads; `ctrhost --bench N --dump` runs a game without souldew. Windows and Linux
+`CTRHOST_DEBUG=1` logs the input it reads; `ctrhost --bench N --dump` runs a game without souldew;
+`--renderer vulkan|compat|software` (or `CTRHOST_RENDERER`) picks how the core draws – Settings › Emulators › "3DS
+renderer", "Automatic" steps down by itself (server/lib/ctrrenderer.mjs). Windows and Linux
 are built by CI only (see above). Research notes: [research/azahar.md](../research/azahar.md).
 
 ## Live runs ("Share to Discord")

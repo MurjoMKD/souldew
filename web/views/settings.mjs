@@ -115,6 +115,32 @@ function GraphicsSetting({ cfg, save }) {
   </div>`;
 }
 
+/** The 3DS renderer's names (server/lib/ctrrenderer.mjs). */
+export const CTR_RENDERER_LABELS = () => ({
+  auto: t('set.ctrRendererAuto', 'Automatic'),
+  vulkan: 'Vulkan',
+  compat: t('set.ctrRendererCompat', 'Vulkan (compatibility)'),
+  software: t('set.ctrRendererSoftware', 'Software'),
+});
+
+/**
+ * How the built-in 3DS player draws. "Automatic" starts with Vulkan and steps down by itself when a graphics driver
+ * can't run it (remembered for that card and driver); the others are fixed.
+ */
+function CtrRendererSetting({ cfg, status, save }) {
+  if (!status?.ctr?.ok) return null;
+  const value = cfg.ctrRenderer || 'auto';
+  const labels = CTR_RENDERER_LABELS();
+  const now = status.ctr.renderer;
+  return html`<div class="stack-s">
+    <div class="grid-2"><label class="field"><span>${t('set.ctrRenderer', '3DS renderer')}</span>
+      <select value=${value} onChange=${(e) => save({ ctrRenderer: e.target.value })}>
+        ${['auto', 'vulkan', 'compat', 'software'].map((m) => html`<option value=${m}>${labels[m]}</option>`)}</select></label></div>
+    <span class="small faint">${t('set.ctrRendererHint', 'How souldew’s built-in 3DS player draws the game. Automatic starts with Vulkan; if the game stops right after starting, it switches to Vulkan (compatibility) and then to Software, and remembers that for this graphics card and driver. Software works on every PC but is much slower. Applies to the next 3DS game you start.')}</span>
+    ${value === 'auto' && now && now !== 'vulkan' && html`<span class="small muted" role="status">${t('set.ctrRendererLearned', 'This graphics card currently plays 3DS games with: {mode}', { mode: labels[now] || now })}</span>`}
+  </div>`;
+}
+
 /** The notice after souldew put the graphics backend back to "Automatic" itself (shown once, see app.mjs). */
 export function gpuFallbackText(notice) {
   const backend = GPU_LABELS()[notice.from] || notice.from;
@@ -352,6 +378,7 @@ export function SettingsView() {
       <p class="small muted">${t('set.emuText', 'The built-in emulator plays every system up to the Nintendo 3DS and has the best live sync. 3DS games can also run in Azahar (for example when a graphics card can’t run the built-in 3DS player). External emulators are optional otherwise.')}</p>
       ${status?.native?.ok && html`<label class="check"><input type="checkbox" checked=${cfg.nativeCore !== false} onChange=${(e) => save({ nativeCore: e.target.checked })} /><span>${t('set.native', 'Fast player for DS, GBA and Game Boy')}
         <span class="hint">${t('set.nativeHint', 'Runs the game with the real emulators (melonDS, mGBA, Gambatte) directly on your computer: full speed even on weaker PCs, and fast-forward that really reaches 4× and more. Live sync, cheats, save states and the in-game save work as before. Save states from the other player can’t be loaded here (and the other way round). Off: the browser emulator as before. Applies to the next game you start.')}</span></span></label>`}
+      <${CtrRendererSetting} cfg=${cfg} status=${status} save=${save} />
       <table class="data"><thead><tr><th>${t('set.system', 'System')}</th><th>${t('set.useEmu', 'Play with')}</th></tr></thead><tbody>
         ${SYSTEMS.map(([sys, label]) => html`<tr><td>${label}</td><td>
           <select value=${externalOnly(sys, status) ? Object.keys(status?.emulators || {}).find((id) => status.emulators[id].systems.includes(sys)) : cfg.emulatorFor?.[sys] || 'builtin'}

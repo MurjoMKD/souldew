@@ -639,6 +639,14 @@ export function GameSession({ session, mode }) {
         diag('perf', { type: 'ctrFailed', message: String(e.data.message || '').slice(0, 500), detail: String(e.data.detail || '').slice(0, 1000) });
         setCtrFail({ message: String(e.data.message || ''), code: e.data.code ? String(e.data.code) : null, detail: String(e.data.detail || '') });
       }
+      // the 3DS player stepped down to a safer renderer by itself (Settings › Emulators › 3DS renderer: Automatic)
+      if (e.data?.type === 'emu-renderer' && target.system === '3ds') {
+        const labels = { compat: t('set.ctrRendererCompat', 'Vulkan (compatibility)'), software: t('set.ctrRendererSoftware', 'Software') };
+        diag('perf', { type: 'ctrRenderer', from: String(e.data.from || ''), to: String(e.data.to || '') });
+        toast({ kind: 'warn', title: t('ctr.rendererSwitched', '3DS player: now with {mode}', { mode: labels[e.data.to] || String(e.data.to) }),
+          text: e.data.to === 'software' ? t('ctr.rendererSwitchedSoftware', 'The graphics driver couldn’t run the game with Vulkan, so it runs without the graphics card now – slower, but it runs. souldew remembers this for this graphics card; you can change it in Settings › Emulators.')
+            : t('ctr.rendererSwitchedCompat', 'The game stopped right after starting, so souldew started it again in a more compatible Vulkan mode. souldew remembers this for this graphics card; you can change it in Settings › Emulators.') });
+      }
       if (e.data?.type === 'emu-key') onKey(e.data, true);
       if (e.data?.type === 'emu-pad' && ['turbo', 'pause'].includes(e.data.action)) act.current[e.data.action]();
       // EmulatorJS flushed the battery save by itself (periodic save) – write it to disk now.

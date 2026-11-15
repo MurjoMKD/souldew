@@ -2524,5 +2524,14 @@
   "rnd.totemPokemonMod.UNCHANGED": "Sin cambios",
   "rnd.totemPokemonMod.help": "Los jefes al final de las pruebas de las islas.",
   "rnd.typesFollowMegaEvolutions": "Las megaevoluciones conservan los tipos",
-  "new.progFinish": "Terminando el nuevo archivo de juego para {name} …"
+  "new.progFinish": "Terminando el nuevo archivo de juego para {name} …",
+  "set.ctrRenderer": "Renderizador de 3DS",
+  "set.ctrRendererAuto": "Automático",
+  "set.ctrRendererCompat": "Vulkan (compatibilidad)",
+  "set.ctrRendererSoftware": "Software",
+  "set.ctrRendererHint": "Cómo dibuja el juego el reproductor 3DS integrado de souldew. Automático empieza con Vulkan; si el juego se detiene justo después de arrancar, cambia a Vulkan (compatibilidad) y después a Software, y lo recuerda para esta tarjeta gráfica y este controlador. Software funciona en cualquier PC, pero es mucho más lento. Se aplica al próximo juego de 3DS que inicies.",
+  "set.ctrRendererLearned": "Esta tarjeta gráfica ejecuta ahora los juegos de 3DS con: {mode}",
+  "ctr.rendererSwitched": "Reproductor 3DS: ahora con {mode}",
+  "ctr.rendererSwitchedSoftware": "El controlador gráfico no pudo ejecutar el juego con Vulkan, así que ahora funciona sin la tarjeta gráfica – más lento, pero funciona. souldew lo recuerda para esta tarjeta gráfica; puedes cambiarlo en Ajustes › Emuladores.",
+  "ctr.rendererSwitchedCompat": "El juego se detuvo justo después de arrancar, así que souldew lo inició de nuevo en un modo Vulkan más compatible. souldew lo recuerda para esta tarjeta gráfica; puedes cambiarlo en Ajustes › Emuladores."
 }

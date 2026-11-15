@@ -16,7 +16,7 @@ const post = (m) => window.parent?.postMessage(m, location.origin);
 
 const st = {
   id: null, ready: false, paused: false, speed: 1, volume: 1, frames: 0, fps: 0, title: null, width: 400, height: 480,
-  mem: [], watching: '', liveMemory: false, error: null, log: [],
+  mem: [], watching: '', liveMemory: false, error: null, log: [], renderer: null,
 };
 const waiters = { state: [], loaded: [] };
 
@@ -278,6 +278,10 @@ function onEvent(p) {
   if (e.event === 'loaded') {
     st.liveMemory = !!e.memory;
     startAudio(e.sampleRate);
+    // a second "loaded" with another renderer: the server started the host again with a safer one (renderer "auto",
+    // server/lib/ctrrenderer.mjs) – the play view says so
+    if (e.renderer && st.renderer && e.renderer !== st.renderer) post({ type: 'emu-renderer', from: st.renderer, to: e.renderer });
+    if (e.renderer) st.renderer = e.renderer;
   } else if (e.event === 'title') {
     st.title = e.titleId;
     if (!/^0+$/.test(e.titleId)) watchFor(e.titleId);
@@ -568,7 +572,7 @@ window.__emu = {
   },
   muted: () => st.volume === 0,
   setTurboAudio() {},
-  perf: () => ({ fps: st.fps, frames: st.frames, title: st.title, liveMemory: st.liveMemory, error: st.error, log: st.log.slice(-20) }),
+  perf: () => ({ fps: st.fps, frames: st.frames, title: st.title, liveMemory: st.liveMemory, error: st.error, renderer: st.renderer, log: st.log.slice(-20) }),
   /** Tests / diagnostics: hold buttons by name (["a"], ["up", "b"] …) – what a controller would do. */
   hold(names = []) {
     inp.keys = names.reduce((m, n) => (n in BIT ? m | (1 << BIT[n]) : m), 0);
@@ -624,6 +628,7 @@ async function start() {
   if (!res.ok) return showError(serverErrorText(j, res.status), j.code || null);
   st.id = j.id;
   st.liveMemory = !!j.liveMemory;
+  st.renderer = j.renderer || null;
   const stop = () => fetch('/api/ctr/stop', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json', 'x-soullink': '1' }, body: JSON.stringify({ id: st.id }) }).catch(() => {});
   addEventListener('pagehide', stop);
   pump().catch((e) => {
