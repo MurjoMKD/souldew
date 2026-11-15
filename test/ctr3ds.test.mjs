@@ -303,7 +303,8 @@ const write = (b) => new Promise((r) => (process.stdout.write(b) ? r() : process
 })();
 `;
 const { Writable } = await import('node:stream');
-const { spawn } = await import('node:child_process');
+const { fakeHostSpawn, killFakeHosts } = await import('./fixtures/fakehosts.mjs');
+test.afterEach(killFakeHosts); // (a test that failed half way leaves its stand-in host running)
 class FakeRes extends Writable {
   constructor({ hold = false } = {}) {
     super({ highWaterMark: 64 * 1024 });
@@ -327,7 +328,7 @@ const until = async (fn, ms = 10000) => {
 };
 const fakeSessions = async () => {
   const { CtrSessions } = await import('../server/lib/ctr.mjs');
-  return new CtrSessions({ spawn: (cmd, args, o) => spawn(process.execPath, ['-e', FAKE_HOST, '--', ...args], o) });
+  return new CtrSessions({ spawn: fakeHostSpawn(FAKE_HOST) });
 };
 const tools = { host: 'ctrhost', core: 'core', vulkan: 'vk' };
 

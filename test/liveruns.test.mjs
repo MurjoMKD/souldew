@@ -430,7 +430,10 @@ const seen = []; // every answer of the local server and every log line, checked
 const logs = [];
 const realConsole = { log: console.log, warn: console.warn, error: console.error };
 
-before(async () => {
+// (the start is kept: should it be cut short, `after` still waits for both servers and closes them – a server left
+// listening would keep the test file, and `npm test`, from ever ending)
+let starting;
+before(() => (starting = (async () => {
   bot = mockBot();
   await new Promise((r) => bot.server.listen(0, '127.0.0.1', r));
   process.env.SOULDEW_LIVE_URL = `http://127.0.0.1:${bot.server.address().port}`;
@@ -438,11 +441,14 @@ before(async () => {
   const { startServer } = await import('../server/app.mjs');
   app = await startServer({ port: 0, background: false });
   base = app.url;
-});
-after(() => {
+})()));
+after(async () => {
+  await starting?.catch(() => {});
   Object.assign(console, realConsole);
-  app?.server.close();
-  bot?.server.close();
+  for (const s of [app?.server, bot?.server]) {
+    s?.closeAllConnections?.();
+    s?.close();
+  }
   rmSync(DATA, { recursive: true, force: true });
 });
 

@@ -7,11 +7,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { PassThrough } from 'node:stream';
+import { fakeHostSpawn, killFakeHosts } from './fixtures/fakehosts.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'sls-ctrrenderer-'));
 test.after(() => rmSync(TMP, { recursive: true, force: true }));
+test.afterEach(killFakeHosts); // (a test that failed half way leaves its stand-in host running)
 process.env.SLS_DATA_DIR = TMP;
 const R = await import('../server/lib/ctrrenderer.mjs');
 const { CtrSessions, MSG, CMD, command, splitMessages } = await import('../server/lib/ctr.mjs');
@@ -137,7 +138,7 @@ const quietly = async (fn) => {
   }
 };
 const sessions = (env = {}) => {
-  const ctr = new CtrSessions({ spawn: (cmd, args, o) => spawn(process.execPath, ['-e', FAKE, '--', ...args], { ...o, env: { ...process.env, ...env } }) });
+  const ctr = new CtrSessions({ spawn: fakeHostSpawn(FAKE, env) });
   ctr.logFile = join(TMP, 'logs', 'players.log');
   return ctr;
 };

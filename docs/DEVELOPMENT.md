@@ -10,7 +10,7 @@ Requirements: **Node.js ≥ 22.15** and git; macOS (Apple silicon) to build the 
 npm ci                 # install dependencies
 npm run app            # Electron app in development mode (data in the Electron profile)
 npm start              # server only, UI in the browser (data in the project folder: runs/, library/)
-npm test               # all tests (node --test "test/*.test.mjs")
+npm test               # all tests (node --test "test/*.test.mjs"); a test that waits forever fails after 10 min
 npm run lint           # ESLint (eslint.config.mjs)
 node scripts/extract-i18n.mjs   # sync UI strings, list missing/stale translations
 npm run ctr            # macOS: build the 3DS part (see "Nintendo 3DS" below)
