@@ -2524,5 +2524,10 @@
   "rnd.totemPokemonMod.UNCHANGED": "Unverändert",
   "rnd.totemPokemonMod.help": "Die Bosse am Ende der Inselprüfungen.",
   "rnd.typesFollowMegaEvolutions": "Mega-Entwicklungen behalten die Typen",
-  "new.progFinish": "Stelle die neue Spieldatei für {name} fertig …"
+  "new.progFinish": "Stelle die neue Spieldatei für {name} fertig …",
+  "set.gpuSafeNote": "souldew läuft im sicheren Grafikmodus (Software-Darstellung, langsamer). Bleibt das Fenster bei einem normalen Start leer, wähl hier eine andere Grafik-Schnittstelle – oft helfen Vulkan oder OpenGL – und starte dann normal neu.",
+  "set.gpuSafeRestart": "Normal neu starten",
+  "set.gpuSafeTitle": "Sicherer Grafikmodus",
+  "set.gpuSafeToast": "souldew zeichnet diesmal ohne Grafikkarte (langsamer). Wähl unter Einstellungen › Allgemein eine andere Grafik-Schnittstelle und starte dann normal neu.",
+  "set.gpuSafeToastMac": "souldew zeichnet diesmal ohne Grafikkarte (langsamer). Für den normalen Modus beenden und neu starten."
 }

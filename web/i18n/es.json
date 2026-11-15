@@ -2524,5 +2524,10 @@
   "rnd.totemPokemonMod.UNCHANGED": "Sin cambios",
   "rnd.totemPokemonMod.help": "Los jefes al final de las pruebas de las islas.",
   "rnd.typesFollowMegaEvolutions": "Las megaevoluciones conservan los tipos",
-  "new.progFinish": "Terminando el nuevo archivo de juego para {name} …"
+  "new.progFinish": "Terminando el nuevo archivo de juego para {name} …",
+  "set.gpuSafeNote": "souldew funciona en modo gráfico seguro (renderizado por software, más lento). Si la ventana se queda en blanco al iniciar normalmente, elige aquí otra interfaz gráfica – Vulkan u OpenGL suelen ayudar – y luego reinicia normalmente.",
+  "set.gpuSafeRestart": "Reiniciar normalmente",
+  "set.gpuSafeTitle": "Modo gráfico seguro",
+  "set.gpuSafeToast": "souldew dibuja esta vez sin la tarjeta gráfica (más lento). Elige otra interfaz gráfica en Ajustes › General y luego reinicia normalmente.",
+  "set.gpuSafeToastMac": "souldew dibuja esta vez sin la tarjeta gráfica (más lento). Ciérralo y vuelve a abrirlo para el modo normal."
 }

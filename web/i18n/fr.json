@@ -2524,5 +2524,10 @@
   "rnd.totemPokemonMod.UNCHANGED": "Inchangé",
   "rnd.totemPokemonMod.help": "Les boss à la fin des épreuves des îles.",
   "rnd.typesFollowMegaEvolutions": "Les Méga-Évolutions gardent les types",
-  "new.progFinish": "Finalisation du nouveau fichier de jeu pour {name} …"
+  "new.progFinish": "Finalisation du nouveau fichier de jeu pour {name} …",
+  "set.gpuSafeNote": "souldew tourne en mode graphique sans échec (rendu logiciel, plus lent). Si la fenêtre reste vide lors d’un démarrage normal, choisis ici une autre interface graphique – Vulkan ou OpenGL aident souvent – puis redémarre normalement.",
+  "set.gpuSafeRestart": "Redémarrer normalement",
+  "set.gpuSafeTitle": "Mode graphique sans échec",
+  "set.gpuSafeToast": "souldew dessine cette fois sans la carte graphique (plus lent). Choisis une autre interface graphique dans Paramètres › Général, puis redémarre normalement.",
+  "set.gpuSafeToastMac": "souldew dessine cette fois sans la carte graphique (plus lent). Quitte et relance-le pour le mode normal."
 }
