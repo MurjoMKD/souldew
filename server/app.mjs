@@ -22,7 +22,7 @@ import { EMULATORS, detectEmulator, installEmulator, launchRom, revealInFileMana
 import { LiveBridge } from './lib/livebridge.mjs';
 import { AzaharBridge, enableRpc } from './lib/azahar.mjs';
 import { CtrSessions, ctrTools, saveStamp, ctrInventory, redactHome, ctrEncrypted } from './lib/ctr.mjs';
-import { pickRenderer, validRenderer, gpuKey, remember } from './lib/ctrrenderer.mjs';
+import { pickRenderer, validRenderer, gpuKey, remember, validScale, scaleFor } from './lib/ctrrenderer.mjs';
 import { NativeSessions, nativeTools, NATIVE_CORES } from './lib/native.mjs';
 import { moveToGraveyard, parseHgssSave } from '../shared/gen4save.mjs';
 import { listPresets, savePreset, deletePreset } from './lib/presets.mjs';
@@ -841,7 +841,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       ctr: (() => {
         const tl = ctrToolsNow();
         // renderer: what the next 3DS game starts with ("auto" may have stepped down for this graphics card)
-        return { ok: tl.ok, missing: tl.missing || null, liveMemory: !!tl.souldewCore, renderer: ctrRendererNow(config).mode };
+        return { ok: tl.ok, missing: tl.missing || null, liveMemory: !!tl.souldewCore, renderer: ctrRendererNow(config).mode, scale: validScale(config.ctrScale) };
       })(),
       native: nativeStatus(),
       config: {
@@ -867,6 +867,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
         nagOff: config.nagOff === true,
         padNav: config.padNav !== false,
         ctrRenderer: validRenderer(config.ctrRenderer),
+        ctrScale: validScale(config.ctrScale),
       },
     };
   });
@@ -876,7 +877,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const allowed = {};
     // No path-like keys here: emulatorPaths decides which program /launch runs, libraryFolders which folders are
     // scanned (set via /api/library/folders). Neither may be writable by a plain config POST.
-    for (const k of ['lang', 'onboarded', 'playerName', 'emulatorFor', 'lastRun', 'bootAnimation', 'sounds', 'shareScreen', 'shortcuts', 'controls', 'theme', 'pads', 'speedGuard', 'turboMax', 'fullTurbo', 'nativeCore', 'gpuBackend', 'gpuFallback', 'nag', 'nagOff', 'padNav', 'ctrRenderer']) {
+    for (const k of ['lang', 'onboarded', 'playerName', 'emulatorFor', 'lastRun', 'bootAnimation', 'sounds', 'shareScreen', 'shortcuts', 'controls', 'theme', 'pads', 'speedGuard', 'turboMax', 'fullTurbo', 'nativeCore', 'gpuBackend', 'gpuFallback', 'nag', 'nagOff', 'padNav', 'ctrRenderer', 'ctrScale']) {
       if (k in body) allowed[k] = body[k];
     }
     // the 3DS renderer (server/lib/ctrrenderer.mjs): a new choice forgets what "auto" learned – it starts afresh
@@ -884,6 +885,8 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       allowed.ctrRenderer = validRenderer(allowed.ctrRenderer);
       allowed.ctrRendererMemo = {};
     }
+    // the 3DS resolution (1×–3×, server/lib/ctrrenderer.mjs CTR_SCALES): applies to the next 3DS game
+    if ('ctrScale' in allowed) allowed.ctrScale = validScale(allowed.ctrScale);
     // the joke license window (web/lib/nag.mjs): launch count + when it last showed, and its off switch
     if ('nagOff' in allowed) allowed.nagOff = allowed.nagOff === true;
     if ('nag' in allowed) {
@@ -1419,9 +1422,12 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const romPath = romPathFromUrl(rom);
     // an encrypted cartridge dump: Azahar's core plays decrypted games only – say so instead of "couldn't load the game"
     if (ctrEncrypted(romPath)) throw httpError(409, 'Die 3DS-Spieldatei ist verschlüsselt', 'ctrEncrypted');
-    const { mode, auto } = ctrRendererNow();
-    const id = ctr.start({ rom: romPath, key, tools, scale: [1, 2, 3].includes(scale) ? scale : 1, renderer: mode, auto });
-    return { id, liveMemory: tools.souldewCore, renderer: mode, auto };
+    const cfg = loadConfig();
+    const { mode, auto } = ctrRendererNow(cfg);
+    // the resolution: Settings › Emulators › "3DS resolution" unless the page asks for one (tests, diagnostics)
+    const sc = scaleFor(Number.isInteger(scale) ? scale : cfg.ctrScale, mode);
+    const id = ctr.start({ rom: romPath, key, tools, scale: sc, renderer: mode, auto });
+    return { id, liveMemory: tools.souldewCore, renderer: mode, auto, scale: sc };
   });
   // the game's own saves changed? (a fingerprint – see saveStamp)
   route('GET', /^\/api\/ctr\/savestamp$/, (req, m, url) => ({ stamp: saveStamp(ctr.get(url.searchParams.get('id')).save) }));

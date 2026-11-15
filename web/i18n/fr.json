@@ -1182,6 +1182,8 @@
   "play.layout3ds": "Disposition des écrans",
   "play.layout3dsHint": "Clique sur l’écran du bas pour le toucher, où qu’il soit. Le changement est immédiat, sans redémarrer le jeu.",
   "play.layout3dsNoTouch": "L’écran tactile est masqué dans cette disposition – change de disposition pour le toucher.",
+  "play.smooth3ds": "Image lissée",
+  "play.ctrScaleNow": "Résolution : {n} – Réglages › Émulateurs › Résolution 3DS (s’applique au prochain lancement).",
   "play.layoutLr": "Écrans côte à côte",
   "play.layoutTb": "Écrans l’un sur l’autre",
   "play.liveNoneSolo": "Le suivi en direct lit les jeux Pokémon – celui-ci s’en passe.",
@@ -2537,6 +2539,9 @@
   "set.ctrRendererSoftware": "Logiciel",
   "set.ctrRendererHint": "La façon dont le lecteur 3DS intégré de souldew affiche le jeu. Automatique commence avec Vulkan ; si le jeu s’arrête juste après le démarrage, il passe à Vulkan (compatibilité) puis au rendu logiciel, et s’en souvient pour cette carte graphique et ce pilote. Le rendu logiciel fonctionne sur tous les PC mais est beaucoup plus lent. S’applique au prochain jeu 3DS que tu lances.",
   "set.ctrRendererLearned": "Cette carte graphique lance actuellement les jeux 3DS avec : {mode}",
+  "set.ctrScale": "Résolution 3DS",
+  "set.ctrScale1": "1× (native)",
+  "set.ctrScaleHint": "Affiche les jeux 3DS à deux ou trois fois leur résolution d’origine – plus net et moins pixelisé, mais plus de travail pour la carte graphique. S’applique au prochain jeu 3DS que tu lances. Le rendu logiciel joue toujours en 1×, tout comme le repli automatique après un plantage.",
   "ctr.rendererSwitched": "Lecteur 3DS : maintenant avec {mode}",
   "ctr.rendererSwitchedSoftware": "Le pilote graphique n’a pas pu lancer le jeu avec Vulkan, il tourne donc maintenant sans la carte graphique – plus lentement, mais il tourne. souldew s’en souvient pour cette carte graphique ; tu peux le changer dans Paramètres › Émulateurs.",
   "ctr.rendererSwitchedCompat": "Le jeu s’est arrêté juste après le démarrage, souldew l’a donc relancé dans un mode Vulkan plus compatible. souldew s’en souvient pour cette carte graphique ; tu peux le changer dans Paramètres › Émulateurs."

@@ -257,6 +257,8 @@ export function GameSession({ session, mode }) {
   // 3DS screens (shared/ctrlayout.mjs): the player page arranges them, switchable while playing
   const [layout3ds, setLayout3dsState] = useState(() => (CTR_LAYOUTS.includes(ls.get('sl-3ds-layout', 'tb')) ? ls.get('sl-3ds-layout', 'tb') : 'tb'));
   const [layoutOpen, setLayoutOpen] = useState(false);
+  // 3DS: the screens scaled smoothly (linear filtering) instead of crisp pixels – switchable while playing
+  const [smooth3ds, setSmooth3dsState] = useState(() => ls.get('sl-3ds-smooth', false) === true);
   const [ctrFail, setCtrFail] = useState(null); // the 3DS player stopped: { message } – offers Azahar instead
   const [fs, setFs] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -309,7 +311,9 @@ export function GameSession({ session, mode }) {
   const core = target.system === '3ds' ? 'azahar-n3ds' : nativeOn ? status.native.ids[target.system] : isDs && /^(IPK|IPG|IRB|IRA|IRE|IRD)/.test(target.code || '') ? 'desmume' : '';
   // What fast-forward really reaches in this game on this computer (lib/reach.mjs), remembered per game and core: the
   // turbo steps it can't reach aren't offered – the highest one then plays as fast as the computer manages.
-  const reachKey = `sl-reach-${target.system}-${target.code || target.key}-${core || 'default'}`;
+  // (3DS: "-2" – before 2.7.2 the 3DS player counted the pictures it got, not the frames the game ran, and so measured
+  // every fast-forward step as about 1×: the lists remembered then would keep offering only 1× and 4×)
+  const reachKey = `sl-reach-${target.system}-${target.code || target.key}-${core || 'default'}${target.system === '3ds' ? '-2' : ''}`;
   const [reachList, setReachList] = useState(() => ls.get(reachKey, []));
   const reach = typicalReach(reachList);
   const reachRef = useRef(reach);
@@ -509,6 +513,11 @@ export function GameSession({ session, mode }) {
       setLayout3dsState(id);
       ls.set('sl-3ds-layout', id);
       emu()?.setOption?.('ctr_layout', id);
+    },
+    smooth3ds: (on) => {
+      setSmooth3dsState(!!on);
+      ls.set('sl-3ds-smooth', !!on);
+      emu()?.setOption?.('ctr_smooth', !!on);
     },
     layout: () => {
       if (target.system === '3ds') {
@@ -1175,7 +1184,7 @@ export function GameSession({ session, mode }) {
   const [wasmSrc] = useState(() => {
     // 3DS: souldew's own player page – the game runs in the native host (server/lib/ctr.mjs), its saves live in the
     // host's folder for this game / run slot (target.key)
-    if (target.system === '3ds') return `/player3ds.html?rom=${encodeURIComponent(target.rom)}&key=${encodeURIComponent(target.key)}&name=${encodeURIComponent(target.name)}&layout=${layout3ds}`;
+    if (target.system === '3ds') return `/player3ds.html?rom=${encodeURIComponent(target.rom)}&key=${encodeURIComponent(target.key)}&name=${encodeURIComponent(target.name)}&layout=${layout3ds}${smooth3ds ? '&smooth=1' : ''}`;
     // EmulatorJS names the ROM (and its browser-side save) after the URL's last segment → make it unique per game.
     const romKey = `${hash(new TextEncoder().encode(target.key)).replace(/\D/g, '')}`;
     const romUrl = `/rom/g${romKey}.${target.system}?src=${encodeURIComponent(target.rom)}`;
@@ -1314,6 +1323,8 @@ export function GameSession({ session, mode }) {
               ${CTR_LAYOUTS.map((id) => html`<button class=${`btn small ${layout3ds === id ? 'primary' : 'ghost'}`} aria-pressed=${layout3ds === id}
                 onClick=${() => { actions.layout3ds(id); setLayoutOpen(false); focusGame(); }}>${ctrLayoutLabel(id)}</button>`)}
               <span class="tiny faint">${layout3ds === 'top' ? t('play.layout3dsNoTouch', 'The touch screen is hidden in this layout – switch back to tap it.') : t('play.layout3dsHint', 'Click the bottom screen to touch it, wherever it is. Switches right away, without restarting the game.')}</span>
+              <label class="row nowrap small"><input type="checkbox" checked=${smooth3ds} onChange=${(e) => actions.smooth3ds(e.target.checked)} />${t('play.smooth3ds', 'Smooth picture')}</label>
+              <span class="tiny faint">${t('play.ctrScaleNow', 'Resolution: {n} – Settings › Emulators › 3DS resolution (applies to the next start).', { n: (status?.config?.ctrScale || 1) > 1 ? `${status.config.ctrScale}×` : t('set.ctrScale1', '1× (native)') })}</span>
             </div>`}
           </span>`}
           ${isDs && btn(layout === 'lr' ? 'layoutTb' : 'layoutLr', layout === 'lr' ? t('play.layoutTb', 'Screens on top of each other') : t('play.layoutLr', 'Screens side by side'), actions.layout)}

@@ -1182,6 +1182,8 @@
   "play.layout3ds": "Bildschirm-Anordnung",
   "play.layout3dsHint": "Klicke auf den unteren Bildschirm, um ihn zu berühren – egal wo er liegt. Wechselt sofort, ohne Neustart des Spiels.",
   "play.layout3dsNoTouch": "Der Touchscreen ist in dieser Anordnung ausgeblendet – wechsle zurück, um ihn anzutippen.",
+  "play.smooth3ds": "Weiches Bild",
+  "play.ctrScaleNow": "Auflösung: {n} – Einstellungen › Emulatoren › 3DS-Auflösung (gilt ab dem nächsten Start).",
   "play.layoutLr": "Bildschirme nebeneinander",
   "play.layoutTb": "Bildschirme übereinander",
   "play.liveNoneSolo": "Live-Tracking liest Pokémon-Spiele – dieses läuft ohne.",
@@ -2537,6 +2539,9 @@
   "set.ctrRendererSoftware": "Software",
   "set.ctrRendererHint": "Wie souldews eingebauter 3DS-Player das Spiel zeichnet. Automatisch startet mit Vulkan; bricht das Spiel direkt nach dem Start ab, wechselt es zu Vulkan (Kompatibilität) und dann zu Software und merkt sich das für diese Grafikkarte und diesen Treiber. Software läuft auf jedem PC, ist aber deutlich langsamer. Gilt ab dem nächsten 3DS-Spiel, das du startest.",
   "set.ctrRendererLearned": "Diese Grafikkarte spielt 3DS-Spiele gerade mit: {mode}",
+  "set.ctrScale": "3DS-Auflösung",
+  "set.ctrScale1": "1× (nativ)",
+  "set.ctrScaleHint": "Zeichnet die 3DS-Spiele in doppelter oder dreifacher Auflösung – schärfer und weniger pixelig, aber mehr Arbeit für die Grafikkarte. Gilt ab dem nächsten 3DS-Spiel, das du startest. Der Software-Renderer spielt immer in 1×, ebenso das automatische Zurückschalten nach einem Absturz.",
   "ctr.rendererSwitched": "3DS-Player: jetzt mit {mode}",
   "ctr.rendererSwitchedSoftware": "Der Grafiktreiber konnte das Spiel nicht mit Vulkan ausführen, deshalb läuft es jetzt ohne Grafikkarte – langsamer, aber es läuft. souldew merkt sich das für diese Grafikkarte; ändern kannst du es unter Einstellungen › Emulatoren.",
   "ctr.rendererSwitchedCompat": "Das Spiel hat direkt nach dem Start aufgehört, deshalb hat souldew es in einem verträglicheren Vulkan-Modus neu gestartet. souldew merkt sich das für diese Grafikkarte; ändern kannst du es unter Einstellungen › Emulatoren."

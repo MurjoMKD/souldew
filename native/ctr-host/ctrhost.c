@@ -7,18 +7,23 @@
 // Messages are { u32 type, u32 length, payload } (little-endian), both ways.
 //   host → souldew   1 HELLO  json { width, height, fps, sampleRate }      sent once the game runs
 //                    2 VIDEO  u16 width, u16 height, u32 format (0 BGRA, 1 RGBA), pixels
-//                    3 AUDIO  s16 stereo samples
+//                    3 AUDIO  s16 stereo samples – fast-forward: the sound sped up (time-compressed to the real
+//                             speed, at most 16×, like the fast player's host) and never more than real time –
+//                             souldew's turbo mixer (web/lib/turboaudio.mjs) plays it per Settings › "Turbo audio"
 //                    4 MEM    u32 count, count × { u32 addr, u32 len, bytes }  the watched regions, between frames
 //                    5 STATE  a save state (answer to SAVE)
 //                    6 LOG    text
 //                    7 EVENT  json  { event: 'gpu' | 'loaded' | 'error' | 'stateLoaded' | 'stats' | 'title' | 'written', … }
+//                                   stats (four times a second): fps, speed (real, 1 = normal), frame (emulated frames
+//                                   so far – the page measures fast-forward with it, not with the pictures it gets)
 //                                   gpu: the Vulkan device chosen (name, type, vendor, driver …) – sent before the core
 //                                   touches it, so a crash in the driver still says which one it was
 //   souldew → host   1 INPUT  u32 joypad bits (RETRO_DEVICE_ID_JOYPAD_*), s16 lx, ly, rx, ry, s16 px, py (pointer,
 //                             -0x7fff…0x7fff over the whole picture), u8 pressed
 //                    2 SPEED  f32 (1 = normal, 0 = paused, ≥ 100 = as fast as possible)
 //                    3 SAVE   –           4 LOAD  state bytes      5 WATCH  u32 count, count × { u32 addr, u32 len }
-//                    6 QUIT   –           7 RESET –                8 FRAMESKIP u32 (send every n-th picture in turbo)
+//                    6 QUIT   –           7 RESET –                8 FRAMESKIP u32 (ignored since 2.7.2: in turbo a
+//                             picture goes out about 60 times a second, whatever the speed)
 //                    9 WRITE  u32 id, u32 addr, u32 len (≤ 256, inside one 4 KB page of the game's heaps), the bytes
 //                             expected there now, the new bytes – a cheat; answered by the event { event: 'written',
 //                             id, ok, why } (see mem_write)
@@ -256,12 +261,47 @@ static int16_t input_state(unsigned port, unsigned device, unsigned index, unsig
 // ---- audio: collected per frame, sent after it ------------------------------------------------------------------
 static int16_t *audio_buf;
 static size_t audio_n, audio_cap;
-static int audio_on = 1;
+// fast-forward: the frame's sound averaged down by `ff_k` (box filter, fractional), within a real-time budget – the
+// same as the fast player's host (native/retro-host/retrohost.c), so souldew's turbo mixer works on both alike
+static double ff_k = 1, ff_acc, ff_sum[2], ff_budget;
+static size_t ff_cnt;
+static int16_t *ff_buf;
+static size_t ff_cap;
+/** The frame's sound sped up by ff_k (n stereo frames in audio_buf → fewer in ff_buf); returns how many. */
+static size_t speed_up_audio(void) {
+  const size_t n = audio_n / 2;
+  if (ff_cap < n + 4) {
+    size_t cap = n + 4;
+    int16_t *b = realloc(ff_buf, cap * 2 * sizeof *b);
+    if (!b) return 0;
+    ff_buf = b;
+    ff_cap = cap;
+  }
+  size_t out = 0;
+  for (size_t i = 0; i < n; i++) {
+    ff_sum[0] += audio_buf[i * 2];
+    ff_sum[1] += audio_buf[i * 2 + 1];
+    ff_cnt++;
+    ff_acc += 1;
+    if (ff_acc >= ff_k && out < ff_cap) {
+      ff_buf[out * 2] = (int16_t)(ff_sum[0] / (double)ff_cnt);
+      ff_buf[out * 2 + 1] = (int16_t)(ff_sum[1] / (double)ff_cnt);
+      out++;
+      ff_acc -= ff_k;
+      ff_sum[0] = ff_sum[1] = 0;
+      ff_cnt = 0;
+    }
+  }
+  return out;
+}
 static void audio_push(const int16_t *d, size_t frames) {
-  if (!audio_on) return;
+  if (!frames) return;
   if (audio_n + frames * 2 > audio_cap) {
-    audio_cap = (audio_n + frames * 2) * 2;
-    audio_buf = realloc(audio_buf, audio_cap * sizeof *audio_buf);
+    size_t cap = (audio_n + frames * 2) * 2;
+    int16_t *b = realloc(audio_buf, cap * sizeof *b);
+    if (!b) return; // out of memory: this frame's sound is left out
+    audio_buf = b;
+    audio_cap = cap;
   }
   memcpy(audio_buf + audio_n, d, frames * 2 * sizeof *d);
   audio_n += frames * 2;
@@ -1149,7 +1189,7 @@ static void send_mem(void) {
 
 // ---- commands from souldew ---------------------------------------------------------------------------------------
 static float speed = 1.0f;
-static int want_save, want_quit, want_reset, frameskip = 4;
+static int want_save, want_quit, want_reset;
 static uint8_t *load_data;
 static size_t load_len;
 
@@ -1219,7 +1259,7 @@ static void *reader(void *arg) {
       break;
     case 6: want_quit = 1; break;
     case 7: want_reset = 1; break;
-    case 8: if (h[1] >= 4) { uint32_t v; memcpy(&v, p, 4); frameskip = v ? (int)v : 1; } break;
+    case 8: break; // FRAMESKIP (older pages): pictures in turbo are paced by time now
     case 9: // WRITE u32 id, u32 addr, u32 len, old[len], new[len]
       if (h[1] >= 12) {
         uint32_t id, addr, len;
@@ -1371,13 +1411,14 @@ int main(int argc, char **argv) {
   pthread_create(&th, NULL, reader, NULL);
   double next = now_s();
   uint64_t frame = 0;
-  int memtick = 0;
-  double stat_t = now_s();
+  const double sample_rate = av.timing.sample_rate > 0 ? av.timing.sample_rate : 32728;
+  double stat_t = now_s(), last_shown = 0, last_mem = 0, last_audio = now_s();
   uint64_t stat_frames = 0;
+  int was_turbo = 0;
   for (;;) {
     pthread_mutex_lock(&cmd_lock);
     float sp = speed;
-    int quit = want_quit, save = want_save, reset = want_reset, skip = frameskip;
+    int quit = want_quit, save = want_save, reset = want_reset;
     uint8_t *ld = load_data;
     size_t ll = load_len;
     want_save = want_reset = 0;
@@ -1410,23 +1451,45 @@ int main(int argc, char **argv) {
     if (sp <= 0.0f) { // paused
       compat_sleep(0.01);
       next = now_s();
+      last_audio = next;
       continue;
     }
     const int turbo = sp > 1.01f;
-    want_frame = !turbo || (frame % (uint64_t)(skip > 0 ? skip : 1)) == 0;
-    audio_on = !turbo; // fast-forward: no sound (souldew plays its own turbo music)
+    if (turbo != was_turbo) { // a fresh start for the sped-up sound: the asked-for speed until it is measured
+      was_turbo = turbo;
+      ff_k = turbo ? (sp > 16 ? 16 : sp) : 1;
+      ff_acc = ff_sum[0] = ff_sum[1] = 0;
+      ff_cnt = 0;
+      ff_budget = sample_rate * 0.05;
+    }
+    double t = now_s();
+    // turbo: a picture for the screen about 60 times a second, not one per emulated frame (at 1×: every one)
+    want_frame = !turbo || t - last_shown >= 1.0 / 62;
+    if (want_frame) last_shown = t;
     core.run();
     pthread_mutex_lock(&in_lock);
     if (touch_latch > 0) touch_latch--;
     pthread_mutex_unlock(&in_lock);
     if (++frame == 120) stage = "running the game";
     stat_frames++;
-    if (audio_n) {
+    t = now_s();
+    if (audio_n && !turbo) {
       send_msg(3, audio_buf, (uint32_t)(audio_n * sizeof *audio_buf));
-      audio_n = 0;
+      ff_budget = 0;
+    } else if (audio_n) {
+      // fast-forward: sped up by the real speed (≤ 16×); what doesn't fit in real time is left out, in whole frames
+      ff_budget += (t - last_audio) * sample_rate;
+      if (ff_budget > sample_rate * 0.2) ff_budget = sample_rate * 0.2;
+      const size_t m = speed_up_audio();
+      if (m && ff_budget >= (double)m) {
+        ff_budget -= (double)m;
+        send_msg(3, ff_buf, (uint32_t)(m * 2 * sizeof *ff_buf));
+      }
     }
-    if (++memtick >= 6) { // ten times a second at normal speed
-      memtick = 0;
+    audio_n = 0;
+    last_audio = t;
+    if (t - last_mem >= 0.1) { // ten times a second, whatever the speed
+      last_mem = t;
       send_mem();
       // which title runs (the game, or an applet / the HOME menu in between)
       static uint64_t last_tid = 1;
@@ -1436,9 +1499,11 @@ int main(int argc, char **argv) {
         send_event("{\"event\":\"title\",\"titleId\":\"%016llX\"}", (unsigned long long)tid);
       }
     }
-    double t = now_s();
-    if (t - stat_t >= 2.0) {
-      send_event("{\"event\":\"stats\",\"fps\":%.1f,\"shown\":%llu}", stat_frames / (t - stat_t), (unsigned long long)frames_shown);
+    if (t - stat_t >= 0.25) { // four times a second: the page measures the real speed with the frame count
+      const double real = stat_frames / (t - stat_t) / fps;
+      ff_k = turbo ? (real < 1 ? 1 : real > 16 ? 16 : real) : 1;
+      send_event("{\"event\":\"stats\",\"fps\":%.1f,\"speed\":%.3f,\"shown\":%llu,\"frame\":%llu}", stat_frames / (t - stat_t), real,
+                 (unsigned long long)frames_shown, (unsigned long long)frame);
       stat_t = t;
       stat_frames = 0;
     }
@@ -1446,6 +1511,7 @@ int main(int argc, char **argv) {
     next += 1.0 / (fps * sp);
     if (next < t - 0.1) next = t; // fell behind (loading): don't race to catch up
     double wait = next - t;
+    if (wait > 0.1) wait = 0.1, next = t + 0.1; // (commands are read between frames – never sleep long)
     if (wait > 0) compat_sleep(wait);
   }
   // Not core.unload_game() / deinit(): Azahar's shutdown can crash after the last frame, and there is nothing left to

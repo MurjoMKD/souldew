@@ -19,7 +19,10 @@ class NativeAudio extends AudioWorkletProcessor {
     this.inR = new Float32Array(128);
     this.plain = false;
     this.broken = false;
-    this.mixer = new TurboMixer(sampleRate, { onEvent: (e) => this.port.postMessage({ type: 'mixer', e }) });
+    // what came out over the last ~0.1 s (RMS and peak of both channels) – the probe reports it (tests, diagnostics)
+    this.level = { rms: 0, peak: 0 };
+    this.lvl = { sum: 0, peak: 0, n: 0 };
+    this.mixer = new TurboMixer(sampleRate, { onEvent: (e) => this.port.postMessage({ type: 'mixer', e: e.type === 'probe' ? { ...e, level: this.level } : e }) });
     for (const m of options?.processorOptions?.init || []) this.command(m);
     this.port.onmessage = (e) => {
       const d = e.data;
@@ -77,17 +80,37 @@ class NativeAudio extends AudioWorkletProcessor {
       this.inR[i] = this.r[this.read];
       this.read = (this.read + 1) % this.size;
     }
+    let mixed = false;
     if (!this.plain && !this.broken) {
       try {
         this.mixer.process(this.inL, this.inR, L, R, n);
-        return true;
+        mixed = true;
       } catch (err) {
         this.fail(err);
       }
     }
-    L.set(this.inL.subarray(0, n));
-    if (R !== L) R.set(this.inR.subarray(0, n));
+    if (!mixed) {
+      L.set(this.inL.subarray(0, n));
+      if (R !== L) R.set(this.inR.subarray(0, n));
+    }
+    this.measure(L, R, n);
     return true;
+  }
+
+  measure(L, R, n) {
+    const m = this.lvl;
+    for (let i = 0; i < n; i++) {
+      const a = L[i];
+      const b = R[i];
+      m.sum += a * a + b * b;
+      const p = Math.max(Math.abs(a), Math.abs(b));
+      if (p > m.peak) m.peak = p;
+    }
+    m.n += n;
+    if (m.n >= sampleRate / 10) {
+      this.level = { rms: Math.sqrt(m.sum / (2 * m.n)), peak: m.peak };
+      m.sum = m.peak = m.n = 0;
+    }
   }
 }
 registerProcessor('native-audio', NativeAudio);

@@ -149,6 +149,22 @@ function CtrRendererSetting({ cfg, status, save }) {
   </div>`;
 }
 
+/**
+ * The built-in 3DS player's internal resolution (issue #59): 1× is the 3DS's own, 2× and 3× draw the games sharper and
+ * cost the graphics card more. The host takes it at its start – it applies to the next 3DS game.
+ */
+function CtrScaleSetting({ cfg, status, save }) {
+  if (!status?.ctr?.ok) return null;
+  const value = [1, 2, 3].includes(cfg.ctrScale) ? cfg.ctrScale : 1;
+  const labels = { 1: t('set.ctrScale1', '1× (native)'), 2: '2×', 3: '3×' };
+  return html`<div class="stack-s">
+    <div class="grid-2"><label class="field"><span>${t('set.ctrScale', '3DS resolution')}</span>
+      <select value=${value} onChange=${(e) => save({ ctrScale: Number(e.target.value) })}>
+        ${[1, 2, 3].map((n) => html`<option value=${n}>${labels[n]}</option>`)}</select></label></div>
+    <span class="small faint">${t('set.ctrScaleHint', 'Draws the 3DS games at two or three times their own resolution – sharper and less pixelated, but more work for the graphics card. Applies to the next 3DS game you start. The Software renderer always plays at 1×, and so does the automatic step down after a crash.')}</span>
+  </div>`;
+}
+
 /** The notice after souldew put the graphics backend back to "Automatic" itself (shown once, see app.mjs). */
 export function gpuFallbackText(notice) {
   const backend = GPU_LABELS()[notice.from] || notice.from;
@@ -387,6 +403,7 @@ export function SettingsView() {
       ${status?.native?.ok && html`<label class="check"><input type="checkbox" checked=${cfg.nativeCore !== false} onChange=${(e) => save({ nativeCore: e.target.checked })} /><span>${t('set.native', 'Fast player for DS, GBA and Game Boy')}
         <span class="hint">${t('set.nativeHint', 'Runs the game with the real emulators (melonDS, mGBA, Gambatte) directly on your computer: full speed even on weaker PCs, and fast-forward that really reaches 4× and more. Live sync, cheats, save states and the in-game save work as before. Save states from the other player can’t be loaded here (and the other way round). Off: the browser emulator as before. Applies to the next game you start.')}</span></span></label>`}
       <${CtrRendererSetting} cfg=${cfg} status=${status} save=${save} />
+      <${CtrScaleSetting} cfg=${cfg} status=${status} save=${save} />
       <table class="data"><thead><tr><th>${t('set.system', 'System')}</th><th>${t('set.useEmu', 'Play with')}</th></tr></thead><tbody>
         ${SYSTEMS.map(([sys, label]) => html`<tr><td>${label}</td><td>
           <select value=${externalOnly(sys, status) ? Object.keys(status?.emulators || {}).find((id) => status.emulators[id].systems.includes(sys)) : cfg.emulatorFor?.[sys] || 'builtin'}

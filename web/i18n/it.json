@@ -1182,6 +1182,8 @@
   "play.layout3ds": "Disposizione degli schermi",
   "play.layout3dsHint": "Clicca sullo schermo inferiore per toccarlo, ovunque si trovi. Cambia subito, senza riavviare il gioco.",
   "play.layout3dsNoTouch": "Lo schermo tattile è nascosto in questa disposizione – torna indietro per toccarlo.",
+  "play.smooth3ds": "Immagine morbida",
+  "play.ctrScaleNow": "Risoluzione: {n} – Impostazioni › Emulatori › Risoluzione 3DS (vale dal prossimo avvio).",
   "play.layoutLr": "Schermi affiancati",
   "play.layoutTb": "Schermi uno sopra l’altro",
   "play.liveNoneSolo": "Il tracciamento live legge i giochi Pokémon – questo funziona senza.",
@@ -2537,6 +2539,9 @@
   "set.ctrRendererSoftware": "Software",
   "set.ctrRendererHint": "Come il lettore 3DS integrato di souldew disegna il gioco. Automatico parte con Vulkan; se il gioco si ferma subito dopo l’avvio, passa a Vulkan (compatibilità) e poi a Software, e se lo ricorda per questa scheda grafica e questo driver. Software funziona su ogni PC, ma è molto più lento. Vale dal prossimo gioco 3DS che avvii.",
   "set.ctrRendererLearned": "Questa scheda grafica avvia ora i giochi 3DS con: {mode}",
+  "set.ctrScale": "Risoluzione 3DS",
+  "set.ctrScale1": "1× (nativa)",
+  "set.ctrScaleHint": "Disegna i giochi 3DS al doppio o al triplo della loro risoluzione originale – più nitidi e meno pixelati, ma con più lavoro per la scheda grafica. Vale dal prossimo gioco 3DS che avvii. Il renderer Software gioca sempre a 1×, così come il passaggio automatico dopo un arresto anomalo.",
   "ctr.rendererSwitched": "Lettore 3DS: ora con {mode}",
   "ctr.rendererSwitchedSoftware": "Il driver grafico non è riuscito ad avviare il gioco con Vulkan, quindi ora gira senza la scheda grafica – più lento, ma gira. souldew se lo ricorda per questa scheda grafica; puoi cambiarlo in Impostazioni › Emulatori.",
   "ctr.rendererSwitchedCompat": "Il gioco si è fermato subito dopo l’avvio, quindi souldew lo ha riavviato in una modalità Vulkan più compatibile. souldew se lo ricorda per questa scheda grafica; puoi cambiarlo in Impostazioni › Emulatori."

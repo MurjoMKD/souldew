@@ -4,6 +4,20 @@
 
 ## 2.7.2
 
+- **Fast-forward steps one at a time in the 3DS player** (thanks to a player on Discord for the report). Plus went 2× →
+  3× → 4×, but minus at 4× dropped straight to 1×, and after a while plus jumped from 1× to 4×. The 3DS player measured
+  fast-forward by the pictures it got – and while fast-forwarding the game only sends some of them – so every step looked
+  like 1× to souldew, which then stopped offering 2× and 3×. It now counts the frames the game really ran, like the fast
+  player: 1×, 2×, 3×, 4× (and Max, when switched on) up and down – on the toolbar, with T, the menu and the controller.
+  What was measured wrongly before is forgotten.
+- **Sound while fast-forwarding in the 3DS player** (thanks to a player on Discord for the report). It was always silent;
+  now Turbo audio works there as in the other players: "Music continues" keeps the music going at normal speed,
+  "Sped-up original" and "Plain" play the game's own sound sped up, "Mute" stays silent.
+- **3DS resolution: 1×, 2× or 3×** (#59 – thanks to @Never-lab for the write-up). New setting in Settings › Emulators:
+  the built-in 3DS player draws the games at two or three times their own resolution – sharper and less pixelated, but
+  more work for the graphics card. 1× stays the default; it applies to the next 3DS game you start. The Software renderer
+  always plays at 1×, and when "Automatic" has to step down to a safer renderer after a crash, it goes back to 1× too.
+  The screen layout menu also has "Smooth picture" (softer scaling instead of crisp pixels), switchable while playing.
 - **Rare Candies for the 3DS games.** The cheats menu's "Add 99 Rare Candies" now works in souldew's own 3DS player
   too – X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon and Ultra Sun/Ultra Moon (asked for by an Ultra Moon player). They go
   into the Medicine pocket, onto the candies you carry or into the first free slot, up to 999. As before: only when the

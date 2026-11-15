@@ -1182,6 +1182,8 @@
   "play.layout3ds": "Disposición de pantallas",
   "play.layout3dsHint": "Haz clic en la pantalla inferior para tocarla, esté donde esté. Cambia al instante, sin reiniciar el juego.",
   "play.layout3dsNoTouch": "La pantalla táctil está oculta en esta disposición – cambia de nuevo para tocarla.",
+  "play.smooth3ds": "Imagen suavizada",
+  "play.ctrScaleNow": "Resolución: {n} – Ajustes › Emuladores › Resolución de 3DS (se aplica en el próximo inicio).",
   "play.layoutLr": "Pantallas una al lado de otra",
   "play.layoutTb": "Pantallas una sobre otra",
   "play.liveNoneSolo": "El seguimiento en vivo lee juegos de Pokémon; este funciona sin él.",
@@ -2537,6 +2539,9 @@
   "set.ctrRendererSoftware": "Software",
   "set.ctrRendererHint": "Cómo dibuja el juego el reproductor 3DS integrado de souldew. Automático empieza con Vulkan; si el juego se detiene justo después de arrancar, cambia a Vulkan (compatibilidad) y después a Software, y lo recuerda para esta tarjeta gráfica y este controlador. Software funciona en cualquier PC, pero es mucho más lento. Se aplica al próximo juego de 3DS que inicies.",
   "set.ctrRendererLearned": "Esta tarjeta gráfica ejecuta ahora los juegos de 3DS con: {mode}",
+  "set.ctrScale": "Resolución de 3DS",
+  "set.ctrScale1": "1× (nativa)",
+  "set.ctrScaleHint": "Dibuja los juegos de 3DS al doble o al triple de su resolución original: más nítidos y menos pixelados, pero con más trabajo para la tarjeta gráfica. Se aplica al próximo juego de 3DS que inicies. El renderizador Software siempre juega a 1×, igual que el cambio automático tras un cierre inesperado.",
   "ctr.rendererSwitched": "Reproductor 3DS: ahora con {mode}",
   "ctr.rendererSwitchedSoftware": "El controlador gráfico no pudo ejecutar el juego con Vulkan, así que ahora funciona sin la tarjeta gráfica – más lento, pero funciona. souldew lo recuerda para esta tarjeta gráfica; puedes cambiarlo en Ajustes › Emuladores.",
   "ctr.rendererSwitchedCompat": "El juego se detuvo justo después de arrancar, así que souldew lo inició de nuevo en un modo Vulkan más compatible. souldew lo recuerda para esta tarjeta gráfica; puedes cambiarlo en Ajustes › Emuladores."

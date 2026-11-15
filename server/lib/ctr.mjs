@@ -17,7 +17,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { BUNDLED_TOOLS, TOOLS_DIR, DATA_DIR, DEV, APP_ROOT } from './paths.mjs';
 import { httpError } from './fsutil.mjs';
 import { identifyCtr } from '../../shared/ctr.mjs';
-import { nextRenderer, rendererFailure, withRenderer } from './ctrrenderer.mjs';
+import { nextRenderer, rendererFailure, withRenderer, withArg, scaleFor } from './ctrrenderer.mjs';
 
 export const PLATFORM_DIR = `${process.platform}-${process.arch}`;
 const EXE = process.platform === 'win32' ? 'ctrhost.exe' : 'ctrhost';
@@ -290,7 +290,7 @@ export class CtrSessions {
 
   status() {
     const s = this.current;
-    return s ? { id: s.id, running: !s.exit, exit: s.exit, exitText: exitText(s.exit), events: s.events.slice(-5), gpu: s.gpu || null, ...(s.renderer ? { renderer: s.renderer, fellBack: s.fellBack || [] } : {}) } : null;
+    return s ? { id: s.id, running: !s.exit, exit: s.exit, exitText: exitText(s.exit), events: s.events.slice(-5), gpu: s.gpu || null, ...(s.renderer ? { renderer: s.renderer, scale: s.scale || 1, fellBack: s.fellBack || [] } : {}) } : null;
   }
 
   /** For "Save diagnostics": the running session (with the end of its stderr) and how the last failed one ended. */
@@ -318,7 +318,7 @@ export class CtrSessions {
       exit: exitText(exit) || null,
       error: error?.message ? redactHome(error.message).slice(0, 1000) : null,
       gpu: s.gpu || null,
-      ...(s.renderer ? { renderer: s.renderer } : {}),
+      ...(s.renderer ? { renderer: s.renderer, scale: s.scale || 1 } : {}),
       ...(retry ? { retriedWith: retry } : {}),
       startedAt: s.startedAt,
       secondsRun: Math.round((Date.now() - s.startedAt) / 1000),
@@ -340,8 +340,9 @@ export class CtrSessions {
     const save = saveDirFor(key);
     const system = join(save, 'system');
     mkdirSync(system, { recursive: true });
-    const args = ['--core', tools.core, '--vulkan', tools.vulkan, '--rom', rom, '--system', system, '--save', save, '--scale', String(scale), '--renderer', renderer];
-    return this.launch(tools.host, args, save, { renderer, auto: !!auto, fellBack: [] });
+    const sc = scaleFor(scale, renderer);
+    const args = ['--core', tools.core, '--vulkan', tools.vulkan, '--rom', rom, '--system', system, '--save', save, '--scale', String(sc), '--renderer', renderer];
+    return this.launch(tools.host, args, save, { renderer, scale: sc, auto: !!auto, fellBack: [] });
   }
 
   /**
@@ -454,7 +455,9 @@ export class CtrSessions {
     this.onRendererFailed?.({ gpu: s.gpu || null, from, to: next });
     s.log.push(`[souldew] the 3DS host ended in its first seconds with the renderer "${from}" – starting it again with "${next}"\n`);
     s.renderer = next;
-    s.args = withRenderer(s.args, next);
+    // (back to 1× resolution as well: a higher one asks more of a graphics card that just failed)
+    s.scale = 1;
+    s.args = withArg(withRenderer(s.args, next), '--scale', 1);
     this.run(s);
     for (const b of Object.values(s.lastCmds)) s.child.stdin.write(b);
     return true;
