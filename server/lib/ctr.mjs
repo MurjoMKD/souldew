@@ -480,6 +480,7 @@ export class CtrSessions {
   peek(s, data) {
     try {
       const e = JSON.parse(data.subarray(8).toString('utf8'));
+      if (e?.event === 'ffrate') return e; // (the fast-forward sound's ratio, many a second: not worth keeping)
       s.events.push(e);
       if (s.events.length > 50) s.events.shift();
       if (e?.event === 'gpu') {
