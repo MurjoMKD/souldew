@@ -29,6 +29,7 @@ import { gpuBackends } from '/shared/gpu.mjs';
 import { GPU_LABELS } from './settings.mjs';
 import { CTR_LAYOUTS, ctrLayoutAspect } from '/shared/ctrlayout.mjs';
 import { claimPad } from '../lib/padnav.mjs';
+import { presenceLoop, presenceBody } from '../lib/presence.mjs';
 
 let TABLES = null;
 async function liveTables() {
@@ -157,6 +158,15 @@ function CtrFailed({ fail, target, onClose }) {
   </div>`;
 }
 
+/** Tells the local server every minute that this game runs (state set) – and once that it stopped (null, or unmounted). */
+function usePresence(state) {
+  const loop = useRef(null);
+  if (!loop.current) loop.current = presenceLoop({ send: (s) => api.post('/api/presence', presenceBody(s)).catch(() => {}) });
+  const key = state ? `${state.system}|${state.mode}` : '';
+  useEffect(() => { loop.current.set(state); }, [key]);
+  useEffect(() => () => loop.current.set(null), []);
+}
+
 function StartGame({ target }) {
   const { startSession } = useApp();
   useEffect(() => startSession(target), [target.key]);
@@ -260,6 +270,10 @@ export function GameSession({ session, mode }) {
   // 3DS: the screens scaled smoothly (linear filtering) instead of crisp pixels – switchable while playing
   const [smooth3ds, setSmooth3dsState] = useState(() => ls.get('sl-3ds-smooth', false) === true);
   const [ctrFail, setCtrFail] = useState(null); // the 3DS player stopped: { message } – offers Azahar instead
+  // "Playing now" (lib/presence.mjs, Settings › General): counted only while the game really runs – not while it loads,
+  // after the 3DS player stopped, or with the setting off. Only the system and solo / Nuzlocke / SoulLink go out.
+  usePresence(status?.config?.presence !== false && phase === 'running' && !ctrFail
+    ? { system: target.system, mode: target.kind === 'run' ? runMode(manifest) : 'solo' } : null);
   const [fs, setFs] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
