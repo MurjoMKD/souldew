@@ -2,7 +2,7 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
-## Unreleased
+## 2.7.3
 
 - **No more false deaths in Black/White and Black 2/White 2 battles** (thanks to a player on Discord for the report). A
   Pokémon that was switched out and grew a level from the shared EXP could be reported as dead – the SoulLink popup came
@@ -18,18 +18,18 @@
   on the souldew Discord, where everyone can react and congratulate. A preview shows the card first, and nothing is
   posted until you press the button. It needs Live runs (Settings › Discord); without it the notice says how to connect
   with `/live connect`. Partners of the same run share one post. Won runs now go there instead of #live-runs.
-- **Rare Candies in the 3DS games on Windows** (thanks to an Omega Ruby player for the report). "Add 99 Rare Candies"
+- **Rare Candies in the 3DS games on Windows** (thanks to a player on Discord for the report). "Add 99 Rare Candies"
   found the bag but said "The game's memory couldn't be changed." The 3DS player looked for the bag's place in the
   emulator's memory by its content, and on Windows it only searched part of that memory – the part the bag isn't in.
   souldew's build of the 3DS emulator now writes the bytes itself, at the address the game uses, on every system and
   for every game (X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon, Ultra Sun/Ultra Moon) – still only into the game's heaps
   and only after the same checks as before. The messages are clearer too: when a game's bag isn't where its version
   keeps it, souldew says so, and "the game changed your bag just then" has its own message.
-- **Smooth sound while fast-forwarding in the 3DS player** (thanks to a Windows player for the report). On PCs where a
-  3DS game can't hold the chosen speed steadily – its speed swings from moment to moment, which is normal for 3DS games
-  – "Sped-up original" and "Plain" stuttered (around ten little gaps a second) and sounded harsh, and "Music continues"
-  could play the music at the wrong pitch and tempo when nothing had been recorded for it yet. The 3DS player now
-  resamples the game's sound to exactly real time while fast-forwarding, filters it properly before speeding it up,
+- **Smooth sound while fast-forwarding in the 3DS player** (thanks to a player on Discord for the report). On PCs where
+  a 3DS game can't hold the chosen speed steadily – its speed swings from moment to moment, which is normal for 3DS
+  games – "Sped-up original" and "Plain" stuttered (around ten little gaps a second) and sounded harsh, and "Music
+  continues" could play the music at the wrong pitch and tempo when nothing had been recorded for it yet. The 3DS player
+  now resamples the game's sound to exactly real time while fast-forwarding, filters it properly before speeding it up,
   and tells the turbo mixer exactly how much it was sped up, so it can slow the music back down to normal pitch and
   tempo. Measured with Pokémon Sun at 2×, 3×, 4× and Max, with the game slowed down the way a busier PC slows it: the
   gaps went from 3–11 a second to almost none, and "Music continues" stays at normal pitch. At 1× the 3DS player now
