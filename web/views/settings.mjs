@@ -435,7 +435,7 @@ export function SettingsView() {
       }}><${Icon} name="plus" size=${14} />${t('set.addFolder', 'Include a folder')}</button></div>`}
     </section>
 
-    <section class="panel stack">
+    <section class="panel stack" id="set-discord">
       <h2>Discord</h2>
       <${LiveRunsSettings} />
     </section>
