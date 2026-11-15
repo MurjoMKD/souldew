@@ -2,6 +2,19 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **Modern Emerald is tracked live – and its trophies count** (thanks to a player on Discord for the report). Nothing
+  was read in this hack: no team, no catches, no battles, no badges – and so no achievements either. Modern Emerald is
+  rebuilt from the Emerald source with things of its own in memory, so its team, its save data and its battle flag
+  aren't where they are in Emerald. souldew now finds them from the game's own code and memory instead of assuming
+  Emerald's addresses: the team, catches (also when they go to the PC – its 15 boxes), wild and trainer battles,
+  badges and the level caps that follow them, and the cheats menu's Rare Candies. Checked in the game with version 3.6
+  (Torchic, the Zigzagoon battle, a real catch on Route 101, a badge → cap 19); older versions (1.5.6 – 3.3.1) are read
+  the same way. The same search now covers other hacks rebuilt from the Emerald or FireRed source whose memory moved.
+  The level caps of hacks with a block of text right in front of the trainer table are read again (every trainer
+  was numbered one too high).
+
 ## 2.7.2
 
 - **Fast-forward steps one at a time in the 3DS player** (thanks to a player on Discord for the report). Plus went 2× →

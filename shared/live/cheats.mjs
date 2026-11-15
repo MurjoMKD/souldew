@@ -95,6 +95,12 @@ function layoutOf(entry) {
   if (entry.gen === 3) {
     const key = /^(ruby|sapphire)_/.test(id) ? 'ruby' : /^emerald_/.test(id) ? 'emerald' : /^(firered|leafgreen)_/.test(id) ? 'firered' : null;
     if (!key) return null;
+    // a hack whose team is searched for (parse.mjs expandedEntry): only one that kept the base game's save data and item
+    // numbers (`retail3` – Modern Emerald) has the bag where the base game keeps it, its save block pointers wherever
+    // the place reader found them (gbaBag: state.sb1PtrAddr). Run & Bun, pokeemerald-expansion and Complete FireRed
+    // Upgrade number their items their own way or moved the bag: no cheats there (the ROM test matrix passes the save
+    // block pointers it measured, `saveBlockPtrs`, to give Poké Balls in Run & Bun).
+    if (entry.scan3 && !entry.saveBlockPtrs) return entry.retail3 && key !== 'ruby' ? { kind: 'gba', ...GBA[key], found: true, ...(entry.items3Max ? { maxId: entry.items3Max } : {}) } : null;
     // the other-language FireRed/LeafGreen keep the save block pointers elsewhere in IWRAM (addresses.json saveBlockPtrs)
     const P = entry.saveBlockPtrs;
     const ptrs = P ? { sb1Ptr: parseInt(P.sb1, 16), sb2Ptr: parseInt(P.sb2, 16), ...(P.keyOff ? { keyOff: parseInt(P.keyOff, 16) } : {}) } : {};
@@ -166,6 +172,10 @@ function gbaBag(L, read, pocketName = 'items') {
     const k = read(sb2 + L.keyOff, 4);
     if (!k) return null;
     key = u32le(k, 0);
+    if (L.found) {
+      key = foundKey(L, read, sb1, sb2);
+      if (key === null) return null;
+    }
   }
   const money = read(sb1 + L.money, 4);
   if (!money || ((u32le(money, 0) ^ key) >>> 0) > 999999) return null;
@@ -184,6 +194,31 @@ function gbaBag(L, read, pocketName = 'items') {
   if (!items || !balls) return null;
   const [off, n] = L[pocketName];
   return { addr: sb1 + off, slots: n, bytes: pocketName === 'balls' ? balls : items, q };
+}
+
+/**
+ * The bag key of a hack whose SaveBlock2 grew in front of encryptionKey (Modern Emerald's options – the key isn't at
+ * +0xAC there): every slot's quantity is XORed with the key's low half, an empty slot's too, so an empty slot of the
+ * items or the Poké Ball pocket shows it; the key is the word of SaveBlock2 with that low half that makes the money
+ * (XORed with all of it) a sum of money – at +0xAC first. null: no empty slot, or no such word.
+ */
+function foundKey(L, read, sb1, sb2) {
+  const low = (off, n) => {
+    const b = read(sb1 + off, n * 4);
+    if (!b) return null;
+    for (let i = n - 1; i >= 0; i--) if (!u16le(b, i * 4)) return u16le(b, i * 4 + 2);
+    return null;
+  };
+  const kl = low(L.items[0], L.items[1]) ?? low(L.balls[0], L.balls[1]);
+  const m = read(sb1 + L.money, 4);
+  const s2 = read(sb2, 0x1000);
+  if (kl === null || !m || !s2) return null;
+  const money = u32le(m, 0);
+  for (const o of [L.keyOff, ...Array.from({ length: 0x400 }, (_, i) => i * 4)]) {
+    const v = u32le(s2, o);
+    if ((v & 0xffff) === kl && ((money ^ v) >>> 0) <= 999999) return v;
+  }
+  return null;
 }
 
 function slotAdd(bag, mem, item, count, cap, enc) {
@@ -361,7 +396,10 @@ export function addItem(entry, mem, state, item, count = 1, { pocket = null, all
     const B = pocket === 'balls' && entry.gen === 2 ? { ...L, addr: L.keyItems + 27, keyItems: null } : L;
     return gbAdd(B, entry.gen, mem, item, count);
   }
-  const bag = L.kind === 'gba' ? gbaBag(L, mem.read, pocket === 'balls' ? 'balls' : 'items') : dsBag(L, entry, mem.read, state, pocket || 'medicine', allowEmpty && !!state?.saveBase);
+  // (a found build's save block pointers: where the place reader found them – none yet, no bag)
+  const G = L.found ? (state?.sb1PtrAddr ? { ...L, sb1Ptr: state.sb1PtrAddr, sb2Ptr: state.sb1PtrAddr + 4 } : null) : L;
+  if (!G) return { error: 'notFound' };
+  const bag = L.kind === 'gba' ? gbaBag(G, mem.read, pocket === 'balls' ? 'balls' : 'items') : dsBag(L, entry, mem.read, state, pocket || 'medicine', allowEmpty && !!state?.saveBase);
   if (!bag) return { error: 'notFound' };
   const key = L.kind === 'gba' ? bag.q(0) : 0; // q(0) = the key's low half (0 in Ruby/Sapphire)
   return slotAdd(bag, mem, item, count, L.kind === 'ds' ? 999 : 99, (v) => (v ^ key) & 0xffff);
