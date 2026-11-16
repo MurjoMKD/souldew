@@ -305,7 +305,7 @@ test('build → invite → partner: every player’s game patched alike, a game 
   const log = [];
   const m = await buildRun({ romId: ROM, randomize: false, config: {}, shiny: { rate: 512, trainers: true }, players: { p1: { name: 'Lou' }, p2: { name: 'Kim' } } }, (l) => log.push(l));
   assert.deepEqual(m.shiny, { rate: 512, trainers: true });
-  assert.ok(log.some((l) => /Shiny/.test(l)));
+  assert.ok(log.some((l) => l?.code === 'shinyTrainers' && l.vars?.rate === 512), 'the build log says the rate went in (a code the page translates)');
   const out = new Uint8Array(readFileSync(join(DATA, 'runs', m.id, m.outputs.p1.rom)));
   assert.notDeepEqual(out, new Uint8Array(readFileSync(ROM)));
   assert.equal(m.outputs.p1.sha1, m.outputs.p2.sha1);
