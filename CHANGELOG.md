@@ -2,6 +2,35 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## 2.7.5
+
+- **Badges and level caps in every language of Diamond, Pearl, Platinum, HeartGold and SoulSilver** (thanks to a player
+  on Discord for the report). In versions other than English, souldew found the team but never the badges: the overlay
+  showed none and the level cap stayed at the first gym's, so a team at level 10 after Falkner was flagged as over the
+  cap. souldew now finds the save data next to the team, so badges, the level cap and the PC update live in German,
+  French, Spanish, Italian and every other language too.
+- **Eggs stay a surprise until they hatch.** An egg showed on the board and in the team as the Pokémon it will hatch
+  into – a spoiler in a randomized game. Eggs now stay out of the board, the team in the play view, savestates and the
+  stream API until they hatch, as they already did in the overlay. Once hatched, the Pokémon lands in the inbox as
+  “hatched from an egg” in every game; Crystal and Black/White through Ultra Sun/Ultra Moon used to file it as a catch
+  on the route where it hatched.
+- **A ROM hack started from its library page is the game you get** (#68 – thanks for the report). “New Nuzlocke” /
+  “New SoulLink” on a hack like Volt White could build the plain original game: the wizard only offered a patch when
+  your ROM's checksum matched the one the hack's notes name, while “Play” patched the same ROM fine. Hacks that come as
+  xdelta or IPS patches now work with your copy of their base game in new runs too, and if a hack really doesn't fit
+  your ROM, the wizard says so instead of switching to the original game.
+- **The randomizer says up front when it can't handle a game** (thanks to a player on Discord for the report). When you
+  pick a game for a new run, souldew now tries the randomizer on it first. If the game's data isn't laid out the way
+  the randomizer expects (some ROM hacks and releases), the randomizer is switched off with that reason, instead of the
+  build failing with an error like “Index 1286 out of bounds”. A build that fails anyway explains what happened in your
+  language, and two randomizer runs at the same time no longer get in each other's way. Renegade Platinum and Crystal
+  Legacy are now listed as not randomizable; Blaze Black 2 Redux is tested and works.
+- **Clean sound in the 3DS player at normal speed.** On PCs where the sound arrives unevenly (seen on Windows), the 3DS
+  player cut it with clicks after every hiccup and then caught up by squeezing the sound, which made the highs grainy
+  and harsh. It now bridges a gap with a soft fade, keeps a slightly larger buffer on such PCs, and catches up with an
+  inaudible speed change of at most 0.5 %. In the fast player (Game Boy, GBA, DS) short drop-outs fade instead of
+  clicking, too. Save diagnostics now includes the 3DS player's sound drop-outs, to help with sound reports.
+
 ## 2.7.4
 
 - **“Playing now” on the souldew Discord.** The server now shows how many people are playing in souldew right now – as
