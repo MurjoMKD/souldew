@@ -7,7 +7,7 @@ import { SyncLink, PARTNER_TTL } from './lib/sync.mjs';
 import { setLang, guessLang, t, onLangChange } from './lib/i18n.mjs';
 import { applyTheme, applyStoredTheme } from './lib/theme.mjs';
 import { detectLayout } from './lib/controls.mjs';
-import { applySnapshot, snapshotFromSave, players as getPlayers, areaName, feedText, othersOf, slotsOf, runMode, checks, loadLocationTables, genOfRun, wipedSlot, failRun } from './lib/run.mjs';
+import { applySnapshot, snapshotFromSave, players as getPlayers, areaName, feedText, othersOf, slotsOf, runMode, checks, loadLocationTables, genOfRun, wipedSlot, failRun, lives as getLives, livesFor } from './lib/run.mjs';
 import { play } from './lib/sound.mjs';
 import { Ctx, Toasts, Led, Modal, openExternal } from './lib/ui.mjs';
 import { LINKS } from './lib/links.mjs';
@@ -439,6 +439,25 @@ function App() {
             shownDeaths.current.add(id);
             setDeathAlert({ area: k.slice(5), by: p.by || othersOf(me, manifest)[0] || me });
             sfx('death');
+          }
+        }
+        // The lives rule: a death left few lives in its pool – a quiet warning for everyone, once per death.
+        if (k.startsWith('pair:') || k.startsWith('extra:')) {
+          const v = doc.get(k);
+          const at = (k.startsWith('pair:') ? v?.state === 'dead' : v?.dead) ? v.diedAt : 0;
+          const id = `lives:${k}:${at}`;
+          if (at && age(at) < 120000 && !shownDeaths.current.has(id)) {
+            shownDeaths.current.add(id);
+            const slot = k.startsWith('pair:') ? v.by : k.split(':')[1];
+            const pool = livesFor(doc, manifest, slot);
+            // (none left: the run is over – that notice says it)
+            if (pool?.low) {
+              const vars = { n: pool.left, count: pool.left, name: names[slot]?.name || '' };
+              toast({ kind: 'warn', title: t('lives.lowTitle', 'Lives running low'), text: getLives(doc, manifest).pool !== 'player'
+                ? t('lives.lowText', 'Only {n} life left.|Only {n} lives left.', vars)
+                : slot === me ? t('lives.lowMine', 'You have only {n} life left.|You have only {n} lives left.', vars)
+                  : t('lives.lowOther', '{name} has only {n} life left.|{name} has only {n} lives left.', vars) });
+            }
           }
         }
         if (!remote) continue;

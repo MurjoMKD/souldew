@@ -8,7 +8,7 @@ import { t, currentLang } from '../lib/i18n.mjs';
 import { speciesName, typeLabel, moveName, romTypesNow, pokeapi } from '../lib/data.mjs';
 import {
   party as partyAreas, live, pairState, encounter, levelCap, rules as getRules, dupeOf, players as getPlayers,
-  areaName, causeText, slotsOf, othersOf, openAreas, isNuzlocke, pairTypeClash, typeHelpOn,
+  areaName, causeText, slotsOf, othersOf, openAreas, isNuzlocke, pairTypeClash, typeHelpOn, lives as getLives, livesFor,
 } from '../lib/run.mjs';
 import { statusOf, statusLabel, shownLevel } from './party.mjs';
 import { effectiveness, defenseChart, moveInfo, matchup } from '/shared/typechart.mjs';
@@ -78,6 +78,11 @@ export function RunStrip({ mine, onRules }) {
   const state = !cap || !top ? 'ok' : top > cap ? 'over' : top >= cap - 2 ? 'near' : 'ok';
   const blocked = blockedTypes(doc, runData, me, manifest);
   const open = solo ? openAreas(doc, manifest, me).length : null;
+  // the lives rule: what is left of the pool this player spends from (shared, or their own)
+  const rule = getLives(doc, manifest);
+  const lv = rule && livesFor(doc, manifest, me);
+  const livesLabel = solo || rule?.pool === 'player' ? t('session.lives', 'life left|lives left', { count: lv?.left })
+    : t('session.livesShared', 'shared life left|shared lives left', { count: lv?.left });
   return html`<section class="run-strip">
     <div class="rs-row">
       ${cap ? html`<div class=${`cap ${state}`} title=${vanilla ? t('cap.vanillaHint', 'Ace level of the next boss in the unmodified game') : ''}>
@@ -90,8 +95,10 @@ export function RunStrip({ mine, onRules }) {
     </div>
     ${state === 'near' && html`<p class="rs-warn near">${top === cap ? t('cap.at', 'At the cap – don’t level further before {boss}.', { boss: boss?.name || '' }) : t('cap.near', 'Close to the cap: {n} level left.|Close to the cap: {n} levels left.', { n: cap - top, count: cap - top })}</p>`}
     ${state === 'over' && html`<p class="rs-warn over">${t('cap.over', 'Over the cap! Level {lv} > {cap} – box or swap before the next boss.', { lv: top, cap })}</p>`}
-    ${solo && html`<div class="rs-chips">
-      <span class="rs-chip open" title=${t('session.openHint', 'Areas without an encounter yet')}><b class="num">${open}</b> ${t('session.openAreas', 'open area|open areas', { count: open })}</span>
+    ${(solo || lv) && html`<div class="rs-chips">
+      ${solo && html`<span class="rs-chip open" title=${t('session.openHint', 'Areas without an encounter yet')}><b class="num">${open}</b> ${t('session.openAreas', 'open area|open areas', { count: open })}</span>`}
+      ${lv && html`<span class=${`rs-chip lives ${lv.low ? 'low' : ''}`} title=${t('session.livesHint', '{left} of {total} lives left – every death costs one.', { left: lv.left, total: rule.total })}>
+        <${Icon} name="heart" size=${10} /><b class="num">${lv.left}</b> ${livesLabel}</span>`}
       ${r.noBattleItems && html`<span class="rs-chip honour" title=${t('nz.honourHint', 'The app can’t check this – it only reminds you. Keep it yourself.')}>${t('session.noItems', 'No bag items in battle')}</span>`}
       ${r.setMode && html`<span class="rs-chip honour" title=${t('nz.honourHint', 'The app can’t check this – it only reminds you. Keep it yourself.')}>${t('session.setMode', 'Set mode')}</span>`}
       ${r.centerLimit > 0 && html`<${CenterCounter} limit=${r.centerLimit} />`}
@@ -575,6 +582,13 @@ export function DeathAlert({ alert, onClose }) {
   const cause = causeText(doc, manifest, st.pair?.cause);
   const n = slots.length;
   const sp = (e) => speciesName(e?.species);
+  // the lives rule: what this death left of the pool it came off (the one who fell – theirs, or everyone's)
+  const rule = getLives(doc, manifest);
+  const lives = rule && livesFor(doc, manifest, alert.by);
+  const lv = lives && { left: lives.left, total: rule.total };
+  const livesText = !lives ? '' : rule.pool !== 'player' ? t('death.livesLeft', '{left} of {total} lives left.', lv)
+    : alert.by === me ? t('death.livesMine', 'You have {left} of {total} lives left.', lv)
+      : t('death.livesOther', '{name} has {left} of {total} lives left.', { ...lv, name: names[alert.by]?.name || '' });
   let text;
   if (n === 1) text = t('death.alertSolo', 'Your {mon} fell. Rest in peace.', { mon: mineEnc?.nickname || sp(mineEnc) });
   else if (n === 2) {
@@ -601,6 +615,7 @@ export function DeathAlert({ alert, onClose }) {
       </div>
       <p class="death-text">${text}</p>
       <p class="small muted">${areaName(doc, manifest, alert.area)}${cause ? ` · ${cause}` : ''}</p>
+      ${lives && !lives.out && html`<p class=${`small death-lives ${lives.low ? 'low' : ''}`}><${Icon} name="heart" size=${12} />${livesText}</p>`}
     </div>
   </${Modal}>`;
 }

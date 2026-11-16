@@ -16,6 +16,9 @@ export const DEFAULT_RULES = {
   // the battle helper's type matchups (move effectiveness, what hits you, weaknesses) in the play view. The host
   // sets it when creating the run; runs from before it have no `typeHelp` and keep the help (true).
   typeHelp: true,
+  // lives (shared/lives.mjs): 0 = off, else how many – every death costs one; `livesPool` 'shared' | 'player'
+  lives: 0,
+  livesPool: 'shared',
   // (the Discord webhook is not a rule: it stays on this computer – GET/PUT /api/runs/:id/discord)
 };
 

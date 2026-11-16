@@ -7,6 +7,7 @@ import { t, currentLang } from './i18n.mjs';
 import { ALL_SLOTS, slotsOf, runMode, isNuzlocke, othersOf } from '/shared/slots.mjs';
 import { DEFAULT_RULES, RULE_PRESETS, NUZLOCKE_RULES, rulesWithDefaults } from '/shared/rules.mjs';
 import { placeName } from '/shared/live/location.mjs';
+import { livesLeft, livesOf, deathsIn } from '/shared/lives.mjs';
 
 export { ALL_SLOTS, slotsOf, runMode, isNuzlocke, othersOf, DEFAULT_RULES, RULE_PRESETS, NUZLOCKE_RULES };
 // Runs from before 1–4 players were always a pair – the default where no slots/manifest are passed.
@@ -305,7 +306,25 @@ export function markDead(doc, manifest, area, { slot, cause = '', level = null, 
       : msg('feed.death', '{area}: the pair died', { area: { area } });
   feedMsg(doc, manifest, { type: 'death', slot, area, msg: text, cause: cause || null });
   if (runMode(manifest) === 'nuzlocke' && rules(doc, manifest).deathless) failRun(doc, manifest, slot || 'p1', 'deathless', { area });
+  spendLife(doc, manifest, slot, { area });
   return true;
+}
+
+/**
+ * The lives rule's count (shared/lives.mjs), derived from the deaths that stand – so undoing a death gives its life
+ * back. null while the rule is off, else { total, pool, pools: { all | p1…: { slots, used, left, out, lastAt } } }.
+ */
+export function lives(doc, manifest) {
+  return livesLeft(rules(doc, manifest), slotsOf(manifest), deathsIn(doc.scan('pair:'), doc.scan('extra:')));
+}
+
+/** The lives of the pool `slot` spends from (the shared one, or the player's own) – null while the rule is off. */
+export const livesFor = (doc, manifest, slot) => livesOf(lives(doc, manifest), slot, slotsOf(manifest));
+
+/** `slot`'s Pokémon just died (`cause` { area } | { extra }): when that took the last life of its pool, the run is over. */
+function spendLife(doc, manifest, slot, cause) {
+  const s = slotsOf(manifest).includes(slot) ? slot : slotsOf(manifest)[0];
+  if (livesFor(doc, manifest, s)?.out) failRun(doc, manifest, s, 'lives', cause);
 }
 
 /**
@@ -352,6 +371,17 @@ export function logTypeHelpRule(doc, manifest, by, on) {
   feedMsg(doc, manifest, { type: 'rule', slot: by, msg: on
     ? solo ? msg('feed.typeHelpOnSolo', 'Type matchup help turned on for this run') : msg('feed.typeHelpOn', 'turned the type matchup help on for everyone')
     : solo ? msg('feed.typeHelpOffSolo', 'Type matchup help turned off for this run') : msg('feed.typeHelpOff', 'turned the type matchup help off for everyone') });
+}
+
+/** The lives rule was switched or changed (`by` = slot; `r`: the rules now) – logged for everyone, like the cheats rule. */
+export function logLivesRule(doc, manifest, by, r) {
+  const solo = slotsOf(manifest).length === 1;
+  const n = r.lives > 0 ? r.lives : 0;
+  feedMsg(doc, manifest, { type: 'rule', slot: by, msg: !n
+    ? solo ? msg('feed.livesOffSolo', 'Lives turned off for this run') : msg('feed.livesOff', 'turned the lives off')
+    : solo ? msg('feed.livesSolo', '{n} life for this run|{n} lives for this run', { n, count: n })
+      : r.livesPool === 'player' ? msg('feed.livesPlayer', 'set the lives to {n} per player', { n })
+        : msg('feed.livesShared', 'set {n} shared life for the run|set {n} shared lives for the run', { n, count: n }) });
 }
 
 /** `slot` let the area's encounter get away (fled, knocked out, ball missed): the area is spent. */
@@ -448,8 +478,9 @@ export function wipedSlot(doc, slots = ALL_SLOTS, manifest = Array.isArray(slots
 
 /**
  * End the run as failed (once – an existing status wins). `reason`: 'wipe' (a team was wiped), 'blackout'
- * or 'deathless' (Nuzlocke rules); it is kept in `run:status.reason`. `area` (or `extra`, a bonus Pokémon's
- * `slot:key`): the death that ended a deathless run; a blackout keeps which rule it went by (`rule`) – revive()
+ * or 'deathless' (Nuzlocke rules), 'lives' (the lives rule: `slot`'s pool is empty); it is kept in
+ * `run:status.reason`. `area` (or `extra`, a bonus Pokémon's `slot:key`): the death that ended a deathless run or
+ * took the last life; a blackout keeps which rule it went by (`rule`) – revive()
  * and markExtraDead() reopen a run whose cause they undo.
  */
 export function failRun(doc, manifest, slot, reason = 'wipe', { area = null, extra = null } = {}) {
@@ -461,9 +492,18 @@ export function failRun(doc, manifest, slot, reason = 'wipe', { area = null, ext
   feedMsg(doc, manifest, { type: 'run', slot, msg: reason === 'deathless'
     ? msg('feed.runDeathless', '{name} lost a Pokémon in a deathless run – the Nuzlocke has failed', { name })
     : reason === 'blackout' ? msg('feed.runBlackout', '{name} blacked out – the Nuzlocke has failed', { name })
-      : solo ? msg('feed.runWipedSolo', '{name}’s team was wiped – the Nuzlocke has failed', { name })
-        : msg('feed.runWiped', '{name}’s team was wiped – the run has failed', { name }) });
+      : reason === 'lives' ? livesOutMsg(doc, manifest, name)
+        : solo ? msg('feed.runWipedSolo', '{name}’s team was wiped – the Nuzlocke has failed', { name })
+          : msg('feed.runWiped', '{name}’s team was wiped – the run has failed', { name }) });
   return true;
+}
+
+/** The log line of a run that ran out of lives: the last shared life, or `name`'s own last one. */
+function livesOutMsg(doc, manifest, name) {
+  if (runMode(manifest) === 'nuzlocke') return msg('feed.runLivesSolo', '{name} has no lives left – the Nuzlocke has failed', { name });
+  return lives(doc, manifest)?.pool === 'player'
+    ? msg('feed.runLivesPlayer', '{name} has no lives left – the run has failed', { name })
+    : msg('feed.runLivesShared', 'The last life is gone – the run has failed');
 }
 
 /** Reopen an ended run. */
@@ -482,13 +522,16 @@ function standingDeaths(doc) {
 
 /**
  * A death was undone (`cause`: { area } or { extra }). When it is what ended the run – the death of a deathless
- * Nuzlocke, or the last one of a "box" blackout (nothing alive was left; now something is) – the run goes on, too.
- * A deathless run with another death still standing stays failed: that death is its cause now.
+ * Nuzlocke, the last one of a "box" blackout (nothing alive was left; now something is), or the one that took the
+ * last life (its pool has a life again) – the run goes on, too. A deathless run with another death still standing
+ * stays failed: that death is its cause now; so does a run whose pool is still out of lives.
  */
-function undoneDeath(doc, cause) {
+function undoneDeath(doc, cause, manifest) {
   const st = doc.get('run:status', null);
   if (st?.state !== 'failed' || !st.auto) return;
-  if (st.reason === 'deathless') {
+  if (st.reason === 'lives') {
+    if (livesFor(doc, manifest, st.by)?.out) return;
+  } else if (st.reason === 'deathless') {
     if (cause.area ? st.area !== cause.area : st.extra !== cause.extra) return;
     const next = standingDeaths(doc)[0];
     if (next) {
@@ -502,26 +545,31 @@ function undoneDeath(doc, cause) {
 }
 
 /**
- * Undo a death. When that death is what ended the run the run goes on, too (see undoneDeath). A wipe or a "party"
- * blackout went by the team's HP, not by the death mark: those stay ended ("play on" is still there).
+ * Undo a death (pass the run's manifest – the lives rule counts per player). When that death is what ended the run
+ * the run goes on, too (see undoneDeath). A wipe or a "party" blackout went by the team's HP, not by the death mark:
+ * those stay ended ("play on" is still there).
  */
-export function revive(doc, area) {
+export function revive(doc, area, manifest) {
   const p = doc.get(`pair:${area}`) || {};
   doc.set(`pair:${area}`, { ...p, state: 'alive', diedAt: null, cause: '' });
-  undoneDeath(doc, { area });
+  undoneDeath(doc, { area }, manifest);
 }
 
 /**
  * A bonus Pokémon (`extra:<slot>:<key>` – a kept shiny or gift) died, or that death is undone (`dead` false). It
- * counts like any other death: in a deathless Nuzlocke it ends the run, and undoing it reopens the run it ended.
+ * counts like any other death: in a deathless Nuzlocke it ends the run, it costs a life (lives rule), and undoing
+ * it reopens the run it ended.
  * false when there is no such bonus Pokémon or nothing changes.
  */
 export function markExtraDead(doc, manifest, slot, key, dead = true) {
   const x = doc.get(`extra:${slot}:${key}`, null);
   if (!x || !!x.dead === !!dead) return false;
   doc.set(`extra:${slot}:${key}`, { ...x, dead: !!dead, diedAt: dead ? Date.now() : null });
-  if (!dead) undoneDeath(doc, { extra: `${slot}:${key}` });
-  else if (runMode(manifest) === 'nuzlocke' && rules(doc, manifest).deathless) failRun(doc, manifest, slot, 'deathless', { extra: `${slot}:${key}` });
+  if (!dead) undoneDeath(doc, { extra: `${slot}:${key}` }, manifest);
+  else {
+    if (runMode(manifest) === 'nuzlocke' && rules(doc, manifest).deathless) failRun(doc, manifest, slot, 'deathless', { extra: `${slot}:${key}` });
+    spendLife(doc, manifest, slot, { extra: `${slot}:${key}` });
+  }
   return true;
 }
 
@@ -830,7 +878,8 @@ const partyDown = (party) => party.some((m) => !m.egg) && party.every((m) => m.e
  * `battle` (optional, the live battle right now): { kind: 'wild'|'trainer', enemy: { species, level } } – a mon
  * that falls in it gets that opponent as its death cause.
  * Returns { inbox, alerts, newCatches, deaths, failed } for the UI. `failed`: 'blackout' | 'deathless' when this
- * snapshot ended a Nuzlocke (SoulLinks end through wipedSlot/failRun as before).
+ * snapshot ended a Nuzlocke, 'lives' when one of its deaths took the last life (any mode; SoulLinks otherwise end
+ * through wipedSlot/failRun as before).
  */
 export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd = null, battle = null } = {}) {
   // The party is never empty once the game has started – an empty live party is the title screen, a reset or a
@@ -1027,7 +1076,9 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
   if (Object.keys(writes).length) doc.batch(writes);
   for (const [area, m] of fellOnCatch) if (pairState(doc, area).state !== 'dead') autoDead(area, m);
   let failed = null;
-  if (solo && auto && !statusBefore) {
+  // (a death of this pass took the last life – any mode; markDead ended the run already)
+  if (auto && !statusBefore && doc.get('run:status', null)?.reason === 'lives') failed = 'lives';
+  else if (solo && auto && !statusBefore) {
     if (doc.get('run:status', null)?.reason === 'deathless') failed = 'deathless';
     else if (blackout(doc, manifest, slot) && failRun(doc, manifest, slot, 'blackout')) failed = 'blackout';
   }
