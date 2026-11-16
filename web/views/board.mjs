@@ -877,7 +877,14 @@ export function RulesTab() {
       <h2>${t('rules.options', 'Options')}</h2>
       <div class="stack-s"><h3>${t('rules.type', 'Type rule')}</h3><p class="small muted">${t('rules.typeHint', 'Primary types may not repeat in the team.')}</p>
         <${Choice} label=${t('rules.type', 'Type rule')} value=${r.typeClause} onChange=${(v) => set({ typeClause: v })} options=${[['off', t('rules.off', 'Off')], ['party', t('rules.perPlayer', 'Per player')], ['global', n > 2 ? t('rules.acrossAll', 'Across all teams') : t('rules.acrossBoth', 'Across both teams')]]} /></div>
-      <div class="stack-s"><h3>${t('rules.dupes', 'Dupes clause')}</h3><p class="small muted">${t('rules.dupesHint', 'Already own the evolution line? Keep looking.')}</p>
+      <div class="stack-s"><h3>${t('rules.dupes', 'Dupes clause')}</h3><p class="small muted">${t('rules.dupesHint', 'Already own the evolution line? Keep looking.')}
+        ${' '}${{
+          // what the choice means exactly (lib/run.mjs dupeOf) – "Per player" was read as "for one of us" (ticket #18)
+          off: t('rules.dupesOffHint', 'Off: every first encounter counts, even one of a line you already caught.'),
+          player: t('rules.dupesPlayerHint', 'Per player: a line you caught yourself doesn’t count again for you – the others’ catches don’t matter for you.'),
+          both: n > 2 ? t('rules.dupesAllHint', 'For everyone: a line one of you caught doesn’t count again for any of you.') : t('rules.dupesBothHint', 'For both: a line one of you caught doesn’t count again for either of you.'),
+        }[r.dupes] || ''}
+        ${r.dupes !== 'off' ? ` ${n > 2 ? t('rules.dupesWhichGroup', 'Every catch counts, also one whose group failed or died – a Pokémon that fled or was knocked out doesn’t.') : t('rules.dupesWhich', 'Every catch counts, also one whose pair failed or died – a Pokémon that fled or was knocked out doesn’t.')}` : ''}</p>
         <${Choice} label=${t('rules.dupes', 'Dupes clause')} value=${r.dupes} onChange=${(v) => set({ dupes: v })} options=${[['off', t('rules.off', 'Off')], ['player', t('rules.perPlayer', 'Per player')], ['both', n > 2 ? t('rules.forAll', 'For everyone') : t('rules.forBoth', 'For both')]]} /></div>
       <label class="check"><input type="checkbox" checked=${r.failKillsPair} onChange=${(e) => set({ failKillsPair: e.target.checked })} /><span>${n > 2 ? t('rules.failGroup', 'A missed encounter costs the whole group') : t('rules.fail', 'A missed encounter costs the whole pair')}</span></label>
       <label class="check"><input type="checkbox" checked=${r.shinyClause} onChange=${(e) => set({ shinyClause: e.target.checked })} /><span>${t('rules.shiny', 'Shiny clause: shinies may always be caught and stay unlinked')}</span></label>
