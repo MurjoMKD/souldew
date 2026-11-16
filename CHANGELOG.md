@@ -39,6 +39,12 @@
   that music kept looping after the battle – and came back with the next fast-forward. souldew now follows the place
   you're in and battles (with live tracking running), switches to the battle music when a battle starts and back to
   the place's music when it ends, and no longer files the first moments of a battle under the place's music.
+- **A new controller layout works right away** (thanks to a player on Discord for the report). Changing the buttons in
+  Settings › Controller or Settings › Controls while a game was open in the corner didn't reach that game – it kept the
+  old layout until it was started again, although the settings already showed the new one. Changes now apply at once,
+  in every player.
+- **The SoulLink dupes rule explains itself.** The rule's hint on the board now says what “Per player” and “For both”
+  mean, and which catches count: one from a failed or dead pair does, an encounter that fled or was knocked out doesn't.
 
 ## 2.7.4
 
