@@ -32,6 +32,11 @@
 - **Black and White: the place sign works in every language** (thanks to a player on Discord). In versions other than
   English it showed Black City in the intro and then no place at all. souldew now reads the game's own copy of the
   zone data, and the title screen no longer shows Black City (Black/White, and Black 2/White 2 when switched on).
+- **The place sign in every game: the right place or none, never a wrong one.** souldew now reads where you are from
+  the game's own copy of the current map's data and checks it against your ROM – in Red/Blue/Yellow, Gold/Silver/
+  Crystal, the Gen 3 games, Diamond/Pearl/Platinum/HeartGold/SoulSilver and Black 2/White 2. Where the game's memory
+  sits elsewhere than in the English versions, souldew finds that copy instead of guessing. No more Pallet Town on
+  Red's title screen or Black City when Black 2/White 2 start.
 - **Badges and level caps in every language of Diamond, Pearl, Platinum, HeartGold and SoulSilver** (thanks to a player
   on Discord for the report). In versions other than English, souldew found the team but never the badges: the overlay
   showed none and the level cap stayed at the first gym's, so a team at level 10 after Falkner was flagged as over the

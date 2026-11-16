@@ -309,7 +309,6 @@ function readGen4(m, read, maps, entry, ctx = {}) {
 //    2/White 2's pointer doesn't apply: in Black/White *(0x02000024) moves with the emulator (0x0221B2F0 in melonDS,
 //    0x0221B5F0 in DeSmuME, the zone at the same address in both).
 const GEN5_MAIN_PTR = 0x02000024;
-const B2W2_ZONE = { child: 0x41b5c, parent: 0x41b44 };
 const BW_HEADER = 48;
 const BW_HEADER_AT = [0x0225929c, 0x022592bc]; // Black US, White US
 // The search for the copy: every BW_SCAN_MS, after BW_SCAN_SLOW_AFTER searches without a hit only every BW_SCAN_SLOW_MS
@@ -427,23 +426,11 @@ function bwZones(read, rom, ctx) {
   return null;
 }
 
-/** Black 2/White 2: [zone, parent zone] behind the main pointer, or null. */
-function b2w2Zones(read) {
-  const p = read(GEN5_MAIN_PTR, 4);
-  const off = ok(p, 4) ? u32le(p, 0) & 0xffffff : 0;
-  if (!off) return null;
-  const at = (o) => {
-    const b = inRam(0x02000000 + off + o) ? read(0x02000000 + off + o, 2) : null;
-    return ok(b, 2) ? u16le(b, 0) : null;
-  };
-  return [at(B2W2_ZONE.child), at(B2W2_ZONE.parent)];
-}
-
+/** Black/White: the zone header copy (bwZones); Black 2/White 2 go through readB2W2. */
 function readGen5(m, read, maps, entry, ctx = {}) {
   const rom = ctx.rom;
-  const fam = rom?.gen === 5 && gen5Family(rom);
-  if (!fam) return null;
-  const zones = fam === 'bw' ? bwZones(read, rom, ctx) : b2w2Zones(read);
+  if (rom?.gen !== 5 || gen5Family(rom) !== 'bw') return null;
+  const zones = bwZones(read, rom, ctx);
   // the zone itself first, else its parent zone (a building without a name of its own)
   for (const zone of zones || []) {
     const id = Number.isInteger(zone) && zone < rom.mapLoc.length ? rom.mapLoc[zone] : null;
