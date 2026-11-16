@@ -51,14 +51,36 @@ const gbHex = (b) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(
  * 0x3F) and MapHeaderBanks (db per map). A header starts with the 10 bytes LoadMapHeader copies to wCurMapHeader
  * (home/overworld.asm): tileset, height, width, blocks, text and script pointers, connection flags. The two tables are
  * found by the first nine maps (the towns Pallet … Fuchsia: tileset 0, OVERWORLD, in every game and language) and
- * kept when nearly every entry is a header. → { headers: [hex of the 10 bytes, or null], offset: { pointers, banks } }
- * or null. ~0.2 s for 1 MB.
+ * kept when nearly every entry is a header. `maps`: how many map ids the game has (NUM_MAPS – pokered 248, pokeyellow
+ * 249: Summer Beach House). → { headers: [hex of the 10 bytes, or null], offset: { pointers, banks } } or null.
+ * ~0.2 s for 1 MB; the work stays bounded for any bytes (a damaged or made-up ROM gives null, it never runs on).
  */
-export function gen1MapHeaders(rom) {
-  const banks = rom.length >> 14;
+export function gen1MapHeaders(rom, maps = 248) {
+  const N = maps;
+  const banks = Math.min(rom.length >> 14, 256); // (a bank is one byte in MapHeaderBanks)
   const header = (o) => o >= 0 && o + 10 <= rom.length && rom[o] < 0x18 && rom[o + 1] >= 1 && rom[o + 1] <= 0x60 && rom[o + 2] >= 1 && rom[o + 2] <= 0x60 && gbPtr(u16(rom, o + 3)) && gbPtr(u16(rom, o + 5)) && gbPtr(u16(rom, o + 7)) && !(rom[o + 9] & 0xf0);
+  // a header (a town's: tileset 0) in bank k behind pointer ptr
+  const at = (k, ptr) => k >= 1 && k < banks && header(gbAt(k, ptr));
+  const town = (k, ptr) => at(k, ptr) && rom[gbAt(k, ptr)] === 0;
+  // whether any bank holds such a header behind a pointer – worked out once per pointer, so the search stays a pass or
+  // two over the ROM whatever its bytes are (bit 0 known, bit 1 a header, bit 2 a town's)
+  const behind = new Uint8Array(0x4000);
+  const any = (ptr) => {
+    const i = ptr - 0x4000;
+    if (!behind[i]) {
+      behind[i] = 1;
+      for (let k = 1; k < banks && behind[i] !== 7; k++) if (at(k, ptr)) behind[i] |= rom[gbAt(k, ptr)] === 0 ? 6 : 2;
+    }
+    return behind[i];
+  };
   const TOWNS = 9;
-  const N = 248; // NUM_MAPS (pokered constants/map_constants.asm, the same in pokeyellow)
+  const MIN = 200;
+  // A game has one pair of tables – and the same tables a map or more in (Red: 17 pointer tables, 15 pairs). The bounds
+  // keep bytes made to look like many of them from taking minutes (each pointer table costs a pass over the ROM): past
+  // them, no tables – never a guess
+  const MAX_STARTS = 4096;
+  const MAX_TABLES = 64;
+  const MAX_PAIRS = 256;
   const count = (p, b) => {
     let n = 0;
     for (let i = 0; i < N && p + i * 2 + 2 <= rom.length && b + i < rom.length; i++) {
@@ -69,32 +91,35 @@ export function gen1MapHeaders(rom) {
   };
   let best = null;
   let tie = false;
+  let starts = 0;
+  let tables = 0;
+  let pairs = 0;
   for (let p = 0; p + N * 2 <= rom.length; p++) {
-    // the banks each of the towns' pointers can be in (a pointer to the start of a bank fits many)
-    const fits = [];
-    for (let i = 0; i < TOWNS; i++) {
-      const ptr = u16(rom, p + i * 2);
-      if (!gbPtr(ptr)) break;
-      const ks = new Set();
-      for (let k = 1; k < banks; k++) {
-        const o = gbAt(k, ptr);
-        if (header(o) && rom[o] === 0) ks.add(k);
-      }
-      if (!ks.size) break;
-      fits.push(ks);
-    }
-    if (fits.length < TOWNS) continue;
+    let i = 0;
+    while (i < TOWNS && gbPtr(u16(rom, p + i * 2)) && any(u16(rom, p + i * 2)) & 4) i++;
+    if (i < TOWNS) continue;
+    if (++starts > MAX_STARTS) return null;
+    // nearly every pointer of the table leads to a header in some bank (before the pass over the ROM for the banks)
+    let led = 0;
+    for (let t = 0; t < N && led + N - t >= MIN; t++) if (gbPtr(u16(rom, p + t * 2)) && any(u16(rom, p + t * 2)) & 2) led++;
+    if (led < MIN) continue;
+    if (++tables > MAX_TABLES) return null;
+    // the banks byte of each town must be one its pointer can be in (a pointer to the start of a bank fits many) –
+    // looked up per byte value, so the pass is a few array reads per ROM byte
+    const ok = new Uint8Array(TOWNS * 256);
+    for (let j = 0; j < TOWNS; j++) for (let k = 1; k < 256; k++) ok[j * 256 + k] = town(k, u16(rom, p + j * 2)) ? 1 : 0;
     for (let b = 0; b + N <= rom.length; b++) {
-      let i = 0;
-      while (i < TOWNS && fits[i].has(rom[b + i])) i++;
-      if (i < TOWNS) continue;
+      let j = 0;
+      while (j < TOWNS && ok[j * 256 + rom[b + j]]) j++;
+      if (j < TOWNS) continue;
+      if (++pairs > MAX_PAIRS) return null;
       const n = count(p, b);
       // (the same tables a few maps in are a candidate too – with fewer headers: the start has the most)
       if (!best || n > best.n) [best, tie] = [{ p, b, n }, false];
       else if (n === best.n && best.p - p !== 2 * (best.b - b)) tie = true;
     }
   }
-  if (!best || tie || best.n < 200) return null;
+  if (!best || tie || best.n < MIN) return null;
   const headers = [];
   for (let i = 0; i < N; i++) {
     const k = rom[best.b + i];
@@ -145,7 +170,7 @@ export function gen2MapHeaders(rom) {
  * The map headers of a Game Boy game for the live reader (gen1MapHeaders / gen2MapHeaders), checked against the map
  * table souldew has for its memory table entry (shared/data/maps.json `table`): Gen 2 must have exactly the maps of
  * that table – the same groups, the same number of maps in each – so a map's number means the same place; Gen 1's
- * table has all 248 map ids (the 22 unused ones too, which have no header: Red US 226 headers). → { gen: 1, headers } /
+ * table has all map ids (Red/Blue 248, Yellow 249 – the unused ones too, which have no header: Red US 226 headers). → { gen: 1, headers } /
  * { gen: 2, maps } or null (another layout: a hack with maps of its own, or a table not found – the reader then falls
  * back to the fixed addresses).
  */
@@ -154,7 +179,7 @@ export function gbMapHeaders(rom, gen, table) {
     if (!rom || !table) return null;
     const keys = Object.keys(table).filter((k) => !k.startsWith('_'));
     if (gen === 1) {
-      const g = gen1MapHeaders(rom);
+      const g = gen1MapHeaders(rom, keys.length);
       return g && g.headers.length === keys.length ? { gen: 1, headers: g.headers } : null;
     }
     if (gen === 2) {

@@ -310,7 +310,26 @@ test('readLocation with ROM data: Black/White read the copy of the zone header, 
   assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state })?.id, 4);
   assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state })?.id, 4);
   assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state }), null);
-  assert.equal(state.bwZoneAt, null);
+  assert.equal(state.bwLast, null, 'no place kept');
+  // … but the address stays a candidate, read on every poll: back in the game, the copy where it was is the place at
+  // once – no search, no wait for one (it was dropped: up to 30 s without a sign)
+  let big = 0;
+  const counted = (a, n) => {
+    if (n === 0x400000) big++;
+    return de.read(a, n);
+  };
+  state.bwZoneScan = Date.now(); // (a search just ran)
+  for (let i = 0; i < 5; i++) assert.equal(readLocation(maps, deEntry, counted, { rom: german, state }), null);
+  inZone(de, 0x0225a1c0, 317);
+  assert.equal(readLocation(maps, deEntry, counted, { rom: german, state })?.id, 14);
+  assert.equal(big, 0, 'found without a search');
+  assert.equal(state.bwMiss, 0);
+  // the remembered address takes only a copy followed by its zone id – a header of the table there is no copy
+  de.ram.fill(0, 0x0025a1c0, 0x0025a1c0 + 0x40);
+  for (let i = 0; i < 3; i++) readLocation(maps, deEntry, de.read, { rom: german, state });
+  de.ram.set(zones.subarray(316 * 48, 319 * 48), 0x0025a1c0);
+  assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state: { ...state, bwZoneScan: Date.now() } }), null);
+  assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state }), null);
 
   // a zone without a name of its own: its parent zone's
   const room = mainRam();
@@ -372,8 +391,29 @@ test('readLocation with ROM data: Black/White read the copy of the zone header, 
       now += 3000;
     }
     assert.equal(reads, 5, 'then every 30 s');
+    // the game set something up (the title screen left, the save loaded: the party reader found the team) – the search
+    // is back at the fast pace, the sign doesn't stay empty for up to 30 s
+    st.partyAddr = 0x0221b590;
+    poll();
+    assert.equal(reads, 6, 'searched for at once');
+    for (let i = 0; i < 3; i++) {
+      now += 3000;
+      poll();
+    }
+    assert.equal(reads, 9, 'every 3 s again');
+    // the same with a new value of the main pointer
+    for (let i = 0; i < 11; i++) {
+      now += 3000;
+      poll();
+    }
+    const slow = reads;
+    empty.put32(0x02000024, 0x0221b2f0);
+    now += 3000;
+    poll();
+    assert.equal(reads, slow + 1, 'the main pointer changed: searched for again');
+    now += 3000;
     poll({ ...german, code: 'IRAD' });
-    assert.equal(reads, 6, 'another game: searched for right away');
+    assert.equal(reads, slow + 2, 'another game: searched for right away');
     // found once: the misses start over
     inZone(empty, 0x0225a1c0, 317);
     now += 3000;
@@ -386,10 +426,13 @@ test('readLocation with ROM data: Black/White read the copy of the zone header, 
 
 // ---------------------------------------------------------------- Game Boy map headers
 
-/** A made-up Gen 1 ROM (512 KB) with its map tables where no English game has them – as another language might. */
-function gen1Rom({ pointers = 0x2345, banks = 0x13579 } = {}) {
+/**
+ * A made-up Gen 1 ROM (512 KB) with its map tables where no English game has them – as another language might. `maps`:
+ * Red/Blue 248, Yellow 249.
+ */
+function gen1Rom({ pointers = 0x2345, banks = 0x13579, maps: n = 248 } = {}) {
   const rom = new Uint8Array(0x80000);
-  for (let i = 0; i < 248; i++) {
+  for (let i = 0; i < n; i++) {
     const bank = 5 + (i % 3);
     const ptr = 0x4100 + i * 24;
     put16(rom, pointers + i * 2, ptr);
@@ -411,6 +454,34 @@ test('Gen 1 map headers: the pointer and bank tables found by their structure, w
   assert.deepEqual(moved.headers, g.headers, 'the same headers – another place in the ROM');
   assert.equal(gbMapHeaders(gen1Rom(), 1, maps.tables.gen1.pokered).headers[12], g.headers[12]);
   assert.equal(gen1MapHeaders(new Uint8Array(0x80000)), null, 'no tables: nothing');
+});
+
+test('Gen 1 map headers: Yellow has a map more (249: Summer Beach House) – its ROM passes the check against its own table', () => {
+  const yellow = maps.tables.gen1.pokeyellow;
+  assert.equal(Object.keys(yellow).filter((k) => !k.startsWith('_')).length, 249);
+  const rom = gen1Rom({ maps: 249 });
+  const g = gbMapHeaders(rom, 1, yellow);
+  // (it gave 248 headers for a table of 249 maps: null for every Yellow ROM, the place from the unchecked wCurMap)
+  assert.ok(g, 'Yellow\'s headers');
+  assert.equal(g.headers.length, 249);
+  assert.equal(g.headers[248], gen1MapHeaders(rom, 249).headers[248], 'map 248 too');
+  assert.ok(g.headers[248]);
+  assert.equal(gen1MapHeaders(rom).headers.length, 248, 'Red/Blue: 248 maps');
+});
+
+test('Gen 1 map headers: bytes made to look like thousands of tables give up quickly – null, never minutes of work', () => {
+  const rom = new Uint8Array(0x100000);
+  // a town's header at the start of a few banks, and thousands of pointer tables leading there
+  for (let k = 1; k < 4; k++) rom.set([0, 9, 10, 0, 0x50, 0x10, 0x60, 0x20, 0x70, 0], k * 0x4000);
+  for (let o = 0; o < 0x4000; o += 2) put16(rom, o, 0x4000);
+  let t = Date.now();
+  assert.equal(gen1MapHeaders(rom), null, 'no banks table');
+  // and banks tables everywhere
+  for (let k = 1; k < 4; k++) rom.fill(2, k * 0x4000 + 16, (k + 1) * 0x4000);
+  assert.equal(gen1MapHeaders(rom), null, 'too many to be a game\'s');
+  assert.equal(gbMapHeaders(rom, 1, maps.tables.gen1.pokered), null);
+  t = Date.now() - t;
+  assert.ok(t < 10000, `${t} ms (it took minutes: a pass over the ROM for each table)`);
 });
 
 /** A made-up Gen 2 ROM: the maps of `table` (group.number) in a group table at `at`, attributes in the next bank. */
@@ -511,10 +582,11 @@ test('real Game Boy ROMs: the map headers are where pret\'s symbols put them, an
     const g1 = Object.entries(gen1).find(([k]) => title.startsWith(k));
     const g2 = Object.entries(gen2).find(([k]) => title.startsWith(k));
     if (g1) {
-      const g = gen1MapHeaders(bytes);
+      const table = maps.tables.gen1[g1[0] === 'POKEMON YELLOW' ? 'pokeyellow' : 'pokered'];
+      const g = gen1MapHeaders(bytes, Object.keys(table).filter((k) => !k.startsWith('_')).length);
       assert.deepEqual(g.offset, { pointers: g1[1][0], banks: g1[1][1] }, f);
       assert.ok(g.headers.filter(Boolean).length >= 220, f);
-      assert.ok(gbMapHeaders(bytes, 1, maps.tables.gen1.pokered), f);
+      assert.ok(gbMapHeaders(bytes, 1, table), `${f}: the maps of maps.json ${g1[0]}`);
       checked++;
     }
     if (g2) {

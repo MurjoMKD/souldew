@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { readLocation, locationLabel } from '../shared/live/location.mjs';
+import { romData } from '../server/lib/romloc.mjs';
 
 const json = (f) => JSON.parse(readFileSync(new URL(`../shared/data/${f}`, import.meta.url), 'utf8'));
 const maps = json('maps.json');
@@ -57,6 +58,45 @@ test('Gen 1: the place comes from the copy of the map header (English addresses)
   y.set(0xd35d, [0x0c]);
   y.set(0xd366, g1Header(0x0c));
   assert.equal(name(readLocation(maps, 'yellow_us', y.read, { gbMaps: g1 })), 'Route 1');
+});
+
+/**
+ * A made-up Yellow ROM (1 MB) shaped like the real one: its cartridge header (the CGB flag – the title runs on into the
+ * bytes of a manufacturer code: "POKEMON YEL" + "LOW") and its 249 maps' headers (g1Header) behind MapHeaderPointers and
+ * MapHeaderBanks where pret puts them (pokeyellow.sym 3F:41F2 / 3F:43E4).
+ */
+function yellowRom() {
+  const rom = new Uint8Array(0x100000);
+  rom.set([0xce, 0xed, 0x66, 0x66, 0xcc, 0x0d, 0x00, 0x0b], 0x104);
+  rom.set([...'POKEMON YELLOW'].map((c) => c.charCodeAt(0)), 0x134);
+  rom[0x143] = 0x80;
+  const pointers = 0x3f * 0x4000 + 0x1f2;
+  const banks = 0x3f * 0x4000 + 0x3e4;
+  for (let i = 0; i < 249; i++) {
+    const bank = 5 + (i % 3);
+    const ptr = 0x4100 + i * 16;
+    rom.set([ptr & 0xff, ptr >> 8], pointers + i * 2);
+    rom[banks + i] = i === 11 ? 0 : bank;
+    rom.set(g1Header(i), bank * 0x4000 + ptr - 0x4000);
+  }
+  return rom;
+}
+
+test('Gen 1: Yellow through the real path – its ROM data (249 maps) checks the copy of the header, Summer Beach House too', () => {
+  const r = romData(yellowRom(), new URL('../shared', import.meta.url).pathname);
+  // (the memory table entry wasn't found from Yellow's header, and 248 headers never matched its table of 249 maps:
+  // no ROM headers at all – the place came from the unchecked English wCurMap)
+  assert.equal(r.gbMaps?.headers?.length, 249, 'the ROM data hands over Yellow\'s headers');
+  const y = gbRam();
+  y.set(0xd35d, [248]); // wCurMap: Summer Beach House, Yellow's own map
+  y.set(0xd366, g1Header(248));
+  assert.deepEqual(readLocation(maps, 'yellow_us', y.read, { gbMaps: r.gbMaps, state: {} }), { gen: 1, id: maps.tables.gen1.pokeyellow['248'], map: 248 });
+  // another language's WRAM: found by the copy of the header, the number at the English address is not trusted
+  const moved = gbRam();
+  moved.set(0xd35d, [0]);
+  moved.set(0xd35d + 0x2b, [0x0c]);
+  moved.set(0xd366 + 0x2b, g1Header(0x0c));
+  assert.equal(name(readLocation(maps, 'yellow_us', moved.read, { gbMaps: r.gbMaps, state: {} })), 'Route 1');
 });
 
 test('Gen 1: zeroed WRAM (title screen, Oak’s intro) is no place – it used to be Pallet Town', () => {
@@ -326,4 +366,66 @@ test('Black 2/White 2, another language: the copy searched for, remembered; the 
   assert.equal(black2(two, st2), null);
   assert.equal(black2(two, st2), null);
   assert.equal(two.big, 1, 'searched at most every 3 s');
+});
+
+test('Black 2/White 2: a lost copy’s address is read again on every poll – back in the game, the place at once', () => {
+  const bus = dsRam();
+  bus.set(0x02000024, le32(0x02204cc4));
+  bus.set(0x02204cc4 + 0x41b2c + 48, [0, 0]); // the English address: zone 0
+  bus.set(0x0225d830, copyOf(3)); // another language's copy, found by the search
+  const st = {};
+  assert.equal(black2(bus, st)?.romName, 'Aspertia City');
+  bus.set(0x0225d830, new Array(50).fill(0)); // back on the title screen
+  assert.equal(black2(bus, st)?.romName, 'Aspertia City');
+  assert.equal(black2(bus, st)?.romName, 'Aspertia City');
+  assert.equal(black2(bus, st), null, 'then no place');
+  for (let i = 0; i < 6; i++) {
+    st.b2w2ZoneScan -= 3000;
+    black2(bus, st);
+  }
+  const n = bus.big;
+  // the game loaded again: its copy where it was – the place on the next poll, without a search (the address was
+  // dropped: the sign stayed empty until the next search, up to 30 s)
+  bus.set(0x0225d830, copyOf(1));
+  assert.deepEqual(black2(bus, st), { gen: 5, id: 117, map: 3, romName: 'Aspertia City' });
+  assert.equal(bus.big, n);
+  assert.equal(st.b2w2ScanMiss, 0);
+});
+
+test('Black 2/White 2: the slow searches go back to the fast pace once the game sets something up – never a wrong place', () => {
+  const bus = dsRam();
+  bus.set(0x02000024, le32(0x02204cc4));
+  bus.set(0x02204cc4 + 0x41b2c + 48, [0, 0]);
+  const st = {};
+  const search = () => {
+    st.b2w2ZoneScan -= 3000; // 3 s on
+    return black2(bus, st);
+  };
+  black2(bus, st);
+  for (let i = 0; i < 5; i++) search();
+  const n = bus.big;
+  assert.equal(search(), null);
+  assert.equal(bus.big, n, 'the title screen: every 30 s only');
+  // the save loaded: the party reader found the team
+  st.partyAddr = 0x0221e3ec;
+  assert.equal(search(), null);
+  assert.equal(bus.big, n + 1, 'searched for at once');
+  for (let i = 0; i < 5; i++) search();
+  const m = bus.big;
+  assert.equal(m, n + 4, 'a few more at the fast pace, then slow again');
+  // a new value of the main pointer: the same
+  bus.set(0x02000024, le32(0x02204d04));
+  bus.set(0x0225d830, copyOf(3));
+  assert.equal(search()?.romName, 'Aspertia City');
+  assert.equal(bus.big, m + 1);
+  // the copy twice (a second one turned up): no place – the searches stay single-hit only
+  const two = dsRam();
+  two.set(0x0225d830, copyOf(3));
+  two.set(0x0230d830, copyOf(1));
+  const st2 = { partyAddr: 0x0221e3ec };
+  assert.equal(black2(two, st2), null);
+  st2.partyAddr = 0x0221e400;
+  st2.b2w2ZoneScan -= 3000;
+  assert.equal(black2(two, st2), null);
+  assert.equal(two.big, 2);
 });

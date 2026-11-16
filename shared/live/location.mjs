@@ -313,8 +313,11 @@ const BW_HEADER = 48;
 const BW_HEADER_AT = [0x0225929c, 0x022592bc]; // Black US, White US
 // The search for the copy: every BW_SCAN_MS, after BW_SCAN_SLOW_AFTER searches without a hit only every BW_SCAN_SLOW_MS
 // (a 4 MiB scan; on the title screen or in a ROM whose copy never matches it would otherwise run every 3 s for good) –
-// back to the fast pace once the copy is found or another game runs. A remembered copy that doesn't match for a poll
-// (the game rewriting it on a zone change) keeps its address and the last place for up to BW_KEEP polls.
+// back to the fast pace once the copy is found, another game runs or the game has set up something new (gen5Setup: the
+// title screen left, a save loaded – the copy turns up then, not 30 s later). A remembered copy that doesn't match for
+// a poll (the game rewriting it on a zone change) keeps the last place for up to BW_KEEP polls, and its address is
+// checked again on every poll after that (a read of 50 bytes – back on the title screen and into the game again, the
+// copy is where it was).
 const BW_SCAN_MS = 3000;
 const BW_SCAN_SLOW_MS = 30000;
 const BW_SCAN_SLOW_AFTER = 4;
@@ -370,12 +373,28 @@ function bwLooseZone(b, t, rom) {
 
 const bwEnglish = (rom) => String(rom?.code || '').toUpperCase().endsWith('O');
 
-/** [zone, parent zone] from a copy of the header at `a` (exact; at an English game's own address also bwLooseZone), or null. */
+/**
+ * [zone, parent zone] from a copy of the header at `a`, or null: exact and followed by its zone id, as the search takes
+ * it (a header of the table loaded side by side with others is none); at an English game's own address the exact header
+ * alone, or bwLooseZone.
+ */
 function bwZonesAt(read, a, t, rom) {
   const b = read(a, BW_READ);
   if (!ok(b, BW_READ)) return null;
-  if (bwZoneOf(b, 0, t) >= 0 || (bwEnglish(rom) && BW_HEADER_AT.includes(a) && bwLooseZone(b, t, rom) >= 0)) return [u16le(b, 0x16), u16le(b, 0x18)];
+  const own = BW_HEADER_AT.includes(a);
+  const zone = bwZoneOf(b, 0, t);
+  if ((zone >= 0 && (own || u16le(b, 0x30) === zone)) || (own && bwEnglish(rom) && bwLooseZone(b, t, rom) >= 0)) return [u16le(b, 0x16), u16le(b, 0x18)];
   return null;
+}
+
+/**
+ * What the game has set up, cheaply: the main pointer's value and where the party reader found the team (its state
+ * `partyAddr` – none on the title screen). When it changes the search for the copy of the zone header starts over at the
+ * fast pace: the field is set up a moment after the title screen, and the copy only exists from then on.
+ */
+function gen5Setup(read, st) {
+  const p = read(GEN5_MAIN_PTR, 4);
+  return `${ok(p, 4) ? u32le(p, 0) : 0}|${st.partyAddr || 0}`;
 }
 
 /** The one copy of the current zone's header in main RAM (followed by the zone id again), or 0. */
@@ -402,7 +421,7 @@ function bwZones(read, rom, ctx) {
   if (!t) return null;
   const st = ctx.state || null;
   const game = `${rom.code}|${t.length}`;
-  if (st && st.bwGame !== game) Object.assign(st, { bwGame: game, bwZoneAt: null, bwLast: null, bwMiss: 0, bwZoneScan: 0, bwScanMiss: 0 }); // another game
+  if (st && st.bwGame !== game) Object.assign(st, { bwGame: game, bwZoneAt: null, bwLast: null, bwMiss: 0, bwZoneScan: 0, bwScanMiss: 0, bwSetup: null }); // another game
   const found = (a, z) => {
     if (st) Object.assign(st, { bwZoneAt: a, bwLast: z, bwMiss: 0, bwScanMiss: 0 });
     return z;
@@ -411,13 +430,16 @@ function bwZones(read, rom, ctx) {
     const z = bwZonesAt(read, st.bwZoneAt, t, rom);
     if (z) return found(st.bwZoneAt, z);
     if (++st.bwMiss < BW_KEEP) return st.bwLast; // (one poll mid-rewrite: the place stays)
-    Object.assign(st, { bwZoneAt: null, bwLast: null, bwMiss: 0 });
+    st.bwLast = null; // (no place now – the address stays, checked on every poll)
   }
   for (const a of BW_HEADER_AT) {
-    const z = bwZonesAt(read, a, t, rom);
+    const z = a !== st?.bwZoneAt ? bwZonesAt(read, a, t, rom) : null;
     if (z) return found(a, z);
   }
-  if (!st || (st.bwZoneScan && Date.now() - st.bwZoneScan < (st.bwScanMiss >= BW_SCAN_SLOW_AFTER ? BW_SCAN_SLOW_MS : BW_SCAN_MS))) return null;
+  if (!st) return null;
+  const setup = gen5Setup(read, st);
+  if (st.bwSetup !== setup) Object.assign(st, { bwSetup: setup, bwScanMiss: 0 });
+  if (st.bwZoneScan && Date.now() - st.bwZoneScan < (st.bwScanMiss >= BW_SCAN_SLOW_AFTER ? BW_SCAN_SLOW_MS : BW_SCAN_MS)) return null;
   st.bwZoneScan = Date.now();
   const a = bwSearch(read, t);
   const z = a ? bwZonesAt(read, a, t, rom) : null;
@@ -510,7 +532,7 @@ function b2w2CopyZones(read, rom, ctx) {
   if (!t) return null;
   const st = ctx.state || null;
   const game = `${rom.code}|${t.length}`;
-  if (st && st.b2w2Game !== game) Object.assign(st, { b2w2Game: game, b2w2ZoneAt: null, b2w2Last: null, b2w2Miss: 0, b2w2ZoneScan: 0, b2w2ScanMiss: 0 }); // another game
+  if (st && st.b2w2Game !== game) Object.assign(st, { b2w2Game: game, b2w2ZoneAt: null, b2w2Last: null, b2w2Miss: 0, b2w2ZoneScan: 0, b2w2ScanMiss: 0, b2w2Setup: null }); // another game
   const found = (a, z) => {
     if (st) Object.assign(st, { b2w2ZoneAt: a, b2w2Last: z, b2w2Miss: 0, b2w2ScanMiss: 0 });
     return z;
@@ -522,11 +544,14 @@ function b2w2CopyZones(read, rom, ctx) {
     const z = b2w2ZonesAt(read, st.b2w2ZoneAt, t, rom, viaPtr);
     if (z) return found(st.b2w2ZoneAt, z);
     if (++st.b2w2Miss < BW_KEEP) return st.b2w2Last; // (one poll mid-rewrite: the place stays)
-    Object.assign(st, { b2w2ZoneAt: null, b2w2Last: null, b2w2Miss: 0 });
+    st.b2w2Last = null; // (no place now – the address stays, checked on every poll)
   }
-  const z = viaPtr ? b2w2ZonesAt(read, viaPtr, t, rom, viaPtr) : null;
+  const z = viaPtr && viaPtr !== st?.b2w2ZoneAt ? b2w2ZonesAt(read, viaPtr, t, rom, viaPtr) : null;
   if (z) return found(viaPtr, z);
-  if (!st || (st.b2w2ZoneScan && Date.now() - st.b2w2ZoneScan < (st.b2w2ScanMiss >= BW_SCAN_SLOW_AFTER ? BW_SCAN_SLOW_MS : BW_SCAN_MS))) return null;
+  if (!st) return null;
+  const setup = gen5Setup(read, st);
+  if (st.b2w2Setup !== setup) Object.assign(st, { b2w2Setup: setup, b2w2ScanMiss: 0 });
+  if (st.b2w2ZoneScan && Date.now() - st.b2w2ZoneScan < (st.b2w2ScanMiss >= BW_SCAN_SLOW_AFTER ? BW_SCAN_SLOW_MS : BW_SCAN_MS)) return null;
   st.b2w2ZoneScan = Date.now();
   const a = b2w2Search(read, t);
   const zs = a ? b2w2ZonesAt(read, a, t, rom, viaPtr) : null;

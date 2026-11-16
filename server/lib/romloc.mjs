@@ -24,7 +24,7 @@ import { isCtrExt } from '../../shared/romid.mjs';
 import { identifyCtr } from '../../shared/ctr.mjs';
 import { ctrZonePlaces } from '../../shared/live/ctrzones.mjs';
 
-const VERSION = 19; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header, 16: Gen 3 hacks with moved RAM, badge flags by the leaders' order, 17: Black/White zone headers, 18: catch rates with the types, the Game Boy enemy's status / catch rate / battle type moved with a hack's RAM, 19: the Game Boy map headers, Gen 3 map headers, Black 2/White 2 zone headers – the place sign checks the game's copy of the current map's header against them)
+const VERSION = 20; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header, 16: Gen 3 hacks with moved RAM, badge flags by the leaders' order, 17: Black/White zone headers, 18: catch rates with the types, the Game Boy enemy's status / catch rate / battle type moved with a hack's RAM, 19: the Game Boy map headers, Gen 3 map headers, Black 2/White 2 zone headers – the place sign checks the game's copy of the current map's header against them, 20: Yellow's map headers (249 maps) and its memory table entry found from its ROM header)
 const memo = new Map();
 let tables = null;
 
@@ -96,11 +96,16 @@ export function romData(u8, sharedDir) {
  * (shared/live/romloc.mjs gbMapHeaders, shared/live/location.mjs readGen1/readGen2) – in every language.
  */
 function gbMaps(u8, o) {
-  const h = identifyRom(u8.subarray(0, 0x200));
-  if (!h || (h.system !== 'gb' && h.system !== 'gbc')) return null;
-  const entry = findEntry(o.addresses, { platform: h.system, code: h.code, title: h.title });
-  const m = entry ? o.maps.games?.[entry.id] : null;
-  return m ? gbMapHeaders(u8, m.gen, o.maps.tables?.[`gen${m.gen}`]?.[m.table]) : null;
+  // (on its own: whatever goes wrong here costs the place sign its check, never the rest of the ROM's data)
+  try {
+    const h = identifyRom(u8.subarray(0, 0x200));
+    if (!h || (h.system !== 'gb' && h.system !== 'gbc')) return null;
+    const entry = findEntry(o.addresses, { platform: h.system, code: h.code, title: h.title });
+    const m = entry ? o.maps.games?.[entry.id] : null;
+    return m ? gbMapHeaders(u8, m.gen, o.maps.tables?.[`gen${m.gen}`]?.[m.table]) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

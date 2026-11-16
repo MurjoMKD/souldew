@@ -30,9 +30,12 @@ export function findEntry(table, header) {
     const g = games.find((x) => (x.match?.titleIds || []).some((t) => String(t).toUpperCase() === titleId));
     if (g) return g;
   }
+  // (a Game Boy Color-enhanced cart without a manufacturer code: its title runs on into the four bytes identifyRom reads as
+  // one – Yellow's "POKEMON YELLOW" with the CGB flag reads as "POKEMON YEL" and "LOW")
+  const long = title.length === 11 ? title + code : title;
   for (const g of games) {
     const m = g.match || {};
-    if (m.title && title && (g.platform === 'gb' || g.platform === 'gbc') && title.startsWith(String(m.title).toUpperCase())) return g;
+    if (m.title && title && (g.platform === 'gb' || g.platform === 'gbc') && long.startsWith(String(m.title).toUpperCase())) return g;
   }
   // Same game code family on DS (e.g. IPKD German HeartGold → IPKE layout via scan)
   if (header.platform === 'nds' && code.length === 4) {
