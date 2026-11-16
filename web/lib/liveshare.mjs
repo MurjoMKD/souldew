@@ -263,6 +263,9 @@ function ruleChips(doc, manifest) {
   if (r.dupes && r.dupes !== 'off') out.push(t('hof.rDupes', 'Dupes clause'));
   if (r.typeClause && r.typeClause !== 'off') out.push(t('hof.rType', 'Type rule'));
   if (manifest.randomizer?.enabled) out.push(t('hof.rRandomized', 'Randomized'));
+  // a Shinylocke: the game's own shiny rate changed (shared/shiny.mjs)
+  if (manifest.shiny?.rate && manifest.shiny.rate !== 8192) out.push(t('hof.rShiny', 'Shiny 1 in {n}', { n: manifest.shiny.rate }));
+  if (manifest.shiny?.trainers) out.push(t('hof.rShinyTrainers', 'Trainer shinies'));
   if (solo && presetOf(r) !== 'hardcore') {
     if (r.setMode) out.push(t('hof.rSetMode', 'Set mode'));
     if (r.noBattleItems) out.push(t('hof.rNoItems', 'No items in battle'));

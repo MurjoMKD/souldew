@@ -16,6 +16,8 @@ import { scanLibrary, catalog, loadFile, importFiles, uploadTarget, resolveId, d
 import { freeBytes } from './lib/zip.mjs';
 import { saveCover, deleteCover, coverFile, customCovers, coverUrl, COVER_LIMIT } from './lib/covers.mjs';
 import { inspectCtr, ncchSizeOf } from './lib/ctrrando.mjs';
+import { shinySupport, isOriginalRom } from './lib/shiny.mjs';
+import { shinyThreshold } from '../shared/shiny.mjs';
 import { buildRun, listRuns, readManifest, writeManifest, runDir, runPack, runSummary, trashRun, checkPack, stripLocalRules, isDiscordWebhook, mergeDocEntries, renamePlayers } from './lib/build.mjs';
 import { SaveWatcher } from './lib/savewatch.mjs';
 import { EMULATORS, detectEmulator, installEmulator, launchRom, revealInFileManager, emulatorRunning } from './lib/emulator.mjs';
@@ -474,7 +476,15 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of sseClients) res.write(msg);
   };
-  const watcher = new SaveWatcher(GEN4, emit);
+  const watcher = new SaveWatcher(GEN4, emit, {
+    shinyOdds: (id) => {
+      try {
+        return shinyThreshold(readManifest(id)?.shiny);
+      } catch {
+        return shinyThreshold(null); // (an unreadable run.json – the games' own odds)
+      }
+    },
+  });
   // the anonymous "playing now" heartbeat – it reads the setting on every call, so "off" applies at once
   const playingNow = presenceCounter({ enabled: () => loadConfig().presence !== false });
   const live = new LiveBridge(emit);
@@ -1084,12 +1094,14 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       else if (info.unsupported && !uprStatus().installed) info.missingTool = 'upr';
       // outputSize: what one randomized game will take (its NCCH – a cartridge image is padded to 2/4 GB)
       return { patched: { crc: null, baseCrc: null, size: patched.size, outputSize: ncchSizeOf(patched.path), header: patched.header, patchName: null, system: '3ds' },
-        info: { generation: game?.generation || null, ...info }, log };
+        info: { generation: game?.generation || null, ...info }, shiny: { ok: false, reason: 'game' }, log };
     }
     // (missingTool: the game may be fine – Java or the randomizer is what's missing, the UI says so instead of "this
     // game can't be randomized"; the generation picks the trial run's values)
     info = await inspectRom(patched.path, { gen: matchCatalog({ crc: patched.crc, ...patched.header }, catalog())?.game?.generation || null });
-    return { patched: { crc: patched.crc, baseCrc: patched.baseCrc, size: patched.size, header: patched.header, patchName: patched.patchName, system: patched.system }, info, log };
+    // another shiny rate: Gen 3–5 originals whose shiny check is where it should be (server/lib/shiny.mjs)
+    const shiny = shinySupport(patched.path, { original: isOriginalRom(patched, patchId) });
+    return { patched: { crc: patched.crc, baseCrc: patched.baseCrc, size: patched.size, header: patched.header, patchName: patched.patchName, system: patched.system }, info, shiny, log };
   });
 
   const building = new Set(); // run ids with a build in progress

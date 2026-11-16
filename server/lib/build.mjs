@@ -14,6 +14,8 @@ import { writeFileAtomic, httpError, logLine } from './fsutil.mjs';
 import { ALL_SLOTS, MODES, slotsOf, defaultRunName } from '../../shared/slots.mjs';
 import { needsIdenticalRom } from '../../shared/restart.mjs';
 import { pairMate } from '../../shared/pair-titles.mjs';
+import { cleanShiny } from '../../shared/shiny.mjs';
+import { applyShiny } from './shiny.mjs';
 
 /** Runs from before 1–4 players were always a pair – the default where no slots are passed (shared/slots.mjs). */
 const PAIR = ['p1', 'p2'];
@@ -316,6 +318,8 @@ export function checkPack(pack) {
     createdAt: String(pack.createdAt || '').slice(0, 40) || new Date().toISOString(),
     players,
     ...(pack.mode ? { mode: pack.mode } : {}),
+    // the host's shiny rate – every player's game is patched with it (unknown values: the games' own odds)
+    shiny: cleanShiny(pack.shiny),
   };
 }
 
@@ -336,12 +340,14 @@ export function runPack(m) {
     outputs: Object.fromEntries(Object.entries(m.outputs || {}).map(([k, v]) => [k, { sha1: v.sha1 }])),
     rules: stripLocalRules(m.rules || null),
     game: m.game || null,
+    ...(m.shiny ? { shiny: m.shiny } : {}),
   };
 }
 
 /**
  * opts: { name, romId, patchId, patchSha1, values, randomize, mode?: 'soullink'|'nuzlocke',
- *         seeds: {p1, …, pN}, players: {p1:{name}, …, pN:{name}}, buildFor: ['p1', …], identity?: {id, room, secret}, rules }
+ *         seeds: {p1, …, pN}, players: {p1:{name}, …, pN:{name}}, buildFor: ['p1', …], identity?: {id, room, secret}, rules,
+ *         shiny?: { rate, trainers } (shared/shiny.mjs – a rebuild without it keeps the run's) }
  * A Nuzlocke has p1 only, a SoulLink 2–4 players; buildFor defaults to every slot of the run.
  */
 /**
@@ -432,6 +438,8 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       sharedSeed: !!opts.sharedSeed,
     },
     rules: stripLocalRules(opts.rules || existing?.rules || null), // the Discord webhook lives in the local config
+    // another shiny rate (Gen 3–5 originals): patched into every player's game below, after the randomizer
+    shiny: cleanShiny(opts.shiny !== undefined ? opts.shiny : existing?.shiny),
     // outputs of slots the run no longer has (a rebuild with fewer players) would be offered for download
     outputs: Object.fromEntries(Object.entries(existing?.outputs || {}).filter(([s]) => slots.includes(s))),
     warnings: [],
@@ -517,6 +525,15 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       copyFileSync(patched.path, romOut);
       rmSync(dataOut, { force: true });
       rmSync(logOut, { force: true });
+    }
+    if (manifest.shiny) {
+      try {
+        applyShiny(romOut, manifest.shiny); // (throws for a game that can't take it – a 3DS game too)
+      } catch (e) {
+        rmSync(romOut, { force: true }); // a game without the run's shiny rate must not be played or compared
+        throw e;
+      }
+      onLog(`Shiny-Rate 1/${manifest.shiny.rate}${manifest.shiny.trainers ? ' (auch für Trainer)' : ''} eingebaut`);
     }
     // (a plain 3DS game isn't hashed – 1–4 GB, and each player may play their own release; a randomized one must be
     // byte-identical, its SHA-1 came from the stream above)

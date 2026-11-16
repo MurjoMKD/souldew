@@ -367,6 +367,16 @@ export const isHost = (me) => (me || HOST_SLOT) === HOST_SLOT;
 /** Is the type matchup help shown in this run? On unless the host switched it off (older runs: on). */
 export const typeHelpOn = (doc, manifest) => !doc || rules(doc, manifest).typeHelp !== false;
 
+/** A run's shiny setting in a few words – "shiny 1 in 512", "trainer shinies" – or '' with the games' own odds. */
+export function shinyNote(manifest) {
+  const s = manifest?.shiny;
+  if (!s) return '';
+  const parts = [];
+  if (s.rate && s.rate !== 8192) parts.push(t('board.shinyRate', 'shiny 1 in {n}', { n: s.rate }));
+  if (s.trainers) parts.push(t('board.shinyTrainers', 'trainer shinies'));
+  return parts.join(' · ');
+}
+
 /**
  * Only the host may switch the type matchup help. Returns the rules patch a player may apply: a non-host's
  * `typeHelp` is dropped (their app doesn't offer the switch either).

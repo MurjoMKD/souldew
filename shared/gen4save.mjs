@@ -165,7 +165,7 @@ function parseMon(raw, data, { party }) {
     metDate: d[0x7b] ? `20${String(d[0x7b]).padStart(2, '0')}-${String(d[0x7c]).padStart(2, '0')}-${String(d[0x7d]).padStart(2, '0')}` : null,
     ball: Math.max(d[0x86], d[0x83]),
     originGame: d[0x5f],
-    shiny: (((pid >>> 16) ^ (pid & 0xffff) ^ tid ^ sid) >>> 0) < 8,
+    shiny: (((pid >>> 16) ^ (pid & 0xffff) ^ tid ^ sid) >>> 0) < (data?.shinyOdds ?? 8), // (a run's own rate: shared/shiny.mjs)
     checksumOk,
   };
   if (party && raw.length >= PK_PARTY) {
