@@ -11,7 +11,7 @@ import { cheatRegions } from '/shared/live/cheats.mjs';
 import { CTR_LAYOUTS, ctrLayout, ctrTouchAt } from '/shared/ctrlayout.mjs';
 
 const q = new URLSearchParams(location.search);
-const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7 };
+const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7, FFSOUND: 8 };
 const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9 };
 const post = (m) => window.parent?.postMessage(m, location.origin);
 
@@ -212,6 +212,9 @@ layout();
 // ff_frame), and says by how much ("ffrate", right before that sound – the worklet hands the ratio to the mixer when the
 // sound plays); the mixer then plays what Settings › "Turbo audio" asks for: the music recorded at 1× going on
 // ("music"), silence ("mute"), the sped-up original ("original"), or the host's sound with no mixer at all ("plain").
+// For "music" the host also sends the core's own sound while it fast-forwards (message 8: the game's pace, its normal
+// pitch, full bandwidth): the mixer records that instead of slowing the sped-up sound back down, which kept only a k-th
+// of the bandwidth (the sped-up sound is low-passed before it is sped up) – at 4× muffled music.
 // The worklet keeps more in hand than for the fast player: the sound comes between pictures of up to 7 MB.
 const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
 const audio = { ctx: null, node: null, gain: null, key: null, events: [], probes: [], taps: [], rate: 0, exact: false, win: null, last: null };
@@ -282,12 +285,23 @@ async function startAudio(rate) {
 const wake = () => audio.ctx?.state === 'suspended' && audio.ctx.resume().catch(() => {});
 addEventListener('pointerdown', wake);
 addEventListener('keydown', wake);
-function onAudio(p) {
-  if (!audio.node || st.paused) return;
+/** The host's s16 stereo samples as floats (interleaved). */
+function floats(p) {
   const s = new Int16Array(p.buffer.slice(p.byteOffset, p.byteOffset + (p.length & ~1)));
   const f = new Float32Array(s.length);
   for (let i = 0; i < s.length; i++) f[i] = s[i] / 32768;
+  return f;
+}
+function onAudio(p) {
+  if (!audio.node || st.paused) return;
+  const f = floats(p);
   audio.node.port.postMessage(f, [f.buffer]);
+}
+/** Fast-forward: the core's own sound (message 8) – only "Music continues" records it, the other modes never use it. */
+function onFfSound(p) {
+  if (!audio.node || st.paused || st.turboAudio !== 'music') return;
+  const f = floats(p);
+  audio.node.port.postMessage({ type: 'ffsound', f }, [f.buffer]);
 }
 
 // ---- memory (the regions the live reader needs – and the bag for the cheats – ten times a second) ---------------------
@@ -450,6 +464,7 @@ async function pump() {
       const p = buf.subarray(o + 8, o + 8 + len);
       if (type === MSG.VIDEO) onVideo(p.slice());
       else if (type === MSG.AUDIO) onAudio(p);
+      else if (type === MSG.FFSOUND) onFfSound(p);
       else if (type === MSG.MEM) onMem(p);
       else if (type === MSG.EVENT) onEvent(p);
       else if (type === MSG.STATE) waiters.state.shift()?.(p.slice());

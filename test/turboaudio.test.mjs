@@ -809,7 +809,7 @@ test('song key, DeSmuME: fast-forward on a route not yet recorded plays the prev
   const m = new TurboMixer(SR, { seconds: 60 });
   m.command({ type: 'skip', on: true });
   m.command({ type: 'song', key: 'mA' });
-  feed(m, A, 0, 10);
+  feed(m, A, 0, 12); // (a bed is filed once the key held keyLag past its stretch's end)
   assert.ok(m.lib.get('mA')?.bed, 'route A’s bed kept');
   m.command({ type: 'song', key: 'mB' });
   feed(m, B, 0, 1); // only 1 s on route B
@@ -1406,3 +1406,240 @@ function whichSongAt(out, rate, f) {
   }
   return best;
 }
+
+// --- 3DS: the host's own fast-forward sound (ctrhost.c message 8 → TurboMixer.ffSound) ------------------------------
+
+/**
+ * The 3DS host while fast-forwarding at k×, as ctrhost.c ff_frame: the core's sound (`music`, in the game's samples)
+ * low-passed (4th-order Butterworth at 0.45 × the output's Nyquist / k) and resampled by k to real time (Hermite) – and
+ * the core's sound as it is (FFSOUND). Each call: the next `n` real-time samples → { own, sped }; setK changes the ratio
+ * (the host's "ffrate").
+ */
+function ctrHost(music, k) {
+  const bq = [0.5412, 1.3066].map(() => ({ z0: 0, z1: 0 }));
+  const setK = (to) => {
+    k = to;
+    const w = (2 * Math.PI * 0.45 * 0.5) / k;
+    [0.5412, 1.3066].forEach((q, s) => {
+      const c = Math.cos(w);
+      const al = Math.sin(w) / (2 * q);
+      const a0 = 1 + al;
+      Object.assign(bq[s], { b0: (1 - c) / 2 / a0, b1: (1 - c) / a0, b2: (1 - c) / 2 / a0, a1: (-2 * c) / a0, a2: (1 - al) / a0 });
+    });
+  };
+  setK(k);
+  const lp = (x) => {
+    for (const b of bq) {
+      const y = b.b0 * x + b.z0;
+      b.z0 = b.b1 * x - b.a1 * y + b.z1;
+      b.z1 = b.b2 * x - b.a2 * y;
+      x = y;
+    }
+    return x;
+  };
+  const q = [];
+  let pos = 1;
+  const next = (n) => {
+    const own = new Float32Array(Math.max(0, Math.ceil(pos + n * k + 3) - q.length));
+    for (let i = 0; i < own.length; i++) q.push(lp((own[i] = music(q.length))));
+    const sped = new Float32Array(n);
+    for (let j = 0; j < n; j++, pos += k) {
+      const i = Math.floor(pos);
+      const t = pos - i;
+      const [xm, x0, x1, x2] = [q[i - 1], q[i], q[i + 1], q[i + 2]];
+      sped[j] = (((0.5 * (x2 - xm) + 1.5 * (x0 - x1)) * t + (xm - 2.5 * x0 + 2 * x1 - 0.5 * x2)) * t + 0.5 * (x1 - xm)) * t + x0;
+    }
+    return { own, sped };
+  };
+  next.setK = setK;
+  return next;
+}
+
+/** `seconds` of fast-forward from a ctrHost: the sped-up sound through process(), the own sound (`own`) to ffSound. */
+function feedHost(m, host, seconds, { own = true, rate = m.sr } = {}) {
+  const n = Math.ceil((seconds * rate) / BLOCK) * BLOCK; // (whole blocks: what is fed is what comes out)
+  const out = new Float32Array(n);
+  const oL = new Float32Array(BLOCK);
+  const oR = new Float32Array(BLOCK);
+  for (let i = 0; i < n; i += BLOCK) {
+    const h = host(BLOCK);
+    if (own) m.ffSound(h.own, h.own, h.own.length);
+    m.process(h.sped, null, oL, oR, BLOCK);
+    out.set(oL.subarray(0, Math.min(BLOCK, n - i)), i);
+  }
+  return out;
+}
+
+test('3DS: with the host’s own fast-forward sound a streamed song keeps its full bandwidth at its normal pitch (it was muffled)', () => {
+  const R = 32728; // the 3DS's rate
+  const TONES = [440, 2000, 4500, 8000, 12000];
+  // steady tones with a slow tremolo each (no loop to find for a while: the song is streamed)
+  const music = (t) => TONES.reduce((s, f, j) => s + 0.05 * (0.8 + 0.2 * Math.sin((2 * Math.PI * (0.37 + j * 0.113) * t) / R)) * Math.sin((2 * Math.PI * f * t) / R + j), 0);
+  const level = (a, f) => {
+    // magnitude at f (Goertzel per ~60 ms, averaged – a loop's seam must not cancel a coherent sum), dB re the tone
+    const F = 2048;
+    let sum = 0;
+    let n = 0;
+    for (let o = 0; o + F <= a.length; o += F, n++) {
+      const c = 2 * Math.cos((2 * Math.PI * f) / R);
+      let s1 = 0;
+      let s2 = 0;
+      for (let i = o; i < o + F; i++) [s1, s2] = [a[i] + c * s1 - s2, s1];
+      sum += (Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - c * s1 * s2)) * 2) / F;
+    }
+    return 20 * Math.log10(sum / n / 0.04 + 1e-9);
+  };
+  for (const k of [3, 4]) {
+    const run = (own) => {
+      const m = new TurboMixer(R, { seconds: 60 });
+      feedHost(m, () => ({ own: new Float32Array(0), sped: new Float32Array(BLOCK) }), 1, { own: false, rate: R }); // nothing recorded
+      m.command({ type: 'speed', ratio: Math.ceil(k) });
+      m.command({ type: 'rate', ratio: k, exact: true });
+      const out = feedHost(m, ctrHost(music, k), 3, { own, rate: R });
+      return TONES.map((f) => level(out.subarray(Math.round(1.5 * R)), f));
+    };
+    const before = run(false);
+    const after = run(true);
+    assert.ok(before[3] < -30, `the slowed-down sped-up sound has lost 8 kHz at ${k}× (${before[3].toFixed(1)} dB)`);
+    for (const [i, f] of TONES.entries()) assert.ok(Math.abs(after[i]) < 2, `${f} Hz at ${k}×: ${after[i].toFixed(1)} dB (before ${before[i].toFixed(1)} dB)`);
+  }
+});
+
+test('3DS own fast-forward sound: only "music" uses it – "original" plays the sped-up sound, "mute" nothing, 1× ignores it', () => {
+  const A = tune({ seed: 4 });
+  const B = tune({ seed: 9 });
+  for (const mode of ['original', 'mute']) {
+    const m = new TurboMixer(SR, { seconds: 30 });
+    m.command({ type: 'mode', mode });
+    feed(m, A, 0, 6);
+    m.command({ type: 'speed', ratio: 3 });
+    m.command({ type: 'rate', ratio: 3, exact: true });
+    const host = ctrHost(B, 3);
+    const n = Math.round(1.5 * SR);
+    const out = new Float32Array(n);
+    const sped = new Float32Array(n);
+    const oL = new Float32Array(BLOCK);
+    const oR = new Float32Array(BLOCK);
+    for (let i = 0; i < n; i += BLOCK) {
+      const h = host(BLOCK);
+      m.ffSound(h.own, h.own, h.own.length);
+      m.process(h.sped, null, oL, oR, BLOCK);
+      out.set(oL.subarray(0, Math.min(BLOCK, n - i)), i);
+      sped.set(h.sped.subarray(0, Math.min(BLOCK, n - i)), i);
+    }
+    assert.equal(m.own, false, `${mode}: not taken`);
+    const tail = Math.round(0.2 * SR);
+    if (mode === 'mute') assert.equal(rms(out.subarray(tail)), 0, 'mute stays mute');
+    else for (let i = tail; i < n; i++) assert.ok(Math.abs(out[i] - sped[i]) < 1e-6, 'original: the sped-up sound as it is');
+  }
+  const m = new TurboMixer(SR, { seconds: 30 });
+  feed(m, A, 0, 2);
+  const before = m.ring.written;
+  m.ffSound(new Float32Array(4096).fill(0.1), new Float32Array(4096).fill(0.1));
+  assert.equal(m.ring.written, before, 'at 1× the own sound is not recorded (the game’s sound is)');
+  assert.equal(m.own, false);
+});
+
+test('3DS own fast-forward sound: speed steps and the host’s ratio changes don’t touch it – no holes, no skips, no clicks', () => {
+  const f = tune({ seed: 9, period: 120 });
+  const m = new TurboMixer(SR, { seconds: 60 });
+  m.k.minSeg = Infinity; // (no search: streamed throughout)
+  feed(m, () => 0, 0, 1);
+  m.command({ type: 'speed', ratio: 2 });
+  const host = ctrHost(f, 2);
+  let out = new Float32Array(0);
+  for (const [k, sec] of [[2, 1.5], [3.4, 1], [2.6, 1], [4, 1.5]]) {
+    if (k !== 2) m.command({ type: 'speed', ratio: Math.ceil(k) });
+    m.command({ type: 'rate', ratio: k, exact: true });
+    host.setK(k);
+    out = Float32Array.of(...out, ...feedHost(m, host, sec));
+  }
+  assert.ok(m.carry?.stream, 'streamed');
+  // the stream is the song from where fast-forward began, at its own pace: one continuous stretch of f, a little late
+  const from = Math.round(0.4 * SR);
+  let lag = 0;
+  for (let d = 0, best = -1; d <= Math.round(0.4 * SR); d++) {
+    const c = corr(out, f, -d, from, from + Math.round(0.3 * SR));
+    if (c > best) [best, lag] = [c, d];
+  }
+  assert.ok(corr(out, f, -lag, from, out.length) > 0.99, `the song at its normal pitch and tempo, no skip (${lag} samples late)`);
+  assert.ok(maxJump(out.subarray(from)) < 0.1, 'no clicks');
+  assert.ok(longestQuiet(out, from, out.length) < 0.02, 'no holes');
+});
+
+test('3DS battle (song keys from the zone and the battle reader): the battle music plays in the battle and stops with it – never stuck', () => {
+  const A = tune({ seed: 1 }); // the route
+  const B = tune({ seed: 2 }); // the battle
+  const R = SR;
+  const m = new TurboMixer(R, { seconds: 60 });
+  m.command({ type: 'song', key: 'p7.20' });
+  feed(m, A, 0, 14);
+  assert.ok(m.lib.has('p7.20'), 'the route’s loop, recorded at 1×');
+  // fast-forward at 4× (the game's time runs 4× the real one): 1 s on the route, a battle of 40 s, the route again
+  const t0 = 14 * R;
+  const tB = t0 + 4 * R;
+  const tEnd = tB + 40 * R;
+  const game = (t) => (t < tB || t >= tEnd ? A(t) : B(t - tB));
+  m.command({ type: 'speed', ratio: 4 });
+  m.command({ type: 'rate', ratio: 4, exact: true });
+  const host = ctrHost((i) => game(t0 + i), 4);
+  let out = feedHost(m, host, 1);
+  let [a, b] = whichSong(out, Math.round(0.3 * R), out.length, [A, B]);
+  assert.ok(a > 0.8, `the route’s loop (A ${a.toFixed(2)})`);
+  // the battle music begins; the 'battle' key comes 2 s later (battle flag + the live reader's 0.7 s)
+  feedHost(m, host, 2);
+  m.command({ type: 'song', key: 'battle' });
+  out = feedHost(m, host, 7);
+  [a, b] = whichSong(out, out.length - 4 * R, out.length, [A, B]);
+  assert.ok(b > 0.8 && a < 0.4, `the battle music in the battle (A ${a.toFixed(2)}, B ${b.toFixed(2)})`);
+  // the battle ends (game time tEnd = real 11 s), the route's key comes 1.5 s after the route's music
+  feedHost(m, host, 1 + 1.5);
+  m.command({ type: 'song', key: 'p7.20' });
+  out = feedHost(m, host, 3);
+  [a, b] = whichSong(out, Math.round(0.5 * R), out.length, [A, B]);
+  assert.ok(a > 0.8 && b < 0.4, `the route’s music after the battle (A ${a.toFixed(2)}, B ${b.toFixed(2)})`);
+  // a few seconds at 1× and fast-forward again: still the route
+  m.command({ type: 'speed', ratio: 1 });
+  feed(m, A, 0, 2);
+  m.command({ type: 'speed', ratio: 4 });
+  out = feedHost(m, ctrHost(A, 4), 3);
+  [a, b] = whichSong(out, Math.round(0.5 * R), out.length, [A, B]);
+  assert.ok(a > 0.8 && b < 0.4, `the route again, not the battle (A ${a.toFixed(2)}, B ${b.toFixed(2)})`);
+  const [la, lb] = libSong(m.lib.get('p7.20'), [A, B]);
+  assert.ok(la > 0.8 && lb < 0.3, `the route’s entry holds the route only (A ${la.toFixed(2)}, B ${lb.toFixed(2)})`);
+});
+
+test('a battle key that comes 2 s late at 1× (the battle reader): nothing of the battle is filed under the route', () => {
+  const A = tune({ seed: 1, period: 30 }); // a long route theme (beds, no loop yet)
+  // the battle: a tone the route never plays, so any of it in the route's entry can be measured
+  const B = (t) => 0.2 * Math.sin((2 * Math.PI * 1500 * t) / SR) * (0.6 + 0.4 * Math.sin((2 * Math.PI * 3 * t) / SR));
+  const battleShare = (e) => {
+    const x = Float32Array.from(e.l, (v) => v / 32767);
+    const F = 400;
+    const c = 2 * Math.cos((2 * Math.PI * 1500) / SR);
+    let hit = 0;
+    let n = 0;
+    for (let o = 0; o + F <= x.length; o += F, n++) {
+      let s1 = 0;
+      let s2 = 0;
+      for (let i = o; i < o + F; i++) [s1, s2] = [x[i] + c * s1 - s2, s1];
+      if ((Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - c * s1 * s2)) * 2) / F > 0.05) hit++;
+    }
+    return hit / n;
+  };
+  let kept = 0;
+  for (let phase = 0.5; phase <= 7; phase += 0.5) {
+    const m = new TurboMixer(SR, { seconds: 30 });
+    m.command({ type: 'song', key: 'p7.20' });
+    feed(m, A, 0, 6 + phase);
+    feed(m, B, 0, 2); // the battle music; the key 2 s later
+    m.command({ type: 'song', key: 'battle' });
+    feed(m, B, 2 * SR, 3);
+    const e = m.lib.get('p7.20');
+    if (!e) continue;
+    kept++;
+    // (until 2.7.5 up to 11 % of the entry – the battle's first ~0.6 s, played on the route every time the bed came round)
+    assert.equal(battleShare(e), 0, `phase ${phase}: ${(battleShare(e) * 100).toFixed(0)} % of the route’s entry is battle music`);
+  }
+  assert.ok(kept >= 10, `the route’s entry is still kept on most visits (${kept} of 14)`);
+});

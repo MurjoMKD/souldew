@@ -6,7 +6,10 @@
 // passes through as it is.
 // The 3DS page asks for a deeper buffer (processorOptions `prime`, `primeMax`, `trim`, `maxLag` – see jitterring.mjs):
 // its sound arrives between pictures of up to 7 MB. Commands marked `inband` (the 3DS host's fast-forward ratio) take
-// effect when the sound that arrived after them is played, not when they arrive. { type: 'tap', frames } records what
+// effect when the sound that arrived after them is played, not when they arrive. { type: 'ffsound', f } is the 3DS
+// host's own sound while it fast-forwards (interleaved stereo, the game's pace – ctrhost.c message 8): it goes straight to
+// the mixer's recording (TurboMixer.ffSound), not through the buffer – it is not played as it is, and there is k times
+// more of it than real time. { type: 'tap', frames } records what
 // comes out and sends it back with the buffer's numbers (tests, diagnostics); the numbers also go to the page once a
 // second ({ type: 'ring' }).
 import { TurboMixer } from './turboaudio.mjs';
@@ -19,6 +22,8 @@ class NativeAudio extends AudioWorkletProcessor {
     this.inband = []; // [{ at, m }]
     this.inL = new Float32Array(128);
     this.inR = new Float32Array(128);
+    this.ffL = new Float32Array(2048); // (the host's own fast-forward sound, split into channels)
+    this.ffR = new Float32Array(2048);
     this.plain = false;
     this.broken = false;
     // what came out over the last ~0.1 s (RMS and peak of both channels) – the probe reports it (tests, diagnostics)
@@ -36,6 +41,7 @@ class NativeAudio extends AudioWorkletProcessor {
         for (const x of this.inband.splice(0)) this.command(x.m); // (nothing left to wait for)
         return;
       }
+      if (d?.type === 'ffsound') return this.ffSound(d.f);
       if (d?.type === 'tap') {
         const n = Math.max(0, Math.min(d.frames | 0, sampleRate * 120));
         this.tap = n ? { l: new Float32Array(n), r: new Float32Array(n), at: 0 } : null;
@@ -52,6 +58,25 @@ class NativeAudio extends AudioWorkletProcessor {
     if (m.type === 'paused') this.ring.paused = !!m.paused;
     try {
       this.mixer.command(m.type === 'mode' && m.mode === 'plain' ? { type: 'mode', mode: 'original' } : m);
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  /** The host's own fast-forward sound (interleaved) into the mixer's recording, split into its two channels. */
+  ffSound(f) {
+    if (this.plain || this.broken || !(f instanceof Float32Array)) return;
+    const n = f.length >> 1;
+    if (this.ffL.length < n) {
+      this.ffL = new Float32Array(n);
+      this.ffR = new Float32Array(n);
+    }
+    for (let i = 0; i < n; i++) {
+      this.ffL[i] = f[i * 2];
+      this.ffR[i] = f[i * 2 + 1];
+    }
+    try {
+      this.mixer.ffSound(this.ffL, this.ffR, n);
     } catch (err) {
       this.fail(err);
     }

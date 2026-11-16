@@ -29,6 +29,12 @@
 // "music" the game's own fast-forward sound is never heard: a song with nothing recorded yet keeps the music that played
 // before it (the previous song's loop – "music continues"), and only with nothing recorded at all is fast-forward quiet.
 //
+// The 3DS host has a better source than the sped-up sound: it hands over the core's own sound as well while it
+// fast-forwards ({ ffSound }, ctrhost.c message 8) – the music at its normal pitch, k seconds of it per second, never
+// resampled. The sped-up sound had to be low-passed to the speed-up's new Nyquist frequency before it was sped up, so
+// slowed back down it kept a k-th of the bandwidth (at 4×: nothing above ~1.8 kHz of the 3DS's 32.7 kHz – muffled).
+// Where the own sound comes, "music" records that instead; the sped-up sound is then only listened to for silences.
+//
 // Plain DSP without Web Audio types: it runs in the AudioWorklet (turboaudio-worklet.mjs), in the
 // ScriptProcessor fallback of player.html and in test/turboaudio.test.mjs. The search is sliced into
 // small steps (generators), so one render quantum never does much work.
@@ -280,7 +286,7 @@ function* findBed(ring, feats, n, end, sampleRate, win) {
 /**
  * The mixer between the emulator's sound and the speakers. Feed it every block with process(); control
  * it with command({ type: 'speed', ratio } | { type: 'mode', mode } | { type: 'paused', paused } | { type: 'cut' } |
- * { type: 'skip', on } | { type: 'rate', ratio }).
+ * { type: 'skip', on } | { type: 'rate', ratio }); the 3DS host's own fast-forward sound goes to ffSound().
  * onEvent receives small status objects ({ type: 'found' | 'turbo', … }) for debugging.
  */
 export class TurboMixer {
@@ -348,6 +354,10 @@ export class TurboMixer {
     // stretch at 3× sounds an octave and a fifth too low) – that stretch is not recorded.
     this.k.tskip = S(0.25);
     this.k.lead = S(0.1); // a streamed song starts once this much of it is recorded – never right at the write head
+    // The 3DS host's own fast-forward sound (ffSound) comes straight from the page, not through the worklet's jitter
+    // buffer – in bursts, between pictures: a streamed song keeps more of it in hand (at 1.1× it gains little).
+    this.k.ownLead = S(0.25);
+    this.own = false; // the host sends its own fast-forward sound (ffSound): recorded instead of the slowed-down one
     this.tSkip = 0; // fast-forward: samples of sound still to leave out of the recording after a speed command
     // The slowed-down sound reaches the ring through a short hold-back (`tail`), so where the recording skips ahead
     // the old end and the new start can be crossfaded instead of butted together (a click).
@@ -381,7 +391,12 @@ export class TurboMixer {
     this.k.libTotal = S(LIB_TOTAL);
     this.k.minPlay = S(minPlay);
     this.k.shortLoop = S(SHORT_LOOP);
-    this.k.keyLag = S(1); // how late a song key may come after the music changed (see songKey), with room to spare
+    // How late a song key may come after the music changed (see songKey), with room to spare: the song number and the
+    // map are read every 100 ms, but the 'battle' key comes from the live battle reader (every 0.7 s), and a game sets
+    // its battle flag a moment after the battle music began (Pokémon Sun: once the battle scene is loaded).
+    this.k.keyLag = S(2.5);
+    this.later = []; // loops found at 1×, filed under their song once the key held keyLag past their end [{ res, at }]
+    this.clock = 0; // samples processed (real time, whatever the speed)
     this.k.keyTrim = Math.ceil(S(0.6) / HOP); // frames left out at the start of a stretch that began with a key change
     this.trimNext = false;
     this.segBest = 0; // the longest loop or bed found in the stretch segBestId so far
@@ -420,6 +435,7 @@ export class TurboMixer {
       rate: +this.rate.toFixed(2),
       skip: this.skip,
       chop: this.chop.level,
+      own: this.own,
       rec: this.tRec,
       open: this.open,
       seg: this.seg ? sec(this.ring.written - this.seg.start) : null, // seconds recorded in the current stretch
@@ -574,6 +590,23 @@ export class TurboMixer {
     this.emit({ type: 'kept', key: l.key, seconds: +(lag / this.sr).toFixed(2), bed, songs: this.lib.size });
   }
 
+  /** A loop or bed found at 1× (its stretch ended at clock `endAt`): kept once its song key held keyLag past that end. */
+  fileLater(res, endAt) {
+    if (res.key == null) return; // (nothing is kept without a key)
+    this.later.push({ res, at: endAt ?? this.clock });
+    this.fileDue();
+  }
+
+  /** Files the waiting loops whose key held long enough; drops those whose key changed meanwhile (see fileLater). */
+  fileDue() {
+    while (this.later.length) {
+      const w = this.later[0];
+      if (w.res.key === this.key && this.clock - w.at < this.k.keyLag) return; // (oldest first: the rest wait too)
+      this.later.shift();
+      if (w.res.key === this.key) this.keep(w.res);
+    }
+  }
+
   /** How much music a loop or bed gives before it repeats (a bed's long crossfade and a short loop's phrase count less). */
   rank(l) {
     const lag = Math.min(l.lag, this.k.libLen);
@@ -720,7 +753,7 @@ export class TurboMixer {
 
   /** Beds instead of streams: the sped-up sound can't be slowed down (choppy, or not sped up at all). */
   get noStream() {
-    return this.skip || this.chop.level > 0;
+    return this.skip || (this.chop.level > 0 && !this.own); // (the host's own sound is streamed, whatever the sped-up one does)
   }
 
   /** A new step while fast-forwarding: the sound around the re-toggle is at the wrong speed and has holes. */
@@ -728,7 +761,7 @@ export class TurboMixer {
     this.tGrace = Math.max(this.tGrace, this.k.tgrace); // no song-change judgement on the hiccup
     this.tSil = 0;
     this.tSkip = this.k.tskip;
-    this.endSplice();
+    if (!this.own) this.endSplice(); // (the host's own sound goes on without a skip)
   }
 
   resetStretch() {
@@ -878,7 +911,8 @@ export class TurboMixer {
 
   startJob(u) {
     this.lastJob = { segId: this.seg.id, frame: this.frames };
-    this.job = { segId: this.seg.id, song: this.song, key: this.key, at1: !this.turbo, end: u.end, gen: this.search(u) };
+    // (endAt: when the stretch's end was heard – at 1× the ring's write head is now)
+    this.job = { segId: this.seg.id, song: this.song, key: this.key, at1: !this.turbo, end: u.end, endAt: this.clock, gen: this.search(u) };
   }
 
   *search(u) {
@@ -893,7 +927,7 @@ export class TurboMixer {
   }
 
   finishJob(res) {
-    const { segId, song, key, at1 } = this.job;
+    const { segId, song, key, at1, endAt } = this.job;
     this.job = null;
     if (!res) {
       this.emit({ type: 'nofind', seg: segId, n: (this.info.nofind = (this.info.nofind || 0) + 1) });
@@ -907,7 +941,10 @@ export class TurboMixer {
     res.pos = res.start;
     if (this.segBestId !== segId) [this.segBestId, this.segBest] = [segId, 0];
     this.segBest = Math.max(this.segBest, res.lag);
-    if (at1) this.keep(res); // 1× material only: the slowed-down recording is a stand-in
+    // 1× material only (the slowed-down recording is a stand-in) – and only once the song key held keyLag past the
+    // stretch's end: a key that comes late (a battle) would otherwise file the new song's first seconds under the old one
+    // (fileLater). The search itself can take longer than that – then it is filed now.
+    if (at1) this.fileLater(res, endAt);
     // the song changed while the search ran: the result is kept for that song, but it's not what plays now
     if (this.key != null && key !== this.key) {
       if (this.pending) this.emit({ type: 'turbo', on: this.turbo, loop: null, searching: false });
@@ -950,7 +987,7 @@ export class TurboMixer {
       // half the ring, it jumps ahead (a short fade) instead of running into overwritten samples.
       const behind = this.carry?.stream && this.ring.written - this.carry.pos > this.ring.cap / 2;
       if (this.noStream) return; // choppy or not sped up: nothing worth streaming
-      if ((!this.carry && this.ring.written - this.seg.start >= this.k.lead) || behind) {
+      if ((!this.carry && this.ring.written - this.seg.start >= (this.own ? this.k.ownLead : this.k.lead)) || behind) {
         const at = Math.max(this.seg.start, this.ring.written - this.k.margin);
         this.carry = { stream: true, key: this.key, song: this.song, start: at, pos: at, end: Infinity, lag: Infinity, xfade: 0, g: 0 };
         this.retarget();
@@ -1045,6 +1082,7 @@ export class TurboMixer {
     if (e / n < SIL_LEVEL) this.turboQuiet(n);
     else this.tSil = 0;
     if (!this.tRec) return;
+    if (this.own) return; // the host's own sound is recorded instead (ffSound) – full bandwidth, nothing to slow down
     if (skip || this.noStream) {
       this.zrun = 0;
       this.zhole = false;
@@ -1057,6 +1095,24 @@ export class TurboMixer {
     if (!h.n) return;
     const s = this.stretch(h.l, h.r, h.n);
     this.put(s.l, s.r, s.n);
+  }
+
+  /**
+   * The 3DS host's own sound while it fast-forwards (ctrhost.c message 8, handed over by native-audio-worklet.mjs as it
+   * arrives): the core's samples as they come – the game's music at its normal pitch and full bandwidth, k seconds of it
+   * per second. It takes the place of the slowed-down sped-up sound (recordTurbo) for good once it came: recorded while
+   * a song is streamed or searched (tRec), its own silences tell a song change (store → frame) like the slowed-down
+   * sound's did. Nothing else changes – the sped-up sound still plays in "original" and is listened to for silences
+   * while a loop plays.
+   */
+  ffSound(l, r, n = l.length) {
+    if (!this.turbo || this.paused || this.mode !== 'music' || this.skip || !n) return;
+    if (!this.own) {
+      this.own = true;
+      this.emit({ type: 'own' });
+    }
+    if (!this.tRec) return; // a loop plays: its samples stay as they are
+    this.put(l, r, n);
   }
 
   /**
@@ -1162,7 +1218,7 @@ export class TurboMixer {
     if (share < 0.1 || !many) c.level = Math.max(0, c.level - 1);
     else if (share > 0.2) c.level = Math.min(3, c.level + 1);
     if (c.level !== was) this.emit({ type: 'chop', level: c.level, share: +share.toFixed(2) });
-    if (c.level >= 2 && (this.carry?.stream || (!this.carry && this.tRec && this.bed))) {
+    if (c.level >= 2 && !this.own && (this.carry?.stream || (!this.carry && this.tRec && this.bed))) {
       // the song being streamed would turn into buzz: the music bed takes over (or nothing); a new stretch
       // starts once the sound is clean again
       this.open = false;
@@ -1290,6 +1346,7 @@ export class TurboMixer {
       // played its loop on forever
       if (this.tGrace > 0) this.tGrace -= n;
       if (!this.tRec || this.noStream) return this.turboQuiet(n); // nothing recorded: judged on the sped-up sound
+      if (this.own) return; // (a gap in the sped-up sound is none in the host's own sound – that one's silences count)
       n = Math.round(n * this.rate); // in slowed-down time
     } else if (this.settle > 0) {
       this.settle -= n; // (the sound held in OpenAL drains in silence too)
@@ -1319,6 +1376,8 @@ export class TurboMixer {
       this.gap(n);
     }
     this.work(n);
+    this.clock += n;
+    if (this.later.length) this.fileDue();
     if (this.hold > 0 && (this.hold -= n) <= 0) this.retarget();
     // DeSmuME: always through the 1 ms delay (switching it would jump), dips only while its sound skips
     if (this.skip) [inL, inR] = this.declick(inL || this.zeros(n), inR || this.zeros(n), n, this.turbo || this.hold > 0);

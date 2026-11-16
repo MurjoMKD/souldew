@@ -213,6 +213,26 @@ test('MusicKeyTracker: a song number stuck while the map’s music changes → t
   assert.equal(v.trusted, true);
 });
 
+test('3DS music key: the zone (once the live reader found the party), a battle is "battle" – Pokémon Sun had no key at all', () => {
+  const sm = addresses.games.find((g) => g.id === 'sm');
+  const usum = addresses.games.find((g) => g.id === 'usum');
+  const xy = addresses.games.find((g) => g.id === 'xy');
+  const zone = (e, z) => bus({ [Number(e.zoneAddr)]: [z & 0xff, z >> 8] });
+  const found = { state: { g67Len: 1 } };
+  assert.equal(readMusicInfo(maps, sm, zone(sm, 20)), null, 'party not found yet: the update version (and the zone address) unknown');
+  assert.deepEqual(readMusicInfo(maps, sm, zone(sm, 20), found), { song: null, map: 'p7.20', expected: null, playing: false, own: false });
+  assert.equal(readMusicInfo(maps, usum, zone(usum, 0x1a3), found).map, 'p7.419');
+  assert.equal(readMusicInfo(maps, xy, zone(xy, 6), found).map, 'p6.6');
+  assert.equal(readMusicInfo(maps, sm, zone(sm, 0xffff), found), null, 'garbage is no zone');
+  assert.equal(readMusicInfo(maps, sm, () => null, found), null, 'nothing read');
+  // through the tracker (as the play view): the zone, 'battle' while the battle reader sees one, the zone again
+  const t = new MusicKeyTracker({ settle: 20 });
+  assert.equal(t.next(readMusicInfo(maps, sm, zone(sm, 20), found)), 'p7.20');
+  assert.equal(t.next(readMusicInfo(maps, sm, zone(sm, 20), found), true), 'battle');
+  assert.equal(t.next(readMusicInfo(maps, sm, zone(sm, 20), found), false), 'p7.20');
+  assert.equal(t.next(readMusicInfo(maps, sm, zone(sm, 21), found)), 'p7.21');
+});
+
 test('MusicKeyTracker: no map-music table (Gen 1–3, Pt) – stuck through 8 maps → the map; the map’s music key gets a battle key', () => {
   const t = new MusicKeyTracker();
   for (let m = 1; m <= 7; m++) feedKeys(t, { song: 'm5', map: `p2.${m}`, expected: null, playing: false });
