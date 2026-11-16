@@ -116,6 +116,12 @@
 .bt-team li.out .bt-team-name { color: var(--ink); font-weight: 500; }
 .bt-team-tag { flex: none; font-size: 10px; padding: 0 5px; border-radius: 99px; }
 .bt-team-tag.down { background: color-mix(in srgb, var(--cir) 15%, transparent); color: var(--bad-ink); }
+/* catch chance: one cell per ball, its name over its chance, side by side in one row */
+.bt-catch-row { list-style: none; margin: 0; padding: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
+.bt-catch-row li { display: grid; justify-items: center; gap: 3px; min-width: 0; }
+.bt-catch-row li + li { margin-top: 0; } /* (the global list spacing) */
+.bt-catch-ball { max-width: 100%; font-size: 10.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bt-catch-row .mult { min-width: 40px; text-align: center; }
 
 /* Shiny / legendary burst over the game */
 .enc-fx { position: absolute; inset: 0; pointer-events: none; z-index: 5; overflow: hidden; border-radius: inherit; animation: enc-fade 4.6s ease-out forwards;

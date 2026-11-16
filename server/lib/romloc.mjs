@@ -24,7 +24,7 @@ import { isCtrExt } from '../../shared/romid.mjs';
 import { identifyCtr } from '../../shared/ctr.mjs';
 import { ctrZonePlaces } from '../../shared/live/ctrzones.mjs';
 
-const VERSION = 16; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header, 16: Gen 3 hacks with moved RAM, badge flags by the leaders' order)
+const VERSION = 17; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header, 16: Gen 3 hacks with moved RAM, badge flags by the leaders' order, 17: catch rates with the types, the Game Boy enemy's status / catch rate / battle type moved with a hack's RAM)
 const memo = new Map();
 let tables = null;
 
