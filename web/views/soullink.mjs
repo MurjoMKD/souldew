@@ -3,6 +3,7 @@ import { useApp, Modal, Led } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, ago } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
+import { diag } from '../lib/diag.mjs';
 import { catalog, gameById, hackById, gameTitle, patchLabel, patchFits, genFromSystem } from '../lib/data.mjs';
 import { PRESETS, DEFAULT_VALUES, localizeRandomizer, randomSeed, sameSettings, withDefaults, fieldActive, fieldEnabled, forGen, buildValues } from '/shared/randomizer-options.mjs';
 import { Cart, coverOf } from './library.mjs';
@@ -529,7 +530,11 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
     let off = false;
     setInspect(null);
     setError(null); // an error of the previous pick (e.g. a patch that didn't fit) doesn't apply to this one
-    api.post('/api/rom/inspect', { romId: rom.id, patchId }).then((r) => !off && setInspect(r))
+    api.post('/api/rom/inspect', { romId: rom.id, patchId }).then((r) => {
+      // diagnostics: the game the randomizer's trial run stopped on, and where (a report then names the data it choked on)
+      if (r?.reason === 'randoCrash') diag('rando', { game: rom.gameId || null, code: rom.code || null, hack: rom.hackId || null, patch: patchId || null, what: r.what || null, trace: r.trace || null });
+      if (!off) setInspect(r);
+    })
       .catch((e) => { if (!off) { setInspect({ failed: true, info: { unsupported: true } }); setError(e.message); } });
     return () => { off = true; };
   }, [rom?.id, patchId]);

@@ -24,7 +24,8 @@
   the randomizer expects (some ROM hacks and releases), the randomizer is switched off with that reason, instead of the
   build failing with an error like “Index 1286 out of bounds”. A build that fails anyway explains what happened in your
   language, and two randomizer runs at the same time no longer get in each other's way. Renegade Platinum and Crystal
-  Legacy are now listed as not randomizable; Blaze Black 2 Redux is tested and works.
+  Legacy are now listed as not randomizable; Blaze Black 2 Redux is tested and works. When the randomizer stops on a
+  game, “Save diagnostics” now records where it stopped, so a report lets us fix that game.
 - **Clean sound in the 3DS player at normal speed.** On PCs where the sound arrives unevenly (seen on Windows), the 3DS
   player cut it with clicks after every hiccup and then caught up by squeezing the sound, which made the highs grainy
   and harsh. It now bridges a gap with a soft fade, keeps a slightly larger buffer on such PCs, and catches up with an

@@ -14,6 +14,7 @@ const { randomizerError, inspectRom, javaOptsFor, JAVA_OPTS } = await import('..
 const { ctrRandoError } = await import('../server/lib/ctrrando.mjs');
 const { buildRun } = await import('../server/lib/build.mjs');
 const { errorBody } = await import('../server/app.mjs');
+const { serverErrorText } = await import('../web/lib/errors.mjs');
 const { PRESETS, buildValues, toProperties } = await import('../shared/randomizer-options.mjs');
 test.after(() => rmSync(DATA, { recursive: true, force: true }));
 
@@ -28,10 +29,17 @@ test('a randomizer crash becomes a translated answer naming only the exception\'
   const e = randomizerError(bridgeFailure());
   assert.equal(e.status, 422);
   assert.equal(e.code, 'randoFailed');
-  assert.deepEqual(e.vars, { what: 'ArrayIndexOutOfBoundsException' });
+  assert.equal(e.vars.what, 'ArrayIndexOutOfBoundsException');
   assert.ok(e.details, 'the output stays on the error for the server log');
+  // the text the player reads names only the class …
   const body = JSON.stringify(errorBody(e));
-  for (const raw of ['1286', '1268', 'java.lang', 'Gen5RomHandler', '/Users/someone']) assert.ok(!body.includes(raw), raw);
+  const shown = serverErrorText(errorBody(e), 422);
+  for (const raw of ['1286', '1268', 'java.lang', 'Gen5RomHandler', '/Users/someone']) assert.ok(!shown.includes(raw), raw);
+  // … while the diagnostics get where it stopped (message and frames), never a path on the player's computer
+  assert.deepEqual(e.vars.trace, [AIOOBE, 'Gen5RomHandler.setStarters:1']);
+  assert.ok(!body.includes('/Users/someone'));
+  const io = randomizerError(bridgeFailure('java.io.FileNotFoundException: /Users/someone/Library/Caches/souldew/a/0/1/6 (No such file)'));
+  assert.equal(io.vars.trace[0], 'java.io.FileNotFoundException: …/6 (No such file)');
   // a wrapped one (UPR's RandomizerIOException) and one without an @@ERROR line
   assert.equal(randomizerError(bridgeFailure('com.dabomstew.pkrandom.exceptions.RandomizerIOException: java.io.FileNotFoundException: /x/a002')).vars.what, 'RandomizerIOException');
   const bare = randomizerError(Object.assign(new Error('Randomizer-Fehler: Exit-Code 137'), { details: { error: null, exitCode: 137, stdout: '', stderr: '' } }));
@@ -79,6 +87,12 @@ test('inspect: a trial run with the recommended preset; a game UPR can\'t random
   assert.ok(!existsSync(calls[0].args[2]), 'the settings file is removed');
   const crash = await inspectRom('/g.nds', { gen: 5, run: fake({ generation: 5, pokemonCount: 649, trial: 'ArrayIndexOutOfBoundsException' }) });
   assert.deepEqual([crash.unsupported, crash.reason, crash.what, crash.generation], [true, 'randoCrash', 'ArrayIndexOutOfBoundsException', 5]);
+  // the trial's stack trace (the bridge prints it after "@@TRIAL") comes along for the diagnostics
+  const traced = await inspectRom('/g.nds', { gen: 5, run: async () => ({
+    json: { generation: 5, trial: 'ArrayIndexOutOfBoundsException' },
+    stderr: 'noise\n@@TRIAL java.lang.ArrayIndexOutOfBoundsException: Index 707 out of bounds for length 375\njava.lang.ArrayIndexOutOfBoundsException: Index 707 out of bounds for length 375\n\tat com.dabomstew.pkrandom.romhandlers.Gen5RomHandler.setStarters(Gen5RomHandler.java:1234)\n\tat com.dabomstew.pkrandom.Randomizer.randomize(Randomizer.java:88)\n',
+  }) });
+  assert.deepEqual(traced.trace, ['java.lang.ArrayIndexOutOfBoundsException: Index 707 out of bounds for length 375', 'Gen5RomHandler.setStarters:1234', 'Randomizer.randomize:88']);
   // UPR can't load it at all: unsupported – without the bridge's text in the answer
   const warn = console.warn;
   console.warn = () => {};

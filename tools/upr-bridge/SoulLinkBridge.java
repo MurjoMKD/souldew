@@ -233,6 +233,9 @@ public class SoulLinkBridge {
             return null;
         } catch (Throwable t) {
             Throwable cause = t instanceof java.lang.reflect.InvocationTargetException && t.getCause() != null ? t.getCause() : t;
+            // where it stopped, for the app's diagnostics (server/lib/toolchain.mjs randomizerTrace) – stderr only
+            System.err.println("@@TRIAL " + cause);
+            cause.printStackTrace();
             return cause.getClass().getSimpleName();
         }
     }

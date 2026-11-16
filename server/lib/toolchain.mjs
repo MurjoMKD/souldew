@@ -178,8 +178,15 @@ export async function inspectRom(path, { gen = null, run = runBridge, dir = CACH
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(props, toProperties(buildValues(PRESETS[0].values, gen)));
-    const info = (await run(['info', path, props, '1'])).json || {};
-    if (typeof info.trial === 'string') return { ...info, unsupported: true, reason: 'randoCrash', what: info.trial };
+    const out = await run(['info', path, props, '1']);
+    const info = out.json || {};
+    if (typeof info.trial === 'string') {
+      // the trial's stack trace (the bridge prints it after "@@TRIAL <exception>") – for the diagnostics, not the page's text
+      const stderr = String(out.stderr || '');
+      const at = stderr.lastIndexOf('@@TRIAL ');
+      const trace = at >= 0 ? randomizerTrace({ error: stderr.slice(at + 8).split(/\r?\n/)[0], stderr: stderr.slice(at) }) : undefined;
+      return { ...info, unsupported: true, reason: 'randoCrash', what: info.trial, trace };
+    }
     return info;
   } catch (e) {
     const missingTool = !detectJava().ok ? 'java' : !uprStatus().installed ? 'upr' : null;
@@ -202,8 +209,32 @@ export function randomizerError(e) {
   if (!e || e.status || !e.details) return e;
   if (e.code === 'timeout') return Object.assign(httpError(504, 'Der Randomizer hat zu lange gebraucht und wurde abgebrochen', 'randoTimeout'), { details: e.details });
   const cls = String(e.details.error || e.details.stderr || '').match(/\b(?:[a-z]\w*\.)+([A-Z]\w*(?:Exception|Error))\b/)?.[1] || null;
-  return Object.assign(httpError(422, `Der Randomizer kommt mit diesem Spiel nicht zurecht${cls ? ` (${cls})` : ''} – spiel es ohne Randomizer`, 'randoFailed', { what: cls || `exit ${e.details.exitCode}` }),
-    { details: e.details });
+  return Object.assign(httpError(422, `Der Randomizer kommt mit diesem Spiel nicht zurecht${cls ? ` (${cls})` : ''} – spiel es ohne Randomizer`, 'randoFailed', {
+    what: cls || `exit ${e.details.exitCode}`,
+    trace: randomizerTrace(e.details),
+  }), { details: e.details });
+}
+
+/**
+ * Where in the randomizer it stopped: the exception's message and the first frames of its Java stack trace, shortened to
+ * "RomHandler.method:line" (UPR ZX's classes, the bridge's own). The app keeps them in its diagnostics, so a player's
+ * report names the game data the randomizer choked on – "Index 707 out of bounds for length 375" alone doesn't (pitcher_14's
+ * reports, 2.7.4). Only class names and line numbers: no paths, no ROM data.
+ */
+export function randomizerTrace(details = {}) {
+  const lines = String(details.stderr || '').split(/\r?\n/);
+  const msg = (String(details.error || '').trim() || lines.find((l) => /(?:Exception|Error)\b/.test(l)) || '')
+    .replace(/(?:[A-Za-z]:)?[\\/][^\s:]*[\\/]([^\\/\s]+)/g, '…/$1') // a file the randomizer named: its name only, not where it lies
+    .trim()
+    .slice(0, 200);
+  const frames = [];
+  for (const l of lines) {
+    const m = l.match(/^\s*at\s+(?:[\w$]+\.)*([\w$]+\.[\w$<>]+)\((?:[\w$]+\.java:(\d+)|[^)]*)\)/);
+    if (!m) continue;
+    frames.push(m[2] ? `${m[1]}:${m[2]}` : m[1]);
+    if (frames.length >= 8) break;
+  }
+  return msg || frames.length ? [msg, ...frames].filter(Boolean) : undefined;
 }
 
 /**
