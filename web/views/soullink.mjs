@@ -669,6 +669,8 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
           : t('new.noUpr', 'The randomizer (Universal Pokémon Randomizer ZX) is missing – or play a regular SoulLink.'))
         : inspect.info?.reason === 'encrypted' ? t('new.ctrEncrypted', 'This 3DS game file is encrypted, so the randomizer can’t read it. It needs a decrypted copy of the game (.3ds, .cci or .cxi) – souldew doesn’t decrypt games.')
         : inspect.info?.reason === 'compressed' ? t('new.ctrCompressed', 'Compressed 3DS files (.zcci, .zcxi) can’t be randomized – add the uncompressed game file (.3ds, .cci or .cxi).')
+        : inspect.info?.reason === 'randoCrash' ? (solo ? t('new.randoCrashSolo', 'The randomizer can’t build this game – its data isn’t where the randomizer expects it, as in some ROM hacks and releases. You can still play the Nuzlocke without the randomizer.')
+          : t('new.randoCrash', 'The randomizer can’t build this game – its data isn’t where the randomizer expects it, as in some ROM hacks and releases. You can still play a regular SoulLink.'))
         : inspect.info?.unsupported || hackNoUpr ? (solo ? t('new.noRandomizerSolo', 'This game can’t be randomized – you can still play the Nuzlocke without the randomizer.')
           : t('new.noRandomizer', 'This game can’t be randomized – you can still play a regular SoulLink.'))
         : t('new.ok', '{n} Pokémon · randomizer supported', { n: inspect.info.pokemonCount })}${inspect && inspect.info && inspect.info.staticsSupported === false ? ` · ${t('new.noStatics', 'gifts & legendaries stay as in the hack')}` : ''}</p>

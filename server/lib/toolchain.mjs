@@ -2,9 +2,11 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync, renameSync, rmSync, readdirSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
-import { join, delimiter, dirname } from 'node:path';
+import { join, delimiter } from 'node:path';
 import { listZip, readZipEntry } from './zip.mjs';
 import { TOOLS_DIR, BUNDLED_TOOLS, CACHE_DIR } from './paths.mjs';
+import { httpError } from './fsutil.mjs';
+import { PRESETS, buildValues, toProperties } from '../../shared/randomizer-options.mjs';
 
 export const UPR_VERSION = '4.6.1';
 export const UPR_URL = 'https://github.com/Ajarmar/universal-pokemon-randomizer-zx/releases/download/v4.6.1/PokeRandoZX-v4_6_1.zip';
@@ -33,12 +35,13 @@ export const CTR_HEAP = '-Xmx4608m';
 export const CTR_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
- * JVM options of one bridge call. `ctr`: a 3DS game – the larger heap and UPR's working folder `workDir` (the patched
+ * JVM options of one bridge call. `ctr`: a 3DS game – the larger heap. `workDir`: UPR's working folder (the patched
  * SysConstants in tools/upr-bridge reads -Dsouldew.upr.root; without it UPR writes next to its jar, inside the app).
  */
 export function javaOptsFor({ ctr = false, workDir = null } = {}) {
-  if (!ctr) return JAVA_OPTS;
-  return [CTR_HEAP, ...JAVA_OPTS.filter((o) => !o.startsWith('-Xmx')), ...(workDir ? [`-Dsouldew.upr.root=${workDir}`] : [])];
+  const root = workDir ? [`-Dsouldew.upr.root=${workDir}`] : [];
+  if (!ctr) return [...JAVA_OPTS, ...root];
+  return [CTR_HEAP, ...JAVA_OPTS.filter((o) => !o.startsWith('-Xmx')), ...root];
 }
 
 /**
@@ -163,6 +166,47 @@ export async function installUpr() {
 }
 
 /**
+ * What the new-run wizard needs to know about a Gen 1–5 game (POST /api/rom/inspect): UPR ZX's `info`, with a trial
+ * run of the recommended preset (`gen`: the game's generation, for that preset's values) – the whole randomization in
+ * memory, nothing written (SoulLinkBridge info). A game UPR can't load → { unsupported: true, reason: 'unreadable' };
+ * one it loads but can't randomize (a ROM hack or release whose data isn't where UPR expects it) → reason 'randoCrash'
+ * with `what`, the exception's class: the page says so before a run is built, instead of a failed build. Java or the
+ * randomizer missing → `missingTool`. Never the bridge's own output (#43). `run`: runBridge (tests pass a stand-in).
+ */
+export async function inspectRom(path, { gen = null, run = runBridge, dir = CACHE_DIR } = {}) {
+  const props = join(dir, `trial-${randomBytes(6).toString('hex')}.properties`);
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(props, toProperties(buildValues(PRESETS[0].values, gen)));
+    const info = (await run(['info', path, props, '1'])).json || {};
+    if (typeof info.trial === 'string') return { ...info, unsupported: true, reason: 'randoCrash', what: info.trial };
+    return info;
+  } catch (e) {
+    const missingTool = !detectJava().ok ? 'java' : !uprStatus().installed ? 'upr' : null;
+    if (!missingTool) console.warn('[inspect]', e.message);
+    return { unsupported: true, reason: missingTool ? null : 'unreadable', missingTool };
+  } finally {
+    rmSync(props, { force: true });
+  }
+}
+
+/**
+ * A randomizer run that failed, as the answer the page shows: in words, with a code it translates – never the
+ * randomizer's own output (#43). UPR ZX stopping with a Java exception (data it doesn't expect – a ROM hack, a release
+ * it doesn't know) → 422 'randoFailed', naming only the exception's class for a bug report ("Index 1286 out of bounds
+ * for length 1268" and the like say nothing to a player); a timeout → 504 'randoTimeout'. Errors that are answers
+ * already (Java or the randomizer missing, an invalid seed …) pass through. The bridge's output stays on the error
+ * (`details`) for the server's log.
+ */
+export function randomizerError(e) {
+  if (!e || e.status || !e.details) return e;
+  if (e.code === 'timeout') return Object.assign(httpError(504, 'Der Randomizer hat zu lange gebraucht und wurde abgebrochen', 'randoTimeout'), { details: e.details });
+  const cls = String(e.details.error || e.details.stderr || '').match(/\b(?:[a-z]\w*\.)+([A-Z]\w*(?:Exception|Error))\b/)?.[1] || null;
+  return Object.assign(httpError(422, `Der Randomizer kommt mit diesem Spiel nicht zurecht${cls ? ` (${cls})` : ''} – spiel es ohne Randomizer`, 'randoFailed', { what: cls || `exit ${e.details.exitCode}` }),
+    { details: e.details });
+}
+
+/**
  * Run the SoulLinkBridge (see tools/upr-bridge/SoulLinkBridge.java). Resolves with parsed @@ lines.
  * `ctr`: a 3DS game – bigger heap, its own working folder under the cache (removed afterwards), a longer timeout.
  * `onLine`: called with every line the bridge prints while it runs (progress of a 3DS build).
@@ -173,16 +217,17 @@ export function runBridge(args, { timeoutMs, ctr = false, onLine = null } = {}) 
   if (!java.ok) return Promise.reject(new Error('Java 8+ wurde nicht gefunden. Bitte Java installieren (z. B. Temurin 21 von adoptium.net).'));
   if (!existsSync(UPR_JAR)) return Promise.reject(new Error('Universal Pokemon Randomizer ZX fehlt – bitte im Setup installieren.'));
   const limit = timeoutMs ?? (ctr ? CTR_TIMEOUT_MS : 180000);
-  // a 3DS build's own folder for the game files UPR unpacks (hundreds of MB) – never inside the app, never shared
-  const workDir = ctr ? join(CACHE_DIR, 'upr-3ds', randomBytes(6).toString('hex')) : null;
-  if (workDir) mkdirSync(workDir, { recursive: true });
+  // every run's own folder for the game files UPR unpacks (a 3DS game: hundreds of MB) – never inside the app, never
+  // shared: two runs on the same game (the wizard's check while a build runs) took each other's files away
+  const workDir = join(CACHE_DIR, ctr ? 'upr-3ds' : 'upr-work', randomBytes(6).toString('hex'));
+  mkdirSync(workDir, { recursive: true });
   return new Promise((resolve, reject) => {
     // the bridge folder first: it carries a fixed copy of UPR's Effectiveness (EnumMap instead of HashMap – the order
     // of a HashMap of enums depends on the JVM, so "sensible items" on Gen 4/5 gave different ROMs per Java version)
     // and of SysConstants (the working folder above)
     const cp = [BRIDGE_DIR, UPR_JAR].join(delimiter);
     const child = spawn(java.bin, [...javaOptsFor({ ctr, workDir }), '-cp', cp, 'SoulLinkBridge', ...args], {
-      cwd: workDir || dirname(UPR_JAR),
+      cwd: workDir,
       windowsHide: true, // no console window next to the app while the randomizer runs
     });
     let out = '';
@@ -209,7 +254,7 @@ export function runBridge(args, { timeoutMs, ctr = false, onLine = null } = {}) 
     child.stderr.on('data', (d) => (err += d));
     const cleanup = () => {
       clearTimeout(timer);
-      if (workDir) rmSync(workDir, { recursive: true, force: true });
+      rmSync(workDir, { recursive: true, force: true });
     };
     child.on('error', (e) => {
       cleanup();
