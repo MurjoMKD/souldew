@@ -8,9 +8,9 @@ import { join, extname, resolve, basename, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { WEB_DIR, SHARED_DIR, CACHE_DIR, DATA_DIR, CONFIG_PATH, NODE_MODULES, DEV, LIBRARY_DIR } from './lib/paths.mjs';
 import { writeFileAtomic, httpError, safeFileName, safeJoin, realInside } from './lib/fsutil.mjs';
-import { detectJava, uprStatus, installUpr, runBridge } from './lib/toolchain.mjs';
+import { detectJava, uprStatus, installUpr, runBridge, inspectRom } from './lib/toolchain.mjs';
 import { preparePatchedRom, KNOWN_PATCHES } from './lib/roms.mjs';
-import { ROM_EXTENSIONS, PATCH_EXTENSIONS, isCtrExt } from '../shared/romid.mjs';
+import { ROM_EXTENSIONS, PATCH_EXTENSIONS, isCtrExt, matchCatalog } from '../shared/romid.mjs';
 import { ALL_SLOTS, slotsOf, runMode } from '../shared/slots.mjs';
 import { scanLibrary, catalog, loadFile, importFiles, uploadTarget, resolveId, discoverRoms, approvedFolder, placeUploadedZip, unpackLibraryZip, MAX_CTR_BYTES, setRomHack } from './lib/library.mjs';
 import { freeBytes } from './lib/zip.mjs';
@@ -1086,14 +1086,9 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       return { patched: { crc: null, baseCrc: null, size: patched.size, outputSize: ncchSizeOf(patched.path), header: patched.header, patchName: null, system: '3ds' },
         info: { generation: game?.generation || null, ...info }, log };
     }
-    try {
-      info = (await runBridge(['info', patched.path])).json;
-    } catch (e) {
-      // missingTool: the game may be fine – Java or the randomizer is what's missing (the UI says so instead of
-      // "this game can't be randomized")
-      const missingTool = !detectJava().ok ? 'java' : !uprStatus().installed ? 'upr' : null;
-      info = { unsupported: true, error: e.message, missingTool };
-    }
+    // (missingTool: the game may be fine – Java or the randomizer is what's missing, the UI says so instead of "this
+    // game can't be randomized"; the generation picks the trial run's values)
+    info = await inspectRom(patched.path, { gen: matchCatalog({ crc: patched.crc, ...patched.header }, catalog())?.game?.generation || null });
     return { patched: { crc: patched.crc, baseCrc: patched.baseCrc, size: patched.size, header: patched.header, patchName: patched.patchName, system: patched.system }, info, log };
   });
 

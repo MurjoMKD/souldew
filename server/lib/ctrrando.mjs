@@ -15,6 +15,7 @@
 import { openSync, readSync, closeSync, statSync, statfsSync, createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { httpError } from './fsutil.mjs';
+import { randomizerError } from './toolchain.mjs';
 
 const u32 = (b, o) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
 const tag = (b, o) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
@@ -74,7 +75,7 @@ export function checkCtrSpace(dir, ncchSize, count = 1, { free = freeBytes(dir) 
   }
 }
 
-/** The bridge's error codes as messages the app translates (web/lib/errors.mjs); other errors pass through. */
+/** The bridge's error codes as messages the app translates (web/lib/errors.mjs); other randomizer failures as for Gen 1–5. */
 export function ctrRandoError(e) {
   if (e?.status) return e;
   if (e?.code === 'encrypted') {
@@ -82,7 +83,7 @@ export function ctrRandoError(e) {
   }
   if (e?.code === 'memory') return httpError(507, 'Zu wenig Arbeitsspeicher für den 3DS-Randomizer (er braucht bis zu 4,5 GB)', 'ctrMemory');
   if (e?.code === 'timeout') return httpError(504, 'Der 3DS-Randomizer hat zu lange gebraucht und wurde abgebrochen', 'ctrTimeout');
-  return e;
+  return randomizerError(e);
 }
 
 /**

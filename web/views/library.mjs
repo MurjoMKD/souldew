@@ -4,7 +4,7 @@ import { Icon } from '../lib/icons.mjs';
 import { t, currentLang } from '../lib/i18n.mjs';
 import { api, events } from '../lib/api.mjs';
 import { serverErrorText } from '../lib/errors.mjs';
-import { catalog, gameTitle } from '../lib/data.mjs';
+import { catalog, gameTitle, patchFits } from '../lib/data.mjs';
 import { romFeatures, FEATURES } from '/shared/live/features.mjs';
 import { gymCapsFamily } from '/shared/routes.mjs';
 import { FirstSteps } from './firststeps.mjs';
@@ -753,8 +753,9 @@ function HackDetail({ id, onClose, openGame }) {
   // a ROM that was patched before it was added (its CRC32 is a known version of the hack): played as it is
   const ready = !patch ? library?.roms?.find((r) => r.hackId === id) : null;
   const baseRom = patch?.baseRomId ? library.roms.find((r) => r.id === patch.baseRomId) : library?.roms?.find((r) => !r.hackId && r.gameId === h?.baseGameId);
-  // Only offer the patched game when the base ROM is the one the patch expects (otherwise patching fails).
-  const canPatch = !!(patch && baseRom && (!patch.expectedCrc || baseRom.crc === patch.expectedCrc));
+  // Only offer the patched game when the patch goes with the base ROM (otherwise patching fails) – the same rule as the
+  // new-run wizard's hack picker
+  const canPatch = !!(patch && baseRom && patchFits(patch, baseRom, cat));
   const save = useSoloSave(canPatch ? `${baseRom.id}|${patch.id}` : null);
   if (!h) return null;
   const base = cat.games.find((g) => g.id === h.baseGameId);

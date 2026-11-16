@@ -5,7 +5,7 @@ import { join, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { RUNS_DIR } from './paths.mjs';
 import { preparePatchedRom, fileSha1 } from './roms.mjs';
-import { runBridge } from './toolchain.mjs';
+import { runBridge, randomizerError } from './toolchain.mjs';
 import { checkCtrSpace, ctrProgress, ctrRandoError, hashFile, ncchSizeOf } from './ctrrando.mjs';
 import { toProperties } from '../../shared/randomizer-options.mjs';
 import { diffRoms } from '../../shared/nds.mjs';
@@ -498,7 +498,12 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       onLog(`Randomisiere ROM für ${player.name} (Seed ${seed}) …`);
       step({ phase: 'randomize' });
       const t = Date.now();
-      const res = await bridge(['randomize', patched.path, romOut, propsFile, seed, logOut, dataOut]);
+      let res;
+      try {
+        res = await bridge(['randomize', patched.path, romOut, propsFile, seed, logOut, dataOut]);
+      } catch (e) {
+        throw randomizerError(e);
+      }
       for (const w of res.warnings) if (!manifest.warnings.includes(w)) manifest.warnings.push(w);
       manifest.randomizer.settingsString = res.settingsString;
       onLog(`Fertig in ${((Date.now() - t) / 1000).toFixed(1)} s`);
