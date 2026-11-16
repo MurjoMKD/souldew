@@ -207,3 +207,23 @@ test('controllers: the controller chosen in Settings plays whenever it is connec
   assert.equal(c.pickPad([mic, xbox, ps5], ` ${DUALSENSE}`), ps5);
   assert.equal(c.padKey('x'.repeat(300)).length, 200);
 });
+
+test('controller diagnostics: the picked device and each new press with the game buttons it maps to', async () => {
+  const { padRecorder, padMap } = await import('../web/lib/controls.mjs');
+  const rec = padRecorder(3);
+  const map = padMap({ preset: 'nintendo', map: { a: 'BUTTON_1', b: 'BUTTON_2' } });
+  const pad = (pressed) => ({ id: 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)', index: 0, mapping: 'standard',
+    buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: pressed.includes(i) })), axes: [0, 0, 0, 0] });
+  rec.see(pad([0]), map);
+  rec.see(pad([0]), map); // held: one press, not two
+  rec.see(pad([]), map);
+  rec.see(pad([1]), map, true);
+  const info = rec.info({ preset: 'nintendo' }, map);
+  assert.equal(info.picked.mapping, 'standard');
+  assert.deepEqual(info.presses.map(({ i, label, game, app }) => ({ i, label, game, app })), [
+    { i: 0, label: 'BUTTON_1', game: ['a'], app: false },
+    { i: 1, label: 'BUTTON_2', game: ['b'], app: true },
+  ]);
+  rec.see(null, map);
+  assert.equal(rec.info(null, map).picked, null);
+});

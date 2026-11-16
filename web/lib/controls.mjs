@@ -186,6 +186,40 @@ export function padMap(pads) {
   return out;
 }
 
+/**
+ * Diagnostics of a player page's controller: the device that plays and the last presses – which standard button (index,
+ * label) came in, which game buttons it was mapped to and whether the app's menus had the controller then. A player's
+ * "the remapping doesn't apply in game" (Discord, Windows, a DualSense and an Xbox pad) is otherwise invisible.
+ */
+export function padRecorder(max = 40) {
+  const presses = [];
+  let last = [];
+  let picked = null;
+  return {
+    /** Every poll: the picked device (or null) and what the page made of it. */
+    see(pad, map, appHas = false) {
+      if (!pad) {
+        picked = null;
+        last = [];
+        return;
+      }
+      if (picked?.id !== pad.id || picked?.index !== pad.index) {
+        picked = { id: String(pad.id).slice(0, 120), index: pad.index, mapping: pad.mapping || '', buttons: pad.buttons.length, axes: pad.axes.length };
+      }
+      pad.buttons.forEach((b, i) => {
+        const on = !!b.pressed;
+        if (on && !last[i]) {
+          const label = PAD_LABELS[i] ?? null;
+          presses.push({ t: Math.round(performance.now()), i, label, game: Object.keys(map).filter((k) => map[k] === label), app: !!appHas });
+          if (presses.length > max) presses.shift();
+        }
+        last[i] = on;
+      });
+    },
+    info: (cfg, map) => ({ cfg: cfg || null, map, picked, presses: presses.slice() }),
+  };
+}
+
 /** Which kind of controller, from the id the browser reports (vendor ids: 054c Sony, 045e Microsoft, 057e Nintendo). */
 export function padFamily(id = '') {
   const s = String(id).toLowerCase();

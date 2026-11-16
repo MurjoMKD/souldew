@@ -509,6 +509,7 @@ if (SYSTEM === 'nds') {
 // while the player re-binds buttons in Settings, and the in-game reset doesn't load the page again (ticket #18).
 let padCfg = null; // config.pads
 let padButtons = controls.padMap(null); // game button → controller button label
+const padRec = controls.padRecorder(); // (diagnostics: __emu.padInfo)
 let controlsSig = '';
 function applyControls(config) {
   const sig = JSON.stringify([config?.controls || null, config?.pads || null]);
@@ -532,6 +533,7 @@ function startPads() {
   setInterval(() => {
     if (!st.ready || document.visibilityState === 'hidden') return;
     const pad = controls.pickPad(navigator.getGamepads?.() || [], padCfg?.device || null);
+    padRec.see(pad, padButtons, controls.appHasPad());
     if (!pad) {
       if (inp.pad) {
         inp.pad = 0;
@@ -575,6 +577,8 @@ const blankSave = (b) => !b || !b.length || b.every((x) => x === 0xff) || b.ever
 
 window.__emu = {
   ready: false,
+  /** Diagnostics: the controller settings this page plays with, the device it picked and the last presses. */
+  padInfo: () => padRec.info(padCfg, padButtons),
   native: true,
   system: () => SYSTEM,
   locateRam() {

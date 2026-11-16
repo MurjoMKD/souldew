@@ -188,7 +188,11 @@ export async function saveDiagnostics(extra = {}) {
   // the native players (3DS, fast player): the Vulkan card and driver, how the last game that failed ended, the host's
   // last words – a crash on someone else's PC is otherwise invisible
   const players = await fetch('/api/diagnostics/players').then((r) => (r.ok ? r.json() : null)).catch(() => null);
-  const dump = diagDump({ app: info ? { version: info.version, packaged: info.packaged, platform: info.platform } : null, gpu, players, userAgent: navigator.userAgent, lang: document.documentElement.lang, ...extra });
+  // controllers: the saved settings and every device the browser lists (a USB headset can be one – lib/controls.mjs pickPad)
+  const pads = await fetch('/api/status').then((r) => (r.ok ? r.json() : null)).then((s) => s?.config?.pads ?? null).catch(() => null);
+  const gamepads = [...(navigator.getGamepads?.() || [])].filter(Boolean)
+    .map((g) => ({ index: g.index, id: String(g.id).slice(0, 120), mapping: g.mapping || '', connected: g.connected, buttons: g.buttons.length, axes: g.axes.length }));
+  const dump = diagDump({ app: info ? { version: info.version, packaged: info.packaged, platform: info.platform } : null, gpu, players, userAgent: navigator.userAgent, lang: document.documentElement.lang, controllers: { pads, gamepads }, ...extra });
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   download(`souldew-diagnostics-${stamp}.json`, JSON.stringify(dump));
 }

@@ -595,6 +595,7 @@ canvas.addEventListener('pointercancel', lift);
 // they change while the game runs (__emu.setControls from the play view, as lib/nativeplayer.mjs)
 let padCfg = null; // config.pads
 let padButtons = controls.padMap(null); // game button → controller button label
+const padRec = controls.padRecorder(); // (diagnostics: __emu.padInfo)
 let controlsSig = '';
 function applyControls(config) {
   const sig = JSON.stringify([config?.controls || null, config?.pads || null]);
@@ -619,6 +620,7 @@ function startPads() {
   setInterval(() => {
     if (!st.ready || document.visibilityState === 'hidden') return;
     const pad = controls.pickPad(navigator.getGamepads?.() || [], padCfg?.device || null);
+    padRec.see(pad, padButtons, controls.appHasPad());
     if (!pad) {
       if (inp.pad || inp.lx || inp.ly || inp.rx || inp.ry) Object.assign(inp, { pad: 0, lx: 0, ly: 0, rx: 0, ry: 0 }), sendInput();
       return;
@@ -657,6 +659,8 @@ async function snapshot({ maxW = 192, type = 'image/jpeg', quality = 0.5 } = {})
 
 window.__emu = {
   ready: false,
+  /** Diagnostics: the controller settings this page plays with, the device it picked and the last presses. */
+  padInfo: () => padRec.info(padCfg, padButtons),
   system: () => '3ds',
   locateRam() {},
   ramInfo: () => ({ base: st.liveMemory && st.mem.length ? 0 : -1, tried: 0 }),

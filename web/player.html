@@ -1272,6 +1272,18 @@
         gl: glLog.slice(),
       };
     },
+    /**
+     * Diagnostics: the controller table EmulatorJS really plays with (game button → keyboard code and controller label)
+     * next to the one souldew handed it – EmulatorJS keeps settings of its own, which could win over ours.
+     */
+    padInfo() {
+      const table = (set) => Object.fromEntries(Object.entries(set?.[0] || {}).map(([k, v]) => [k, [v?.value ?? null, v?.value2 ?? null]]));
+      try {
+        return { player: 'emulatorjs', live: table(E()?.controls), ours: table(window.EJS_defaultControls), device: E()?.gamepadSelection?.[0] ?? null };
+      } catch (e) {
+        return { player: 'emulatorjs', error: String(e?.message || e) };
+      }
+    },
     /** Timing and sound facts for "Save diagnostics": the sound card, the pacing, the last measuring window, totals. */
     perf() {
       const ac = GM()?.Module?.AL?.currentCtx?.audioCtx;
