@@ -1049,9 +1049,9 @@
    "verified": "xMAP + ROM bytes (pointer); PKHeX (offsets); runtime not tested",
    "badges": {
     "generalOffsetFromSaveBase": "0x10",
-    "johtoOffset": "0x7E",
+    "trainerOffset": "0x64",
     "kantoOffset": "0x83",
-    "source": "save general block in RAM (saveBase+0x10, same layout as the .sav: shared/gen4save.mjs)"
+    "source": "save general block in RAM (saveBase+0x10, same layout as the .sav: shared/gen4save.mjs); PKHeX SAV4HGSS Trainer1 0x64: TID +0x10, SID +0x12, Johto badges +0x1A (0x7E), Kanto badges +0x1F (0x83), a bit per badge"
    },
    "battleActive": {
     "pidOffsetFromSaveBase": "0x49E7C",
@@ -1133,9 +1133,9 @@
    "verified": "xMAP (pointer); PKHeX (offsets); runtime not tested",
    "badges": {
     "generalOffsetFromSaveBase": "0x10",
-    "johtoOffset": "0x7E",
+    "trainerOffset": "0x64",
     "kantoOffset": "0x83",
-    "source": "save general block in RAM (saveBase+0x10, same layout as the .sav: shared/gen4save.mjs)"
+    "source": "save general block in RAM (saveBase+0x10, same layout as the .sav: shared/gen4save.mjs); PKHeX SAV4HGSS Trainer1 0x64: TID +0x10, SID +0x12, Johto badges +0x1A (0x7E), Kanto badges +0x1F (0x83), a bit per badge"
    },
    "battleActive": {
     "pidOffsetFromSaveBase": "0x49E7C",
