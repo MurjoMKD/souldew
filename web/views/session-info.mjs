@@ -12,7 +12,7 @@ import {
 } from '../lib/run.mjs';
 import { statusOf, statusLabel, shownLevel } from './party.mjs';
 import { effectiveness, defenseChart, moveInfo, matchup } from '/shared/typechart.mjs';
-import { catchRow, chanceText } from '/shared/catchrate.mjs';
+import { catchRow, chanceText, holdFoeStatus } from '/shared/catchrate.mjs';
 import { isLegendary } from '/shared/legendaries.mjs';
 import { RestartModal } from './restart.mjs';
 import { ShareButton } from './liveshare.mjs';
@@ -434,11 +434,14 @@ const chanceClass = (p) => (p >= 0.5 ? 'xhigh' : p < 0.1 ? 'xlow' : 'x1');
  * the reader (Gen 5–7) it counts none and says so.
  */
 function CatchChance({ foe, foes, types, gen, game, balls }) {
+  // (held for the battle: a poll without the status – Gen 3/4 when the struct isn't found that frame – keeps the last)
+  const held = useRef(null);
+  held.current = holdFoeStatus(held.current, `${foe.species}:${foe.level}:${foe.maxHp}`, foe.status);
   if (balls === 'none' || !foe.catchRate || (gen <= 4 && foes.filter((f) => f.hp > 0).length > 1)) return null;
-  const statusRead = foe.status !== undefined;
-  const row = catchRow({ gen, rate: foe.catchRate, hp: foe.hp, maxHp: foe.maxHp, level: foe.level, status: foe.status, species: foe.species }, { game, types, safari: balls === 'safari' });
+  const { read: statusRead, status } = held.current;
+  const row = catchRow({ gen, rate: foe.catchRate, hp: foe.hp, maxHp: foe.maxHp, level: foe.level, status, species: foe.species }, { game, types, safari: balls === 'safari' });
   if (!row) return null;
-  const st = foeStatus(foe);
+  const st = foeStatus({ status });
   const tip = [
     t('battle.catchTip', 'One ball, as this game calculates it: catch rate {rate}, {hp}/{max} HP, level {level}{status}.', {
       rate: foe.catchRate, hp: foe.hp, max: foe.maxHp, level: foe.level, status: st ? `, ${statusLabel(st)}` : '',

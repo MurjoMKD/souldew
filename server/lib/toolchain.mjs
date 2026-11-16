@@ -5,7 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { join, delimiter } from 'node:path';
 import { listZip, readZipEntry } from './zip.mjs';
 import { TOOLS_DIR, BUNDLED_TOOLS, CACHE_DIR } from './paths.mjs';
-import { httpError } from './fsutil.mjs';
+import { httpError, removeQuietly } from './fsutil.mjs';
 import { PRESETS, buildValues, toProperties } from '../../shared/randomizer-options.mjs';
 
 export const UPR_VERSION = '4.6.1';
@@ -193,7 +193,11 @@ export async function inspectRom(path, { gen = null, run = runBridge, dir = CACH
     if (!missingTool) console.warn('[inspect]', e.message);
     return { unsupported: true, reason: missingTool ? null : 'unreadable', missingTool };
   } finally {
-    rmSync(props, { force: true });
+    try {
+      rmSync(props, { force: true });
+    } catch (e) {
+      console.warn(`[inspect] the trial's settings file couldn’t be removed (${e.code || 'error'})`); // (never the wizard's answer)
+    }
   }
 }
 
@@ -221,10 +225,18 @@ export function randomizerError(e) {
  * report names the game data the randomizer choked on – "Index 707 out of bounds for length 375" alone doesn't (pitcher_14's
  * reports, 2.7.4). Only class names and line numbers: no paths, no ROM data.
  */
+/**
+ * A path inside a message, up to its last separator: a drive (C:\ or C:/), a UNC share (\\server) or a separator that
+ * doesn't continue a word (/Users/…, ~/…, but not the "com/dabomstew" of a class name). Folder names may hold spaces
+ * ("C:\Users\Max Mustermann\…", "/Users/anna maria/Library/Application Support/…"), so it runs to the line's last
+ * separator – a message with text after a path loses a little of it rather than show a user name.
+ */
+export const PATH_IN_TEXT = /(?:(?<![A-Za-z])[A-Za-z]:[\\/]|(?<![\w.$-])[\\/])[^\r\n]*[\\/]/g;
+
 export function randomizerTrace(details = {}) {
   const lines = String(details.stderr || '').split(/\r?\n/);
   const msg = (String(details.error || '').trim() || lines.find((l) => /(?:Exception|Error)\b/.test(l)) || '')
-    .replace(/(?:[A-Za-z]:)?[\\/][^\s:]*[\\/]([^\\/\s]+)/g, '…/$1') // a file the randomizer named: its name only, not where it lies
+    .replace(PATH_IN_TEXT, '…/') // a file the randomizer named: its name only, not where it lies
     .trim()
     .slice(0, 200);
   const frames = [];
@@ -243,7 +255,7 @@ export function randomizerTrace(details = {}) {
  * `onLine`: called with every line the bridge prints while it runs (progress of a 3DS build).
  * A failure carries `code` when the bridge named one ('encrypted', 'memory', 'timeout').
  */
-export function runBridge(args, { timeoutMs, ctr = false, onLine = null } = {}) {
+export function runBridge(args, { timeoutMs, ctr = false, onLine = null, spawnFn = spawn, removeDir = undefined } = {}) {
   const java = detectJava();
   if (!java.ok) return Promise.reject(httpError(409, 'Java 8+ wasn’t found. Install Java (e.g. Temurin 21 from adoptium.net).', 'javaMissing'));
   if (!existsSync(UPR_JAR)) return Promise.reject(httpError(409, 'Universal Pokemon Randomizer ZX is missing – reinstall souldew, or play without the randomizer.', 'uprMissing'));
@@ -257,7 +269,7 @@ export function runBridge(args, { timeoutMs, ctr = false, onLine = null } = {}) 
     // of a HashMap of enums depends on the JVM, so "sensible items" on Gen 4/5 gave different ROMs per Java version)
     // and of SysConstants (the working folder above)
     const cp = [BRIDGE_DIR, UPR_JAR].join(delimiter);
-    const child = spawn(java.bin, [...javaOptsFor({ ctr, workDir }), '-cp', cp, 'SoulLinkBridge', ...args], {
+    const child = spawnFn(java.bin, [...javaOptsFor({ ctr, workDir }), '-cp', cp, 'SoulLinkBridge', ...args], {
       cwd: workDir,
       windowsHide: true, // no console window next to the app while the randomizer runs
     });
@@ -283,13 +295,15 @@ export function runBridge(args, { timeoutMs, ctr = false, onLine = null } = {}) 
       }
     });
     child.stderr.on('data', (d) => (err += d));
+    // the answer first, then the working folder – best effort: on Windows a scanner holding one of UPR's files made
+    // rmSync throw inside this handler, the promise never settled and the wizard hung on "Checking the game …"
     const cleanup = () => {
       clearTimeout(timer);
-      rmSync(workDir, { recursive: true, force: true });
+      setImmediate(() => removeQuietly(workDir, { rm: removeDir, label: 'randomizer' }));
     };
     child.on('error', (e) => {
-      cleanup();
       reject(e);
+      cleanup();
     });
     child.on('close', (code) => {
       cleanup();

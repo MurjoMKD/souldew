@@ -16,13 +16,16 @@
   – set it when you create a run or under Rules.
 - **Shiny rate** (a community idea). New runs of the original Gen 3–5 games can make shinies more common: 1 in 4096,
   1024, 512 or 256 instead of 1 in 8192, and in Gen 3 and 4 trainers' Pokémon can be shiny too. It works with and
-  without the randomizer, and every player in a SoulLink gets the same rate. Shinies from a raised rate fill the
-  Pokédex but don't count for the shiny achievements. Not for ROM hacks, Gen 1/2 or the 3DS games.
+  without the randomizer, and every player in a SoulLink gets the same rate – so everyone needs this version to join
+  such a run (older versions refuse its invite instead of building a game with the normal rate; the invite says so).
+  Shinies from a raised rate fill the Pokédex but don't count for the shiny achievements. Not for ROM hacks, Gen 1/2 or
+  the 3DS games.
 - **Missed encounters remember the Pokémon** (thanks to a player on Discord). When an encounter gets away, souldew now
   fills in which Pokémon it was if it saw the battle. A new switch under the dupes clause, “Fled or knocked-out
   encounters count as dupes”, makes such a Pokémon block its evolution line (off by default). And SoulLinks now ask
-  after a wild battle without a catch whether it got away, like solo Nuzlockes do – marking it as spent fails the pair
-  and tells your partner. No more question when the area you're in already has your encounter.
+  after a wild battle without a catch whether it got away, like solo Nuzlockes do – where the place sign shows the area
+  you're in – marking it as spent fails the pair and tells your partner. No more question when the area you're in
+  already has your encounter.
 - **Messages always in your language** (thanks to a player for the report). Error messages, the log while a run is
   built, save-file problems, update errors and the menu before the app has loaded showed some German text with English,
   French, Spanish or Italian selected. A partner's ping and “boss defeated” in the log now show in your language too.
@@ -42,8 +45,9 @@
 - **A ROM hack started from its library page is the game you get** (#68 – thanks for the report). “New Nuzlocke” /
   “New SoulLink” on a hack like Volt White could build the plain original game: the wizard only offered a patch when
   your ROM's checksum matched the one the hack's notes name, while “Play” patched the same ROM fine. Hacks that come as
-  xdelta or IPS patches now work with your copy of their base game in new runs too, and if a hack really doesn't fit
-  your ROM, the wizard says so instead of switching to the original game.
+  xdelta patches now work with your copy of their base game in new runs too (xdelta checks what it writes; IPS patches
+  can't, so they still need the copy their notes name), and if a hack really doesn't fit your ROM, the wizard says so
+  instead of switching to the original game.
 - **The randomizer says up front when it can't handle a game** (thanks to a player on Discord for the report). When you
   pick a game for a new run, souldew now tries the randomizer on it first. If the game's data isn't laid out the way
   the randomizer expects (some ROM hacks and releases), the randomizer is switched off with that reason, instead of the

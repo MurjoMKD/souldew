@@ -2719,5 +2719,12 @@
   "hof.title": "Hall of Fame",
   "live.explain2": "Teile große Momente – einen Tod, einen Wipe – als Karte mit euren Teams in #live-runs im souldew-Discord, und einen gewonnenen Run mit eurem finalen Team in #hall-of-fame. Es wird nur gepostet, wenn du den Knopf drückst.",
   "buildLog.shinyRate": "Shiny-Rate 1/{rate} eingebaut",
-  "buildLog.shinyTrainers": "Shiny-Rate 1/{rate} eingebaut (auch für Trainer-Pokémon)"
+  "buildLog.shinyTrainers": "Shiny-Rate 1/{rate} eingebaut (auch für Trainer-Pokémon)",
+  "code.errNewer": "Dieser Run braucht ein neueres souldew. Aktualisiere souldew und lass dir dann einen neuen Code geben.",
+  "err.packNewer": "Dieser Run braucht souldew {version} oder neuer – aktualisiere souldew, um mitzuspielen",
+  "err.packNewerAny": "Dieser Run braucht ein neueres souldew – aktualisiere souldew, um mitzuspielen",
+  "invite.needsVersion": "Für diesen Run braucht jeder souldew {version} oder neuer. Ältere Versionen können die Einladung nicht öffnen.",
+  "invite.needsVersionShiny": "Dieser Run ändert die Shiny-Rate: Zum Mitspielen braucht jeder souldew {version} oder neuer. Ältere Versionen können die Einladung nicht öffnen.",
+  "lives.usedUp": "Die bisherigen Tode verbrauchen diese Leben schon. Der Run geht weiter – der nächste Tod beendet ihn.",
+  "lives.usedUpNamed": "{name}: Die bisherigen Tode verbrauchen diese Leben schon. Der Run geht weiter – das nächste Pokémon, das {name} verliert, beendet ihn."
 }

@@ -283,8 +283,17 @@ test('readLocation with ROM data: Black/White read the copy of the zone header, 
   town.ram.set(zones.subarray(388 * 48, 392 * 48), 0x00150a00);
   inZone(town, 0x0225a1c0, 389);
   assert.equal(readLocation(maps, deEntry, town.read, { rom: german, state: {} })?.map, 389);
-  // the copy gone (back on the title screen): no place, and searched for again later (not every read)
+  // one poll that doesn't match (the game rewriting the copy on a zone change): the address and the place stay
+  de.ram[0x0025a1c0 + 3] ^= 0xff;
+  assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state })?.id, 4, 'not dropped on one mismatch');
+  assert.equal(state.bwZoneAt, 0x0225a1c0);
+  de.ram[0x0025a1c0 + 3] ^= 0xff;
+  assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state })?.id, 4);
+  assert.equal(state.bwMiss, 0);
+  // the copy gone (back on the title screen): after a few polls no place, and searched for again later (not every read)
   de.ram.fill(0, 0x0025a1c0, 0x0025a1c0 + 0x40);
+  assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state })?.id, 4);
+  assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state })?.id, 4);
   assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state }), null);
   assert.equal(state.bwZoneAt, null);
 
@@ -299,6 +308,65 @@ test('readLocation with ROM data: Black/White read the copy of the zone header, 
   assert.equal(readLocation(maps, { id: 'black2_us', gen: 5 }, mainRam().read, { rom: b2 }), null);
   // ROM data without the zone headers (an older cache): Black/White can't be read
   assert.equal(canReadLocation(maps, entry, { ...black, zoneHeaders: undefined }), false);
+
+  // an English game whose copy at its own address differs from the ROM's header (a zone the game changes while it
+  // runs): the id fields agree, most bytes are the ROM's – the sign stays, without any search
+  const loose = mainRam();
+  inZone(loose, 0x0225929c, 317);
+  for (const i of [0, 2, 4, 6]) loose.ram[0x0025929c + i] ^= 0x5a;
+  const looseState = {};
+  assert.deepEqual(readLocation(maps, entry, loose.read, { rom: black, state: looseState }), { gen: 5, id: 14, map: 317, romName: 'Route 1' });
+  assert.equal(looseState.bwZoneScan, 0, 'no RAM search for it');
+  // … but only there, only in an English game, and only with the id fields in agreement
+  const deLoose = mainRam();
+  inZone(deLoose, 0x0225929c, 317);
+  for (const i of [0, 2, 4, 6]) deLoose.ram[0x0025929c + i] ^= 0x5a;
+  assert.equal(readLocation(maps, deEntry, deLoose.read, { rom: german }), null, 'another language: its static address isn\'t this one');
+  loose.put16(0x0225929c + 0x30, 389);
+  assert.equal(readLocation(maps, entry, loose.read, { rom: black, state: {} }), null, '+0x30 says another zone');
+  const junk = mainRam();
+  inZone(junk, 0x0225929c, 317);
+  junk.ram.fill(0x77, 0x0025929c, 0x0025929c + 0x16);
+  junk.ram.fill(0x77, 0x0025929c + 0x1c, 0x0025929c + 0x30);
+  assert.equal(readLocation(maps, entry, junk.read, { rom: black, state: {} }), null, 'only the id fields fit: no copy');
+  // zero-filled RAM with a zone id of 0 – never Black City, in either way of reading
+  const zero = mainRam();
+  assert.equal(readLocation(maps, entry, zero.read, { rom: black, state: {} }), null);
+
+  // the RAM search backs off: every 3 s at first, every 30 s after several searches without a hit, fast again for
+  // another game
+  const real = Date.now;
+  let now = 1e12;
+  Date.now = () => now;
+  try {
+    const empty = mainRam();
+    let reads = 0;
+    const counted = (a, n) => {
+      if (n === 0x400000) reads++;
+      return empty.read(a, n);
+    };
+    const st = {};
+    const poll = (rom = german) => readLocation(maps, deEntry, counted, { rom, state: st });
+    for (let i = 0; i < 4; i++) {
+      poll();
+      now += 3000;
+    }
+    assert.equal(reads, 4, 'every 3 s while it may still turn up');
+    for (let i = 0; i < 11; i++) {
+      poll();
+      now += 3000;
+    }
+    assert.equal(reads, 5, 'then every 30 s');
+    poll({ ...german, code: 'IRAD' });
+    assert.equal(reads, 6, 'another game: searched for right away');
+    // found once: the misses start over
+    inZone(empty, 0x0225a1c0, 317);
+    now += 3000;
+    assert.equal(poll({ ...german, code: 'IRAD' })?.map, 317);
+    assert.equal(st.bwScanMiss, 0);
+  } finally {
+    Date.now = real;
+  }
 });
 
 // ---------------------------------------------------------------- real ROMs (optional)

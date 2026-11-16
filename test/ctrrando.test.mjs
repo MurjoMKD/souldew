@@ -287,8 +287,11 @@ test('live: an encrypted 3DS dump is reported as such by UPR ZX, never "not supp
   await assert.rejects(runBridge(['info', f], { ctr: true, timeoutMs: 120000 }), (e) => e.code === 'encrypted');
   const info = await inspectCtr(f, { encrypted: true }, runBridge);
   assert.equal(info.reason, 'encrypted');
-  // UPR's working folder for 3DS games is the bridge call's own, under the cache – gone afterwards
-  assert.deepEqual(existsSync(join(DATA, 'cache', 'upr-3ds')) ? readdirSync(join(DATA, 'cache', 'upr-3ds')) : [], []);
+  // UPR's working folder for 3DS games is the bridge call's own, under the cache – gone afterwards (removed right after
+  // the answer, best effort: a folder a scanner holds must never keep the answer back – toolchain.mjs runBridge)
+  const left = () => (existsSync(join(DATA, 'cache', 'upr-3ds')) ? readdirSync(join(DATA, 'cache', 'upr-3ds')) : []);
+  for (let i = 0; i < 100 && left().length; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(left(), []);
 });
 
 test('live: a 3DS file of another game is "not supported", without the encrypted code', { skip: !canRunBridge && 'no Java / UPR here' }, async () => {

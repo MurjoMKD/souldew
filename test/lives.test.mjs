@@ -4,6 +4,7 @@
 // shows what is left.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { livesRule, livesLeft, livesOf, deathsIn, clampLives, LIVES_DEFAULT, LIVES_MAX } from '../shared/lives.mjs';
 import { buildState } from '../shared/streamapi.mjs';
@@ -67,7 +68,7 @@ test('rule: off unless lives > 0, clamped, one pool for a solo run', () => {
 test('count: from the deaths that stand – groups by who fell, bonus Pokémon by their owner', () => {
   const pairs = {
     a: { state: 'dead', by: 'p1', diedAt: 3 }, b: { state: 'dead', by: 'p2', diedAt: 1 }, c: { state: 'alive', by: 'p1' },
-    d: { state: 'dead', diedAt: 2 }, // no `by` (an old death): counts for the host
+    d: { state: 'dead', diedAt: 2 }, // no `by` (an old death): who fell can't be told
   };
   const extras = { 'p2:k9': { dead: true, diedAt: 4 }, 'p1:k3': { dead: false } };
   const deaths = deathsIn(pairs, extras);
@@ -78,9 +79,17 @@ test('count: from the deaths that stand – groups by who fell, bonus Pokémon b
   assert.equal(livesOf(shared, 'p2', slots), shared.pools.all, 'everyone spends from the shared pool');
   const own = livesLeft({ lives: 2, livesPool: 'player' }, slots, deaths);
   assert.deepEqual(Object.keys(own.pools), ['p1', 'p2']);
-  assert.deepEqual([own.pools.p1.used, own.pools.p1.left, own.pools.p1.out], [2, 0, true]);
+  // the death without `by` costs nobody's own life – not the host's (it would end their part for someone else's loss)
+  assert.deepEqual([own.pools.p1.used, own.pools.p1.left, own.pools.p1.out], [1, 1, false]);
   assert.deepEqual([own.pools.p2.used, own.pools.p2.left], [2, 0]);
-  assert.equal(livesOf(own, 'p9', slots), own.pools.p1, 'an unknown slot: the host');
+  assert.equal(livesOf(own, 'p9', slots), null, 'an unknown slot: no pool of its own');
+  // … unless the encounters tell: the one player who had caught a Pokémon there is who fell
+  const encs = { 'd:p2': { outcome: 'caught', species: 16 }, 'd:p1': { outcome: 'missed', species: 19 } };
+  const told = livesLeft({ lives: 2, livesPool: 'player' }, slots, deathsIn(pairs, extras, { slots, encs }));
+  assert.deepEqual([told.pools.p1.used, told.pools.p2.used], [1, 3]);
+  const both = { 'd:p2': { outcome: 'caught', species: 16 }, 'd:p1': { outcome: 'caught', species: 19 } };
+  assert.equal(deathsIn(pairs, extras, { slots, encs: both }).find((x) => x.area === 'd').slot, null, 'two holders: still unknown');
+  assert.equal(deathsIn({ a: { state: 'dead', by: 'p1' } }, {}, { slots, encs }).find((x) => x.area === 'a').slot, 'p1', 'a known `by` stands');
   assert.equal(livesLeft({ lives: 3 }, slots, [{ slot: 'p1' }, { slot: 'p1' }, { slot: 'p1' }, { slot: 'p2' }]).pools.all.left, 0, 'never below 0');
   // "low" (the warning): few left after a death – not a run that starts with few, not one that is out
   const low = (total, used) => livesLeft({ lives: total }, slots, Array.from({ length: used }, () => ({ slot: 'p1' }))).pools.all.low;
@@ -221,4 +230,147 @@ test('stream API: lives left for the run and each player – null without the ru
   const own = buildState(manifest, raw({ lives: 3, livesPool: 'player' }), { now: 10 });
   assert.deepEqual(own.run.lives, { total: 3, pool: 'player', left: null, used: null });
   assert.deepEqual(own.players.map((p) => p.lives), [{ left: 2, used: 1 }, { left: 2, used: 1 }]);
+});
+
+// ---- deaths that come in by sync (review of 2.7.5): settleLives ----
+const runLines = (d) => R.feedList(d).filter((f) => f.type === 'run' && /lives left|last life/i.test(f.text));
+/** A 2.7.4 partner's death: the pair is marked dead – no lives rule on that computer, so no run end. */
+const oldClientDeath = (d, area, slot) => at(() => d.set(`pair:${area}`, { state: 'dead', by: slot, diedAt: Date.now(), cause: '' }));
+const sync = (a, b) => {
+  b.merge(a.entries);
+  a.merge(b.entries);
+};
+
+test('a death from a 2.7.4 partner that takes the last life ends the run – once, on every 2.7.5 computer alike', () => {
+  const host = mkDoc({ lives: 2 });
+  const old = mkDoc();
+  old.by = 'c';
+  sync(host, old);
+  die(host, PAIR, 'r1', 'p1');
+  sync(host, old);
+  oldClientDeath(old, 'r2', 'p2'); // the pool is out – the 2.7.4 app ends nothing
+  assert.equal(status(old), null);
+  host.merge(old.entries);
+  assert.equal(status(host), null, 'nothing ends by merging alone');
+  assert.equal(R.settleLives(host, PAIR), true);
+  assert.deepEqual([status(host).reason, status(host).by, status(host).area, status(host).auto], ['lives', 'p2', 'r2', true]);
+  assert.equal(R.settleLives(host, PAIR), false, 'idempotent');
+  assert.equal(runLines(host).length, 1);
+  // two 2.7.5 computers answering the same death at the same time: one log line after they meet
+  const a = mkDoc({ lives: 1 });
+  const b = mkDoc();
+  b.by = 'b';
+  sync(a, b);
+  const c = mkDoc();
+  c.by = 'c';
+  sync(a, c);
+  oldClientDeath(c, 'r9', 'p2');
+  a.merge(c.entries);
+  b.merge(c.entries);
+  assert.equal(R.settleLives(a, PAIR), true);
+  assert.equal(R.settleLives(b, PAIR), true);
+  sync(a, b);
+  assert.equal(runLines(a).length, 1, 'the same line on both computers');
+  assert.deepEqual(runLines(a).map((f) => f.id), runLines(b).map((f) => f.id));
+  assert.equal(status(a).reason, 'lives');
+  // the app runs it for every synced pair:/extra: change and when a run opens
+  const app = readFileSync(new URL('../web/app.mjs', import.meta.url), 'utf8');
+  assert.match(app, /if \(keys\.some\(\(k\) => k\.startsWith\('pair:'\) \|\| k\.startsWith\('extra:'\)\)\) queueMicrotask\(\(\) => settleLives\(doc, manifest\)\);/);
+  assert.match(app, /queueMicrotask\(\(\) => settleLives\(doc, manifest\)\);\n {4}return doc\.subscribe/);
+});
+
+test('two deaths made offline on two computers: the pool runs out when they meet – the run ends once', () => {
+  const a = mkDoc({ lives: 2, livesPool: 'player' });
+  const b = mkDoc();
+  b.by = 'b';
+  sync(a, b);
+  die(a, PAIR, 'r1', 'p2'); // (p2's deaths, each made on its own computer while offline)
+  die(b, PAIR, 'r2', 'p2');
+  assert.equal(status(a), null);
+  assert.equal(status(b), null);
+  sync(a, b);
+  assert.equal(R.livesFor(a, PAIR, 'p2').out, true);
+  R.settleLives(a, PAIR);
+  R.settleLives(b, PAIR);
+  sync(a, b);
+  assert.deepEqual([status(a).reason, status(a).by, status(a).area], ['lives', 'p2', 'r2']);
+  assert.equal(runLines(a).length, 1);
+  assert.ok(runLines(a)[0].text.includes('Robin has no lives left'));
+  // undo still reopens it – and settling again doesn't end it while the pool has a life
+  R.revive(a, 'r1', PAIR);
+  assert.equal(status(a), null);
+  assert.equal(R.settleLives(a, PAIR), false);
+});
+
+test('switching the lives on (or lowering them) below the deaths so far never ends the run by itself – the next death does, synced or not', () => {
+  const d = mkDoc({ lives: 5 });
+  die(d, PAIR, 'r1', 'p1');
+  die(d, PAIR, 'r2', 'p1');
+  // the board's change: stamped with the doc's clock
+  at(() => d.set('rules', R.stampLivesChange(d, d.get('rules'), { ...d.get('rules'), lives: 2 })));
+  assert.ok(d.get('rules').livesAt > 0);
+  assert.equal(R.lives(d, PAIR).pools.all.out, true);
+  assert.equal(R.settleLives(d, PAIR), false, 'the deaths from before the change don\'t end it');
+  assert.equal(status(d), null);
+  // the same on a partner's computer that gets the change by sync, and on a run opened later
+  const p = mkDoc();
+  p.by = 'p';
+  sync(d, p);
+  assert.equal(R.settleLives(p, PAIR), false);
+  // the next death – here a 2.7.4 partner's, synced – ends it
+  oldClientDeath(p, 'r3', 'p2');
+  d.merge(p.entries);
+  assert.equal(R.settleLives(d, PAIR), true);
+  assert.deepEqual([status(d).reason, status(d).area], ['lives', 'r3']);
+  // an unrelated rule change isn't stamped
+  const rules = { lives: 2, livesAt: 5, dupes: 'off' };
+  assert.equal(R.stampLivesChange(d, rules, { ...rules, dupes: 'both' }).livesAt, 5);
+  assert.notEqual(R.stampLivesChange(d, rules, { ...rules, livesPool: 'player' }).livesAt, 5);
+  assert.notEqual(R.stampLivesChange(d, { dupes: 'off' }, { dupes: 'off', lives: 3 }).livesAt, undefined);
+  const board = readFileSync(new URL('../web/views/board.mjs', import.meta.url), 'utf8');
+  assert.match(board, /const next = stampLivesChange\(doc, doc\.get\('rules'\), \{ \.\.\.\(doc\.get\('rules'\) \|\| \{\}\), \.\.\.patch \}\);/);
+  // the lives panel says why the run goes on
+  const panel = readFileSync(new URL('../web/views/nuzrules.mjs', import.meta.url), 'utf8');
+  assert.match(panel, /\$\{!ended && pools\.filter\(\(\[, p\]\) => p\.out\)/);
+  assert.match(board, /ended=\$\{!!doc\.get\('run:status'\)\}/);
+});
+
+test('"play on" after running out: settling doesn\'t end the run again – the next death (synced too) does', () => {
+  const d = mkDoc({ lives: 1 });
+  die(d, PAIR, 'r1', 'p1');
+  assert.equal(status(d).reason, 'lives');
+  at(() => R.resumeRun(d, 'p1'));
+  assert.equal(R.settleLives(d, PAIR), false);
+  assert.equal(status(d), null);
+  const p = mkDoc();
+  p.by = 'p';
+  sync(d, p);
+  oldClientDeath(p, 'r2', 'p2');
+  d.merge(p.entries);
+  assert.equal(R.settleLives(d, PAIR), true);
+  assert.equal(status(d).area, 'r2');
+  assert.equal(runLines(d).length, 2, 'a new end, a new line');
+  // a run with an end of its own (a wipe, a win) is left alone
+  const won = mkDoc({ lives: 1 });
+  won.set('run:status', { state: 'won', at: 1 });
+  oldClientDeath(won, 'r1', 'p2');
+  assert.equal(R.settleLives(won, PAIR), false);
+  assert.equal(status(won).state, 'won');
+  // no rule: nothing
+  const off = mkDoc();
+  oldClientDeath(off, 'r1', 'p2');
+  assert.equal(R.settleLives(off, PAIR), false);
+});
+
+test('lives per player: the death dialog asks only among the players who caught something there (a missed encounter fell nowhere)', () => {
+  const board = readFileSync(new URL('../web/views/board.mjs', import.meta.url), 'utf8');
+  const modal = board.slice(board.indexOf('function DeathModal'), board.indexOf('function AddArea'));
+  assert.match(modal, /const holders = slots\.filter\(\(s\) => st\.encs\[s\]\?\.outcome === 'caught' && st\.encs\[s\]\.species\);/);
+  assert.match(modal, /const by = askWho \? fell : holders\.length === 1 \? holders\[0\] : me;/);
+  // a death the app marks without a known player (an old app): the count goes by the encounters, as the dialog does
+  const d = mkDoc({ lives: 1, livesPool: 'player' });
+  d.set('enc:r1:p2', { outcome: 'caught', species: 16 });
+  d.set('enc:r1:p1', { outcome: 'missed', species: 19 });
+  at(() => R.markDead(d, PAIR, 'r1', {}));
+  assert.deepEqual([status(d)?.reason, status(d)?.by], ['lives', 'p2'], 'p2 lost it – not the host');
 });

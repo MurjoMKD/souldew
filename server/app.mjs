@@ -17,6 +17,7 @@ import { freeBytes } from './lib/zip.mjs';
 import { saveCover, deleteCover, coverFile, customCovers, coverUrl, COVER_LIMIT } from './lib/covers.mjs';
 import { inspectCtr, ncchSizeOf } from './lib/ctrrando.mjs';
 import { shinySupport, isOriginalRom } from './lib/shiny.mjs';
+import { packFormatState, packMinVersion } from '../shared/runpack.mjs';
 import { shinyThreshold } from '../shared/shiny.mjs';
 import { buildRun, listRuns, readManifest, writeManifest, runDir, runPack, runSummary, trashRun, checkPack, stripLocalRules, isDiscordWebhook, mergeDocEntries, renamePlayers } from './lib/build.mjs';
 import { SaveWatcher } from './lib/savewatch.mjs';
@@ -1147,7 +1148,14 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
   route('POST', /^\/api\/runs\/import$/, async (req) => {
     const { pack } = await readBody(req);
     // The pack comes from another computer (file, clipboard, code invite): bad input is the sender's, a 400 with a code.
-    if (!pack || typeof pack !== 'object' || pack.format !== 'soullink-studio/run-pack@1') throw httpError(400, 'Not a valid run pack', 'packInvalid');
+    // (a format of a later version: say to update – shared/runpack.mjs)
+    const format = packFormatState(pack);
+    if (format === 'newer') {
+      const version = packMinVersion(pack);
+      if (version) throw httpError(400, `This run needs souldew ${version} or newer – update souldew to join it`, 'packNewer', { version });
+      throw httpError(400, 'This run needs a newer souldew – update souldew to join it', 'packNewerAny');
+    }
+    if (format !== 'ok') throw httpError(400, 'Not a valid run pack', 'packInvalid');
     if (typeof pack.id !== 'string' || !/^[a-f0-9]{8}$/.test(pack.id)) throw httpError(400, 'The run pack is damaged (id)', 'packBroken', { what: 'id' });
     const checked = checkPack(pack);
     const existing = readManifest(pack.id);

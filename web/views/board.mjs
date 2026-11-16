@@ -8,10 +8,10 @@ import { play } from '../lib/sound.mjs';
 import {
   progression, pairState, setEncounter, markDead, revive, markExtraDead, party, live, counts, checks, feedList, feed, feedText, causeText, msg, areaName, joinNames,
   players as getPlayers, rules as getRules, levelCap, dupeOf, resumeRun, slotsOf, encounter, openAreas, runStats, isNuzlocke, logCheatRule,
-  logTypeHelpRule, logLivesRule, allowedRulesPatch, isHost, HOST_SLOT, lives as getLives, livesFor, lastWildAt, genOfRun, shinyNote,
+  logTypeHelpRule, logLivesRule, stampLivesChange, allowedRulesPatch, isHost, HOST_SLOT, lives as getLives, livesFor, lastWildAt, genOfRun, shinyNote,
 } from '../lib/run.mjs';
 import { PartyPanel, PartyGrid, TeamColumns, unhatched } from './party.mjs';
-import { HostCode } from './invitecode.mjs';
+import { HostCode, PackVersionNote } from './invitecode.mjs';
 import { RestartModal } from './restart.mjs';
 import { useStreamer } from '../lib/streamer.mjs';
 import { NuzlockeRules, Choice, TypeHelpRule, LivesRule, MissedDupesRule } from './nuzrules.mjs';
@@ -295,6 +295,7 @@ export function InviteBody({ manifest, heading = true }) {
     <p class="muted">${many
       ? t('invite.codeWhatGroup', 'Easiest: create a code for each player and tell it to them. Their app fetches the settings and the key to your room – no game data – once you allow it.')
       : t('invite.codeWhat', 'Easiest: create a code and tell it to {name}. Their app fetches the settings and the key to your room – no game data – once you allow it.', { name: partner })}</p>
+    <${PackVersionNote} manifest=${manifest} />
     <${HostCode} manifest=${manifest} />
     <details class="group"><summary>${t('invite.fileInstead', 'Or use an invite file')}</summary><div class="stack" style="padding:4px 14px 12px">
     <p class="muted">${t('invite.what', 'The invite is one small file (.soullink.json). It holds the settings and the key to your room – no game data.')}</p>
@@ -683,11 +684,13 @@ function DeathModal({ area, onClose }) {
   const n = slots.length;
   const mons = slots.map((s) => st.encs[s]).filter((e) => e?.outcome === 'caught' && e.species);
   const an = areaName(doc, manifest, area);
-  // lives per player: the life comes off the player whose Pokémon fell – ask whose it was (it may not be yours)
-  const holders = slots.filter((s) => st.encs[s]?.species);
+  // lives per player: the life comes off the player whose Pokémon fell – ask whose it was (it may not be yours).
+  // Only caught Pokémon can fall: a missed encounter keeps its species for the log, but it was never in a team.
+  // One holder: that's who fell (shared/lives.mjs deathsIn decides a death without `by` the same way).
+  const holders = slots.filter((s) => st.encs[s]?.outcome === 'caught' && st.encs[s].species);
   const askWho = getLives(doc, manifest)?.pool === 'player' && holders.length > 1;
   const [fell, setFell] = useState(holders.includes(me) ? me : holders[0] || me);
-  const by = askWho ? fell : me;
+  const by = askWho ? fell : holders.length === 1 ? holders[0] : me;
   const names = getPlayers(doc, manifest);
   return html`<${Modal} open=${true} onClose=${onClose}
     title=${n === 1 ? t('death.titleSolo', '{area}: the Pokémon dies', { area: an }) : n > 2 ? t('death.titleGroup', '{area}: the group dies', { area: an }) : t('death.title', '{area}: the pair dies', { area: an })}
@@ -877,7 +880,7 @@ export function RulesTab() {
   // Only what was set is stored – the mode's defaults (rules(doc, manifest)) fill in the rest.
   const set = (asked) => {
     const patch = allowedRulesPatch(asked, me); // the type matchup help is the host's call
-    const next = { ...(doc.get('rules') || {}), ...patch };
+    const next = stampLivesChange(doc, doc.get('rules'), { ...(doc.get('rules') || {}), ...patch });
     delete next.discordWebhook;
     if (next.preset === null) delete next.preset;
     // switching cheats on or off is everyone's business: it goes to the log like the cheats themselves
@@ -936,7 +939,7 @@ export function RulesTab() {
     </section>`}
     <section class="panel stack">
       <h2>${t('lives.title', 'Lives')}</h2>
-      <${LivesRule} value=${r.lives} pool=${r.livesPool} players=${n} onChange=${set} left=${getLives(doc, manifest)}
+      <${LivesRule} value=${r.lives} pool=${r.livesPool} players=${n} onChange=${set} left=${getLives(doc, manifest)} ended=${!!doc.get('run:status')}
         names=${Object.fromEntries(Object.entries(getPlayers(doc, manifest)).map(([s, p]) => [s, p.name]))} />
     </section>
     <section class="panel stack">

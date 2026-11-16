@@ -200,3 +200,15 @@ export function chanceText(p) {
   if (n < 1) return '<1%';
   return `${n}%`;
 }
+
+/**
+ * The foe's status condition for the catch chance, held for the battle (`key`: the foe – species, level, max HP). The
+ * Gen 3/4 readers leave `status` out for a poll when they don't find the battle struct that frame: without holding it,
+ * "status not read" flickered on and off and the chance jumped with it. `held`: the previous result (or null).
+ * → { key, read, status }: `read` once a status came in this battle (the last one stands until a new one comes).
+ */
+export function holdFoeStatus(held, key, status) {
+  if (status !== undefined) return { key, read: true, status };
+  if (held?.key === key && held.read) return held;
+  return { key, read: false, status: undefined };
+}

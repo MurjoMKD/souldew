@@ -2719,5 +2719,12 @@
   "hof.title": "Hall of Fame",
   "live.explain2": "Comparte los grandes momentos – una muerte, un wipe – como tarjeta con vuestros equipos en #live-runs en el Discord de souldew, y un run ganado con vuestro equipo final en #hall-of-fame. No se publica nada hasta que pulses el botón.",
   "buildLog.shinyRate": "Probabilidad variocolor 1/{rate} integrada",
-  "buildLog.shinyTrainers": "Probabilidad variocolor 1/{rate} integrada (también Pokémon de entrenadores)"
+  "buildLog.shinyTrainers": "Probabilidad variocolor 1/{rate} integrada (también Pokémon de entrenadores)",
+  "code.errNewer": "Este run necesita un souldew más reciente. Actualiza souldew y pide un código nuevo.",
+  "err.packNewer": "Este run necesita souldew {version} o posterior – actualiza souldew para unirte",
+  "err.packNewerAny": "Este run necesita un souldew más reciente – actualiza souldew para unirte",
+  "invite.needsVersion": "Para unirse a este run, todos necesitan souldew {version} o posterior. Las versiones anteriores no pueden abrir la invitación.",
+  "invite.needsVersionShiny": "Este run cambia la probabilidad de variocolores: para unirse, todos necesitan souldew {version} o posterior. Las versiones anteriores no pueden abrir la invitación.",
+  "lives.usedUp": "Las muertes hasta ahora ya gastan estas vidas. El run sigue – la próxima muerte lo termina.",
+  "lives.usedUpNamed": "{name}: las muertes hasta ahora ya gastan estas vidas. El run sigue – el próximo Pokémon que pierda {name} lo termina."
 }

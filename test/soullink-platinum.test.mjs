@@ -225,6 +225,13 @@ test('SoulLink got-away question: each player is asked after a wild battle witho
   assert.equal(ask('p1', { here: { gen: 4, id: 17, name: 'Route 202' } }), true, 'on Route 202 it is her first');
   assert.equal(ask('p2'), true);
   assert.equal(ask('p1', { foe: { species: 397 }, here: { gen: 4, id: 17, name: 'Route 202' } }), false, 'a dupe for Ana doesn’t count anyway');
+  // a place the app can't tell (no place sign, a sign of another generation): no question in a SoulLink – a "yes"
+  // would fail the pair for everyone, after every wild battle there
+  assert.equal(ask('p2', { here: null }), false, 'no place sign');
+  assert.equal(ask('p2', { here: { gen: 3, id: 16, name: 'Route 201' } }), false, 'not this game\'s place');
+  assert.equal(ask('p2', { here: { gen: 4, id: null, name: '?' } }), false);
+  // a known place nobody caught at yet: asked
+  assert.equal(ask('p2', { here: { gen: 4, id: 18, name: 'Route 203' } }), true);
   // the run is over: nobody is asked
   d.set('run:status', { state: 'failed', at: Date.now() });
   assert.equal(ask('p2'), false);

@@ -297,7 +297,8 @@ test('the battle helper shows the catch chance in wild battles only, with the re
   // no row where no ball can be thrown, without a catch rate, or while two opponents stand in Gen 3/4
   assert.match(panel, /if \(balls === 'none' \|\| !foe\.catchRate \|\| \(gen <= 4 && foes\.filter\(\(f\) => f\.hp > 0\)\.length > 1\)\) return null;/);
   // a game whose status the reader can't tell says so instead of pretending there is none
-  assert.match(panel, /const statusRead = foe\.status !== undefined;/);
+  assert.match(panel, /held\.current = holdFoeStatus\(held\.current, `\$\{foe\.species\}:\$\{foe\.level\}:\$\{foe\.maxHp\}`, foe\.status\);/);
+  assert.match(panel, /const \{ read: statusRead, status \} = held\.current;/);
   assert.match(panel, /t\('battle\.catchNoStatus', 'status not read'\)/);
   // the running game's entry goes to the panel (Ruby/Sapphire's bad-poison quirk)
   assert.match(play, /setLiveGame\(\(g\) => \(g === entry\.id \? g : entry\.id \|\| ''\)\);/);
@@ -382,4 +383,19 @@ test('Gen 5: the opponent\'s status from its battle struct – one u32 per condi
   // two at once can't be: no status rather than a wrong one
   struct(0x0225b638, FOE + 8, wild, { 1: 1, 2: 18 });
   assert.equal(poll().enemy.status, undefined);
+});
+
+test('the foe\'s status is held for the battle: a poll without it (Gen 3/4, struct not found that frame) doesn\'t flicker "status not read"', async () => {
+  const { holdFoeStatus } = await import('../shared/catchrate.mjs');
+  let h = holdFoeStatus(null, '16:3:14', undefined);
+  assert.deepEqual([h.read, h.status], [false, undefined], 'nothing read yet: "status not read"');
+  h = holdFoeStatus(h, '16:3:14', 0);
+  assert.deepEqual([h.read, h.status], [true, 0]);
+  h = holdFoeStatus(h, '16:3:14', undefined);
+  assert.deepEqual([h.read, h.status], [true, 0], 'one poll without it: still read');
+  h = holdFoeStatus(h, '16:3:14', 3);
+  h = holdFoeStatus(h, '16:3:14', undefined);
+  assert.deepEqual([h.read, h.status], [true, 3], 'the last status stands');
+  h = holdFoeStatus(h, '19:4:16', undefined);
+  assert.deepEqual([h.read, h.status], [false, undefined], 'another foe: nothing held');
 });
