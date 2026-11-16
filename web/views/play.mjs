@@ -1074,6 +1074,17 @@ export function GameSession({ session, mode }) {
     if (phase === 'running') emu()?.setFullTurbo?.(fullTurbo);
   }, [phase, fullTurbo]);
 
+  // Settings › Controls and › Controller: the frame reads them when it starts – a change while the game runs (in the
+  // corner, with Settings open next to it) is handed over right away. Before, it only applied to the next game start,
+  // and neither "Back to the game" nor the reset button started one (ticket #18: a re-bound DualSense didn't apply,
+  // while the app's own menus already followed the new buttons).
+  const controlsSig = JSON.stringify([status?.config?.controls || null, status?.config?.pads || null]);
+  useEffect(() => {
+    if (phase !== 'running') return;
+    const [controls, pads] = JSON.parse(controlsSig);
+    emu()?.setControls?.({ controls, pads });
+  }, [phase, controlsSig]);
+
   // A slower computer: measured every 2 s at 1×. DeSmuME first skips every other frame's rendering once it can't hold
   // 55 fps for a while (the game itself keeps its speed and timing; stays on for this session). When the game still
   // runs clearly below full speed for ~10 s, the play view says so and what helps (lib/slowdown.mjs, issue #4: Platinum

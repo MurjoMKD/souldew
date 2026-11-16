@@ -142,6 +142,11 @@ export function resolve(saved, lay = current) {
   return out;
 }
 
+/** Stored mapping → { keyCode: button } – how the native players (lib/nativeplayer.mjs, lib/ctrplayer.mjs) read keys. */
+export function keyButtons(saved, lay = current) {
+  return Object.fromEntries(Object.entries(resolve(saved, lay)).filter(([, v]) => v).map(([b, v]) => [v.keyCode, b]));
+}
+
 /** EmulatorJS controls table (EJS_defaultControls): the 12 game buttons on keyboard and controller. */
 export function ejsControls(saved, lay = current, pads = null) {
   const m = resolve(saved, lay);

@@ -66,7 +66,7 @@ function ControlsSection({ saved, save }) {
   const lay = currentLayout();
   return html`<section class="panel stack">
     <h2>${t('set.controls', 'Controls')}</h2>
-    <p class="small muted">${t('set.controlsText', 'Keyboard keys for the built-in emulator. Click a key, then press the new one. Changes apply the next time a game starts.')}</p>
+    <p class="small muted">${t('set.controlsText', 'Keyboard keys for the built-in emulator. Click a key, then press the new one. Changes apply right away, also to a game that is running.')}</p>
     <div class="row">
       <div class="seg" role="group" aria-label=${t('ctl.presets', 'Key presets')}>
         ${PRESETS.map((p) => html`<button type="button" class=${active === p.id ? 'on' : ''} aria-pressed=${active === p.id} onClick=${() => pick(p.id)}>${presetLabel(p.id)}</button>`)}
@@ -272,7 +272,7 @@ function PadSection({ saved, save, nav, saveNav }) {
   };
   return html`<section class="panel stack">
     <h2>${t('pad.title', 'Controller')}</h2>
-    <p class="small muted">${t('pad.text', 'PlayStation, Xbox, Switch and other controllers work over USB or Bluetooth. Click a button in the table, then press the new one on the controller. Changes apply the next time a game starts.')}</p>
+    <p class="small muted">${t('pad.text', 'PlayStation, Xbox, Switch and other controllers work over USB or Bluetooth. Click a button in the table, then press the new one on the controller. Changes apply right away, also to a game that is running.')}</p>
     <div class=${`pad-status ${pad ? 'on' : ''}`} role="status">
       <span class=${`led green ${pad ? 'on' : ''}`}></span>
       ${pad ? html`<span><b>${FAMILY_NAMES()[family]}</b> <span class="small faint">${padName(pad.id)}</span>${!pad.standard ? html` <span class="chip">${t('pad.nonStandard', 'unusual layout – check the buttons below')}</span>` : ''}</span>`

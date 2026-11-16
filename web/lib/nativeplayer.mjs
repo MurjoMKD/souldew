@@ -504,16 +504,34 @@ if (SYSTEM === 'nds') {
   canvas.addEventListener('pointercancel', lift);
 }
 
+// Settings › Controls and › Controller (config.controls, config.pads): read when the page starts, and again whenever
+// they change while the game runs (__emu.setControls from the play view) – the game often keeps running in the corner
+// while the player re-binds buttons in Settings, and the in-game reset doesn't load the page again (ticket #18).
+let padCfg = null; // config.pads
+let padButtons = controls.padMap(null); // game button → controller button label
+let controlsSig = '';
+function applyControls(config) {
+  const sig = JSON.stringify([config?.controls || null, config?.pads || null]);
+  if (sig === controlsSig) return; // (the play view hands them over once the game runs – mostly what was read at start)
+  controlsSig = sig;
+  keyMap = controls.keyButtons(config?.controls);
+  padCfg = config?.pads || null;
+  padButtons = controls.padMap(padCfg);
+  // what was held under the old buttons is let go (the next poll presses what is still down)
+  inp.keys = 0;
+  inp.pad = 0;
+  if (st.id) sendInput();
+}
+
 // controllers: the chosen device (lib/controls.mjs pickPad) – buttons by Settings › Controller, the left stick moves
 // like the D-pad; RT/R2 toggles turbo, LT/L2 and Home pause (as in player.html)
-function startPads(pads) {
-  const pm = controls.padMap(pads);
+function startPads() {
   const IDX = Object.fromEntries(controls.PAD_LABELS.map((l, i) => [l, i]));
   const HOT = { 7: 'turbo', 6: 'pause', 16: 'pause' };
   const held = {};
   setInterval(() => {
     if (!st.ready || document.visibilityState === 'hidden') return;
-    const pad = controls.pickPad(navigator.getGamepads?.() || [], pads?.device || null);
+    const pad = controls.pickPad(navigator.getGamepads?.() || [], padCfg?.device || null);
     if (!pad) {
       if (inp.pad) {
         inp.pad = 0;
@@ -522,7 +540,7 @@ function startPads(pads) {
       return;
     }
     let bits = 0;
-    for (const [btn, label] of Object.entries(pm)) {
+    for (const [btn, label] of Object.entries(padButtons)) {
       const i = IDX[label];
       if (i !== undefined && pad.buttons[i]?.pressed && btn in BIT) bits |= 1 << BIT[btn];
     }
@@ -593,6 +611,10 @@ window.__emu = {
   },
   speed: () => st.speed,
   setFullTurbo() {}, // the native host always runs fast-forward at full power – it doesn't hold the page back
+  /** Settings › Controls / Controller changed while the game runs: { controls, pads } as in config. */
+  setControls(config) {
+    applyControls(config);
+  },
   /** Emulated frames so far (the host's count, four times a second) – the page measures the real speed with it. */
   frames: () => st.hostFrame,
   fastForward: () => st.speed > 1,
@@ -729,9 +751,8 @@ async function start() {
   await setLang(status?.config?.lang || guessLang()).catch(() => {});
   try {
     await controls.detectLayout(status?.config?.lang);
-    const m = controls.resolve(status?.config?.controls);
-    keyMap = Object.fromEntries(Object.entries(m).filter(([, v]) => v).map(([b, v]) => [v.keyCode, b]));
-    startPads(status?.config?.pads || null);
+    applyControls(status?.config);
+    startPads();
   } catch (e) {
     st.log.push(`controls: ${e.message}`);
   }

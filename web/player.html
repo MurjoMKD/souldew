@@ -1114,6 +1114,8 @@
       cutAudio();
       return GM().restart();
     },
+    /** Settings › Controls / Controller changed while the game runs: { controls, pads } as in config. */
+    setControls: (config) => setControls(config),
     /** 1–4, or Infinity: as fast as this computer can. */
     setSpeed(ratio) {
       ratio = ratio === Infinity ? Infinity : Math.max(1, Number(ratio) || 1);
@@ -1378,7 +1380,8 @@
   // most controller-like one. EmulatorJS gives player 1 to whatever the browser lists first – on Windows that can be a
   // USB microphone (issue #2), and the real controller then pressed nothing. So its gamepad events go through here:
   // only the chosen device's reach the game, always as player 1.
-  function startPads(c, wanted) {
+  let padWanted = null; // config.pads.device – Settings › Controller › "Controller to use"
+  function startPads(c) {
     const idx = Object.fromEntries(c.BUTTONS.map((b) => [b.id, b.ejs]));
     const stick = { up: false, down: false, left: false, right: false };
     const held = {};
@@ -1393,7 +1396,7 @@
       for (const d of Object.keys(stick)) stick[d] = false;
     };
     const choose = () => {
-      const pad = c.pickPad(navigator.getGamepads?.() || [], wanted);
+      const pad = c.pickPad(navigator.getGamepads?.() || [], padWanted);
       const name = pad ? `${pad.id}_${pad.index}` : null;
       if (name !== chosen) {
         if (chosen) release(); // a new device: nothing stays pressed from the old one
@@ -1454,12 +1457,33 @@
       }
     }, 16);
   }
-  // Key mapping from Settings › Controls (config.controls) – read once before EmulatorJS boots.
+  // Settings › Controls and › Controller changed while the game runs (play.mjs → __emu.setControls): the game often
+  // keeps running in the corner while the player re-binds buttons, and a reset doesn't load this page again
+  // (ticket #18). EmulatorJS looks every key and gamepad event up in its controls table, so the new bindings go there.
+  let controlsLib = null;
+  let controlsSig = '';
+  function setControls(config) {
+    const c = controlsLib;
+    const sig = JSON.stringify([config?.controls || null, config?.pads || null]);
+    if (!c || sig === controlsSig) return; // (the play view hands them over once the game runs – mostly what was read at start)
+    controlsSig = sig;
+    const table = c.ejsControls(config?.controls, undefined, config?.pads)[0];
+    padWanted = config?.pads?.device || null;
+    release(); // what was held under the old buttons
+    // (not booted yet: EmulatorJS still takes the table it was handed – the same object, so it is updated in place)
+    if (window.EJS_defaultControls?.[0]) Object.assign(window.EJS_defaultControls[0], table);
+    const now = E()?.controls?.[0];
+    if (now && now !== window.EJS_defaultControls?.[0]) for (const [n, v] of Object.entries(table)) now[n] = { ...(now[n] || {}), ...v };
+  }
+  // Key mapping from Settings › Controls (config.controls) – read before EmulatorJS boots.
   Promise.all([import('/lib/controls.mjs'), fetch('/api/status').then((r) => r.json()).catch(() => null)])
     .then(async ([c, st]) => {
       await c.detectLayout(st?.config?.lang); // keyCodes follow the printed letters (QWERTZ, AZERTY …)
       window.EJS_defaultControls = c.ejsControls(st?.config?.controls, undefined, st?.config?.pads);
-      startPads(c, st?.config?.pads?.device || null);
+      controlsLib = c;
+      controlsSig = JSON.stringify([st?.config?.controls || null, st?.config?.pads || null]);
+      padWanted = st?.config?.pads?.device || null;
+      startPads(c);
     })
     .catch((e) => console.warn('controls not applied', e))
     .then(() => pacerReady)
