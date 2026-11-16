@@ -70,7 +70,7 @@ export function shinySupport(path, { original = true } = {}) {
   }
 }
 
-const unsupported = () => httpError(400, 'Die Shiny-Rate dieses Runs lässt sich in dieses Spiel nicht einbauen – es braucht das Originalspiel (Gen 3–5).', 'shinyUnsupported');
+const unsupported = () => httpError(400, 'This run’s shiny rate can’t be built into this game – it needs an original Gen 3–5 game', 'shinyUnsupported');
 
 /**
  * Patch the built game at `path` in place with a run's shiny setting (nothing for the games' own odds). Throws a 400

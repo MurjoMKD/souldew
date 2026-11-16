@@ -347,6 +347,8 @@
   "buildLog.romMatches": "✔ The ROM for {name} is byte-identical to your friend’s",
   "buildLog.romOtherRelease": "ℹ The ROM for {name} is another release of the game than the host’s – that’s fine, everyone plays their own copy",
   "buildLog.romPairMate": "ℹ {name} plays the other edition of the pair than the host – that’s fine, everyone plays their own copy",
+  "buildLog.shinyRate": "Shiny rate 1/{rate} built in",
+  "buildLog.shinyTrainers": "Shiny rate 1/{rate} built in (trainers’ Pokémon too)",
   "cap.at": "At the cap – don’t level further before {boss}.",
   "cap.champion": "Champion",
   "cap.eliteFour": "Elite Four",

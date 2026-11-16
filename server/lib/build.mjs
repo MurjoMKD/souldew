@@ -533,7 +533,9 @@ async function buildInto(opts, onLog, onProgress, bridge) {
         rmSync(romOut, { force: true }); // a game without the run's shiny rate must not be played or compared
         throw e;
       }
-      onLog(`Shiny-Rate 1/${manifest.shiny.rate}${manifest.shiny.trainers ? ' (auch für Trainer)' : ''} eingebaut`);
+      onLog(manifest.shiny.trainers
+        ? logLine('shinyTrainers', `Shiny rate 1/${manifest.shiny.rate} built in (trainers too)`, { rate: manifest.shiny.rate })
+        : logLine('shinyRate', `Shiny rate 1/${manifest.shiny.rate} built in`, { rate: manifest.shiny.rate }));
     }
     // (a plain 3DS game isn't hashed – 1–4 GB, and each player may play their own release; a randomized one must be
     // byte-identical, its SHA-1 came from the stream above)

@@ -2717,5 +2717,7 @@
   "hof.tag": "Hall of Fame",
   "hof.text": "Montre votre équipe gagnante dans #hall-of-fame sur le Discord de souldew – visible par tous. Rien n’est publié tant que tu n’appuies pas sur le bouton.",
   "hof.title": "Hall of Fame",
-  "live.explain2": "Partage les grands moments – une mort, un wipe – sous forme de carte avec vos équipes dans #live-runs sur le Discord de souldew, et un run gagné avec votre équipe finale dans #hall-of-fame. Rien n’est publié tant que tu n’appuies pas sur le bouton."
+  "live.explain2": "Partage les grands moments – une mort, un wipe – sous forme de carte avec vos équipes dans #live-runs sur le Discord de souldew, et un run gagné avec votre équipe finale dans #hall-of-fame. Rien n’est publié tant que tu n’appuies pas sur le bouton.",
+  "buildLog.shinyRate": "Taux de chromatiques 1/{rate} intégré",
+  "buildLog.shinyTrainers": "Taux de chromatiques 1/{rate} intégré (Pokémon des Dresseurs aussi)"
 }

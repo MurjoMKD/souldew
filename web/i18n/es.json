@@ -2717,5 +2717,7 @@
   "hof.tag": "Hall of Fame",
   "hof.text": "Presume de vuestro equipo ganador en #hall-of-fame en el Discord de souldew – a la vista de todos. No se publica nada hasta que pulses el botón.",
   "hof.title": "Hall of Fame",
-  "live.explain2": "Comparte los grandes momentos – una muerte, un wipe – como tarjeta con vuestros equipos en #live-runs en el Discord de souldew, y un run ganado con vuestro equipo final en #hall-of-fame. No se publica nada hasta que pulses el botón."
+  "live.explain2": "Comparte los grandes momentos – una muerte, un wipe – como tarjeta con vuestros equipos en #live-runs en el Discord de souldew, y un run ganado con vuestro equipo final en #hall-of-fame. No se publica nada hasta que pulses el botón.",
+  "buildLog.shinyRate": "Probabilidad variocolor 1/{rate} integrada",
+  "buildLog.shinyTrainers": "Probabilidad variocolor 1/{rate} integrada (también Pokémon de entrenadores)"
 }
