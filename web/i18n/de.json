@@ -1,6 +1,12 @@
 {
   "area.starter": "Starter",
   "battle.catchable": "Nach euren Regeln erlaubt – wenn es die erste Begegnung in diesem Gebiet ist.",
+  "battle.catch": "Fangchance",
+  "battle.catchCrit": "Kritische Fänge sind nicht eingerechnet – sie machen einen Fang nur wahrscheinlicher.",
+  "battle.catchDarkGrass": "Im dunklen Gras ist es schwerer, bis du viele Arten gefangen hast.",
+  "battle.catchNoStatus": "Status nicht gelesen",
+  "battle.catchNoStatusTip": "souldew kann Statusprobleme in diesem Spiel nicht lesen – schlafend, gefroren, paralysiert, vergiftet oder verbrannt ist es leichter zu fangen als angezeigt.",
+  "battle.catchTip": "Ein Ball, so wie dieses Spiel rechnet: Fangrate {rate}, {hp}/{max} KP, Level {level}{status}.",
   "battle.chart": "{mon} gegen Typen",
   "battle.danger": "Was {mon} trifft",
   "battle.dupe": "Dupes-Klausel: Diese Entwicklungsreihe ist schon gefangen ({area}).",

@@ -1,6 +1,12 @@
 {
   "area.starter": "Starter",
   "battle.catchable": "Autorisé par vos règles – si c’est la première rencontre de cette zone.",
+  "battle.catch": "Chance de capture",
+  "battle.catchCrit": "Les captures critiques ne sont pas comptées – elles ne font que rendre une capture plus probable.",
+  "battle.catchDarkGrass": "Dans les hautes herbes sombres, c’est plus difficile tant que tu n’as pas capturé beaucoup d’espèces.",
+  "battle.catchNoStatus": "statut non lu",
+  "battle.catchNoStatusTip": "souldew ne peut pas lire les altérations de statut dans ce jeu – endormi, gelé, paralysé, empoisonné ou brûlé, il est plus facile à capturer qu’indiqué.",
+  "battle.catchTip": "Une Ball, comme ce jeu le calcule : taux de capture {rate}, {hp}/{max} PV, niveau {level}{status}.",
   "battle.chart": "{mon} contre les types",
   "battle.danger": "Ce qui touche {mon}",
   "battle.dupe": "Clause des doublons : cette lignée d’évolution est déjà capturée ({area}).",

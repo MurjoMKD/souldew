@@ -281,6 +281,7 @@ export function GameSession({ session, mode }) {
   // the running game's generation, from its memory table entry (a DS game is Gen 4 or 5, a 3DS game 6 or 7) – the system
   // alone until the game is found
   const [liveGen, setLiveGen] = useState(null);
+  const [liveGame, setLiveGame] = useState(''); // … and its entry's id (the battle helper's catch chance: Ruby/Sapphire's quirk)
   const [osd, setOsd] = useState(null);
   const [mine, setMineState] = useState(null); // latest live party read from RAM
   // The live loop reads RAM every 700 ms – only re-render the session when something visible changed.
@@ -972,6 +973,7 @@ export function GameSession({ session, mode }) {
               liveRead.current = { boxes: Array.isArray(res.boxes), party: res.party.length };
               setLiveState({ status: 'live', entry: entry.name });
               if (Number.isInteger(entry.gen)) setLiveGen((g) => (g === entry.gen ? g : entry.gen));
+              setLiveGame((g) => (g === entry.id ? g : entry.id || ''));
               if (fc) {
                 const gen = GEN[target.system] === 4 && entry.gen === 5 ? 5 : entry.gen;
                 fc.noteParty(res.party);
@@ -1286,7 +1288,7 @@ export function GameSession({ session, mode }) {
   // the battle helper: left of the game (default) or on the right above the team, folded in or not – the player's choice
   const panelSide = panelPrefs.side === 'right' ? 'right' : 'left';
   const gameGen = liveGen || GEN[target.system] || null;
-  const battlePanel = html`<${BattlePanel} battle=${battle} mine=${myParty} gen=${gameGen} isRun=${isRun}
+  const battlePanel = html`<${BattlePanel} battle=${battle} mine=${myParty} gen=${gameGen} game=${liveGame} isRun=${isRun}
     side=${panelSide} collapsed=${panelPrefs.collapsed} onPrefs=${setPanelPrefs} noMoves=${features?.moves === 'no'} />`;
   const hasLeft = !!(isRun || here || (battle?.enemy && panelSide === 'left'));
   return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${isDs ? 'ds' : ''}`} data-v=${docVersion}>

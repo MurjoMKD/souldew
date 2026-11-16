@@ -167,7 +167,7 @@ test('Gen 2: the previous battle\'s enemy is not shown (or flashed) during the n
   assert.equal(readLiveBattle(SILVER, read, T, state).enemy, null);
   // now loaded
   m[0xd0ef] = 16; m[0xd0fc] = 3; put16be(m, 0xd0ff, 12); put16be(m, 0xd101, 12); put16be(m, 0xd0f5, 0x1234);
-  assert.deepEqual(readLiveBattle(SILVER, read, T, state).enemy, { species: 16, level: 3, hp: 12, maxHp: 12, shiny: false });
+  assert.deepEqual(readLiveBattle(SILVER, read, T, state).enemy, { species: 16, level: 3, hp: 12, maxHp: 12, shiny: false, status: 0 }); // (wEnemyMonStatus: none)
 });
 
 test('Gen 2: a stale fainted wBattleMon is not folded onto the mon now at that index', () => {
@@ -530,7 +530,7 @@ test('HGSS: the opponent comes from the battle structs, not from a party copy in
   flag(0x2100);
   sendOutAll(w, [{ ...P[0], level: 10 }, { species: 300, level: 2, hp: 14, maxHp: 14, pid: 0xbbbb0001 }]);
   const { fight, party } = poll(read, state, 3);
-  assert.deepEqual(fight.enemy, { species: 300, level: 2, hp: 14, maxHp: 14, shiny: false, moves: [33] });
+  assert.deepEqual(fight.enemy, { species: 300, level: 2, hp: 14, maxHp: 14, shiny: false, moves: [33], status: 0 }); // (BattleMon.status: none)
   assert.equal(fight.kind, 'wild', 'a wild Pokémon carries the player’s ID');
   assert.deepEqual(fight.active, { index: 0, hp: 20, maxHp: 20, status: 0 });
   // a hit shows at once, on both sides

@@ -1,17 +1,18 @@
 // SoulLink companion inside the game session: the level cap, what may still be caught, the linked groups
 // side by side (one column per player; a solo Nuzlocke gets its team list instead), a battle helper (opponent,
-// type matchups, catch rules), the shiny/legendary encounter effect and the prominent "pair died" alert.
+// type matchups, catch rules, catch chance), the shiny/legendary encounter effect and the prominent "pair died" alert.
 import { html, useState, useEffect, useRef } from '/vendor/htm-preact.mjs';
 import { useApp, Sprite, Types, HpBar, Modal, useFocusTrap } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
-import { t } from '../lib/i18n.mjs';
-import { speciesName, typeLabel, moveName, romTypesNow } from '../lib/data.mjs';
+import { t, currentLang } from '../lib/i18n.mjs';
+import { speciesName, typeLabel, moveName, romTypesNow, pokeapi } from '../lib/data.mjs';
 import {
   party as partyAreas, live, pairState, encounter, levelCap, rules as getRules, dupeOf, players as getPlayers,
   areaName, causeText, slotsOf, othersOf, openAreas, isNuzlocke, pairTypeClash, typeHelpOn,
 } from '../lib/run.mjs';
 import { statusOf, statusLabel, shownLevel } from './party.mjs';
 import { effectiveness, defenseChart, moveInfo, matchup } from '/shared/typechart.mjs';
+import { catchRow, chanceText } from '/shared/catchrate.mjs';
 import { isLegendary } from '/shared/legendaries.mjs';
 import { RestartModal } from './restart.mjs';
 import { ShareButton } from './liveshare.mjs';
@@ -279,9 +280,10 @@ const monName = (m) => (m ? m.nickname || speciesName(m.species) : '');
 
 /**
  * Battle helper: who is out there, how your moves land, what hits you, how the rest of your team would fare, and
- * whether you may catch it. `side` / `collapsed` / `onPrefs`: where the player put it (useBattlePanelPrefs).
+ * whether you may catch it – and how likely one ball does. `side` / `collapsed` / `onPrefs`: where the player put it
+ * (useBattlePanelPrefs). `game`: the running game's memory-table id (a formula quirk of Ruby/Sapphire).
  */
-export function BattlePanel({ battle, mine, gen, isRun, side = 'left', collapsed = false, onPrefs, noMoves = false }) {
+export function BattlePanel({ battle, mine, gen, game = '', isRun, side = 'left', collapsed = false, onPrefs, noMoves = false }) {
   const { doc, manifest, me, runData } = useApp();
   const moves = useMoves();
   const foe = battle?.enemy;
@@ -381,12 +383,14 @@ export function BattlePanel({ battle, mine, gen, isRun, side = 'left', collapsed
       <${Sprite} id=${f.species} shiny=${f.shiny} size=${many ? 40 : 48} gen=${gen} />
       <div class="bt-foe-body">
         <div class="bt-name"><b>${speciesName(f.species)}</b><span class="num">${t('common.lv', 'Lv')} ${f.level}</span>
+          ${foeStatus(f) && html`<span class=${`pp-st ${foeStatus(f)}`}>${statusLabel(foeStatus(f))}</span>`}
           ${f.shiny && html`<span class="bt-tag shiny">✦ ${t('routes.bonusShiny', 'Shiny')}</span>`}${isLegendary(f.species) && html`<span class="bt-tag legend">${t('battle.legendary', 'Legendary')}</span>`}</div>
         <${Types} types=${types} />
         ${f.maxHp > 0 && html`<${HpBar} hp=${f.hp} max=${f.maxHp} />`}
       </div>
     </div>`)}
     ${ruleLine}
+    ${battle.kind === 'wild' && !(rule && !rule.ok) && html`<${CatchChance} foe=${foe} foes=${foes} types=${foeTypes} gen=${gen} game=${game} balls=${battle.balls} />`}
     ${notes.length > 0 && html`<div class="bt-notes">${notes.map((x) => html`<span class="rs-chip honour" title=${t('nz.honourHint', 'The app can’t check this – it only reminds you. Keep it yourself.')}>${x}</span>`)}</div>`}
     ${!help && html`<p class="tiny faint bt-nohelp">${t('battle.helpOff', 'Type matchup help is off in this run.')}</p>`}
     ${help && !matchups && html`<p class="tiny faint bt-nohelp">${t('battle.noChart', 'souldew couldn’t read this ROM hack’s type chart – it shows the types, but no matchups rather than wrong ones.')}</p>`}
@@ -395,6 +399,46 @@ export function BattlePanel({ battle, mine, gen, isRun, side = 'left', collapsed
     ${help && matchups && foeData.map(({ f, types }) => types.length > 0 && html`<${TypeChart} key=${`c${f.species}`} title=${t('battle.chart', '{mon} against types', { mon: speciesName(f.species) })} chart=${defenseChart(types, gen, { fairy })} />`)}
     ${help && matchups && outs.map((m) => typesOf(m.species, m).length > 0 && html`<${TypeChart} key=${`m${m.key || m.species}`} title=${t('battle.myChart', 'Your {mon} against types', { mon: monName(m) })} chart=${defenseChart(typesOf(m.species, m), gen, { fairy })} mine />`)}
   </section>`;
+}
+
+// a status condition the reader saw on an opponent (not "fainted" – its HP bar says that)
+const foeStatus = (f) => (f.status ? statusOf({ status: f.status }) : '');
+
+const BALL_ITEMS = { poke: 'poke-ball', great: 'great-ball', ultra: 'ultra-ball', safari: 'safari-ball', net: 'net-ball', nest: 'nest-ball', beast: 'beast-ball' };
+/** A ball by the games' own name in the app's language (PokeAPI's item names). */
+function ballName(ball) {
+  const names = pokeapi()?.items?.names;
+  const key = BALL_ITEMS[ball];
+  return names?.[currentLang()]?.[key] || names?.en?.[key] || key;
+}
+// a chance coloured like the matchups: likely green, unlikely amber, the rest plain
+const chanceClass = (p) => (p >= 0.5 ? 'xhigh' : p < 0.1 ? 'xlow' : 'x1');
+
+/**
+ * The chance to catch the wild opponent with one ball (shared/catchrate.mjs), per the game's own formula: one compact
+ * row, what it assumes in its tooltip. Only where the catch rate is known (shared/live/parse.mjs readLiveBattle), not
+ * where no ball can be thrown (`balls` 'none': a tutorial, the Safari Zone of Gen 2–4, the Bug-Catching Contest) nor
+ * while two opponents stand in Gen 3/4 (the game doesn't let a ball be aimed then). Without a status condition from
+ * the reader (Gen 5–7) it counts none and says so.
+ */
+function CatchChance({ foe, foes, types, gen, game, balls }) {
+  if (balls === 'none' || !foe.catchRate || (gen <= 4 && foes.filter((f) => f.hp > 0).length > 1)) return null;
+  const statusRead = foe.status !== undefined;
+  const row = catchRow({ gen, rate: foe.catchRate, hp: foe.hp, maxHp: foe.maxHp, level: foe.level, status: foe.status, species: foe.species }, { game, types, safari: balls === 'safari' });
+  if (!row) return null;
+  const st = foeStatus(foe);
+  const tip = [
+    t('battle.catchTip', 'One ball, as this game calculates it: catch rate {rate}, {hp}/{max} HP, level {level}{status}.', {
+      rate: foe.catchRate, hp: foe.hp, max: foe.maxHp, level: foe.level, status: st ? `, ${statusLabel(st)}` : '',
+    }),
+    !statusRead && t('battle.catchNoStatusTip', 'souldew can’t read status conditions in this game – asleep, frozen, paralysed, poisoned or burned it’s easier to catch than shown.'),
+    gen >= 5 && t('battle.catchCrit', 'Critical captures aren’t counted – they only make a catch more likely.'),
+    gen === 5 && t('battle.catchDarkGrass', 'In dark grass it’s harder until you have caught many species.'),
+  ].filter(Boolean).join('\n');
+  return html`<div class="bt-block bt-catch" title=${tip}>
+    <h4>${t('battle.catch', 'Catch chance')}${!statusRead ? html` <span class="bt-vs">· ${t('battle.catchNoStatus', 'status not read')}</span>` : ''}</h4>
+    <ul class="bt-catch-row">${row.map(({ ball, p }) => html`<li key=${ball}><span class="bt-catch-ball">${ballName(ball)}</span><span class=${`mult ${chanceClass(p)}`}>${chanceText(p)}</span></li>`)}</ul>
+  </div>`;
 }
 
 /** One of your Pokémon that is out: how its moves land on every opponent, and what hits it. */

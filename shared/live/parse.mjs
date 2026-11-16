@@ -6,6 +6,7 @@
 // Addresses/structs: research/live_ram.md (pret disassemblies + PKHeX), shared/data/addresses.json.
 import { decryptPK4 } from '../gen4save.mjs';
 import { readGen67, regions67, readGen67Battle, battleRegions } from './gen67.mjs';
+import { catchRate3ds } from './catch3ds.mjs';
 
 const hex = (v) => (typeof v === 'string' ? parseInt(v, 16) : Number(v));
 const u16le = (b, o) => b[o] | (b[o + 1] << 8);
@@ -1000,11 +1001,38 @@ function battleGB(entry, read, T, state = {}, party = null) {
   const emax = read(hex(e.maxHpAddr), 2);
   const dvs = read(hex(e.dvsAddr), 2);
   const enemy = species && species <= 251 && level >= 1 && level <= 100 && ehp && emax
-    ? { species, level, hp: u16be(ehp, 0), maxHp: u16be(emax, 0), shiny: entry.gen === 2 && !!dvs && gbShiny(u16be(dvs, 0)) }
+    ? { species, level, hp: u16be(ehp, 0), maxHp: u16be(emax, 0), shiny: entry.gen === 2 && !!dvs && gbShiny(u16be(dvs, 0)), ...gbCatch(e, read) }
     : null;
   // half-loaded (the next trainer Pokémon being sent out): no opponent for a moment, still a battle
   const filled = enemy && enemy.maxHp > 0 && enemy.hp <= enemy.maxHp ? enemy : null;
-  return { kind: mode === 1 ? 'wild' : 'trainer', enemy: filled, active: activeGB(entry, read, T, state, party, stale) };
+  return { kind: mode === 1 ? 'wild' : 'trainer', enemy: filled, active: activeGB(entry, read, T, state, party, stale), ...gbBalls(entry, read, mode) };
+}
+
+/**
+ * What the catch chance needs from wEnemyMon (addresses.json battleEnemy, pret .sym): its status condition
+ * (wEnemyMonStatus – the low byte the Gen 3/4 readers use too: sleep turns, PSN, BRN, FRZ, PAR) and the catch rate the
+ * game loaded with it (Gen 1 wEnemyMonActualCatchRate, Gen 2 wEnemyMonCatchRate – the very byte the ball formula
+ * reads, so a hack's or the randomizer's catch rates come along, and the Safari Zone's bait and rocks in Gen 1).
+ */
+function gbCatch(e, read) {
+  const st = e.statusAddr ? read(hex(e.statusAddr), 1)?.[0] : undefined;
+  const rate = e.catchRateAddr ? read(hex(e.catchRateAddr), 1)?.[0] : undefined;
+  return {
+    ...(st !== undefined && statusOk(st) ? { status: st } : {}),
+    ...(rate >= 1 ? { catchRate: rate } : {}),
+  };
+}
+
+/**
+ * Wild battles where no ball can be thrown, or only the Safari Ball: wBattleType (pokered BATTLE_TYPE_OLD_MAN 1 /
+ * BATTLE_TYPE_SAFARI 2, pokecrystal BATTLETYPE_TUTORIAL 3 / BATTLETYPE_CONTEST 6 – the Bug-Catching Contest's Park Balls).
+ */
+function gbBalls(entry, read, mode) {
+  const at = entry.battleEnemy?.battleTypeAddr;
+  const type = mode === 1 && at ? read(hex(at), 1)?.[0] : undefined;
+  if (type === undefined) return {};
+  if (entry.gen === 1) return type === 2 ? { balls: 'safari' } : type === 1 ? { balls: 'none' } : {};
+  return type === 3 || type === 6 ? { balls: 'none' } : {};
 }
 
 /**
@@ -1201,7 +1229,10 @@ function battleGen3(entry, read, T, state = {}) {
     const e = foe ? foe.p.m : (foes.find((x) => x.m.hp > 0) || foes[0]).m;
     const meTypes = me ? battlerTypes3(T, state, me, true) : null;
     const foeTypes = foe ? battlerTypes3(T, state, foe) : null;
-    const enemy = { species: e.species, level: e.level, hp: foe ? foe.hp : e.hp, maxHp: e.maxHp, shiny: e.shiny, moves: e.moves, ...(foeTypes ? { types: foeTypes } : {}) };
+    // (the status condition: gBattleMons' status1 where the battler was found, else the party struct's – the battle
+    // writes it there with every change, BtlController_EmitSetMonData REQUEST_STATUS_BATTLE)
+    const status = foe ? foe.status : e.status;
+    const enemy = { species: e.species, level: e.level, hp: foe ? foe.hp : e.hp, maxHp: e.maxHp, shiny: e.shiny, moves: e.moves, ...(foeTypes ? { types: foeTypes } : {}), ...(statusOk(status) ? { status } : {}) };
     // wild or trainer: a wild Pokémon is created with the player's trainer ID (CreateWildMon → OT_ID_PLAYER_ID, the
     // same in pokeemerald-expansion), a trainer's with a random one (OT_ID_RANDOM_NO_SHINY) – the opponent's OT ID
     // is one of the team's (its own catches) only in a wild battle
@@ -1212,13 +1243,17 @@ function battleGen3(entry, read, T, state = {}) {
     return { kind, enemy, active };
   }
   const types = read(hex(entry.battleTypeFlagsAddr), 4);
-  const trainer = !!types && !!(u32le(types, 0) & 0x08); // BATTLE_TYPE_TRAINER
+  const flags = types ? u32le(types, 0) : 0;
+  const trainer = !!(flags & 0x08); // BATTLE_TYPE_TRAINER
   // gBattlerPartyIndexes: battler 1 is the opponent's first slot
   const idx = entry.liveBattleHp?.battlerPartyIndexesAddr ? read(hex(entry.liveBattleHp.battlerPartyIndexesAddr), 8) : null;
   const enemyIndex = idx ? u16le(idx, 2) : 0;
   const raw = read(hex(entry.enemyPartyAddr) + (enemyIndex < 6 ? enemyIndex : 0) * 100, 100);
   const m = raw && parsePk3(raw, T);
-  const enemy = m && !m.bad && m.level >= 1 && m.level <= 100 ? { species: m.species, level: m.level, hp: m.hp, maxHp: m.maxHp, shiny: m.shiny, moves: m.moves } : null;
+  // (the status condition from the party struct: the battle writes it there with every change – pokeemerald
+  // BtlController_EmitSetMonData(REQUEST_STATUS_BATTLE) → the opponent controller's SetMonData into gEnemyParty; checked
+  // live in Emerald and Sapphire: Spore on the wild Pokémon → its sleep turns here at once)
+  const enemy = m && !m.bad && m.level >= 1 && m.level <= 100 ? { species: m.species, level: m.level, hp: m.hp, maxHp: m.maxHp, shiny: m.shiny, moves: m.moves, ...(statusOk(m.status) ? { status: m.status } : {}) } : null;
   const index = idx ? u16le(idx, 0) : null;
   const active = index !== null && index < 6 ? { index } : null;
   // the types both sides have right now, from gBattleMons (searched for as in an expanded engine) – with the ROM's types
@@ -1235,8 +1270,17 @@ function battleGen3(entry, read, T, state = {}) {
     if (ft) enemy.types = ft;
     if (mt && active && mine[active.index]?.pid === me.p.pid) active.types = mt;
   }
-  return { kind: trainer ? 'trainer' : 'wild', enemy, active };
+  return { kind: trainer ? 'trainer' : 'wild', enemy, active, ...(!trainer && noBalls3(flags) ? { balls: 'none' } : {}) };
 }
+
+/**
+ * Gen 3 wild battles where no ball can be thrown (pokeemerald/pokefirered include/constants/battle.h): the Safari
+ * Zone (BATTLE_TYPE_SAFARI – its own Safari Balls and catch factor), the catching tutorials (Wally's, FireRed's old man:
+ * BATTLE_TYPE_WALLY_TUTORIAL / OLD_MAN_TUTORIAL), the first battle (Birch's bag – BATTLE_TYPE_FIRST_BATTLE) and FireRed's
+ * unidentified ghosts (BATTLE_TYPE_GHOST, bit 15 – Emerald's TWO_OPPONENTS, only ever set with a trainer – unless
+ * GHOST_UNVEILED, bit 13, is set with it).
+ */
+const noBalls3 = (f) => !!(f & (0x80 | 0x200 | 0x10)) || ((f & 0x8000) !== 0 && (f & 0x2000) === 0);
 
 /**
  * DS: during battle the heap holds extra PartyCore copies – the player's (same PIDs, live HP) and the
@@ -1514,7 +1558,7 @@ function battleDS(entry, read, T, state, party) {
   }
   state.battle = {
     kind: enemy.mons.length > 1 || foe.key.split('-')[1] !== tid ? 'trainer' : 'wild',
-    enemy: { species: foe.species, level: foe.level, hp: foeHp ?? foe.hp, maxHp: foe.maxHp, shiny: foe.shiny, moves: foe.moves },
+    enemy: { species: foe.species, level: foe.level, hp: foeHp ?? foe.hp, maxHp: foe.maxHp, shiny: foe.shiny, moves: foe.moves, ...(structs ? foeStatus5(structs.get(foe.pid)) : foeStatusDS(entry, read, state, foe)) },
     active,
     // the battle's own party copy: HP and status conditions as they are now (the save party gets them at the end)
     party: live && live.map((m) => ({ pid: m.pid, hp: m.hp, maxHp: m.maxHp, status: m.status })),
@@ -1522,6 +1566,30 @@ function battleDS(entry, read, T, state, party) {
   // (Gen 5: the battle structs' HP wins over the party copy's starting HP – every team member has one)
   if (hps && state.battle.party) state.battle.party = state.battle.party.map((m) => (hps.has(m.pid) ? { ...m, hp: hps.get(m.pid) } : m));
   return state.battle;
+}
+
+/** Gen 5: the opponent's status condition from its battle struct (gen5Sick) – none when the struct isn't found. */
+const foeStatus5 = (x) => (x && x.status !== undefined ? { status: x.status } : {});
+
+/**
+ * The opponent's status condition in Diamond/Pearl/Platinum. The heap copies don't get it during the battle (checked live
+ * in Pearl: a wild Starly put to sleep stays at 0 in its copy), the battle's own BattleMon does – the struct the ball
+ * formula reads (pokeplatinum BattleScript_CalcCatchShakes: battleMons[defender].status). The array sits where
+ * addresses.json battleActive puts battler 0 (its personality at +0x68), 0xC0 bytes per battler (HGSS's layout,
+ * pokeplatinum include/battle/battle_mon.h – checked live in Pearl: the Starly as battler 1 with status 1 after Spore).
+ * Only a struct with the opponent's PID counts (battler 1, or 3 in a double battle); none gives no status rather than a
+ * stale one.
+ */
+function foeStatusDS(entry, read, state, foe) {
+  const off = entry.gen === 4 && !entry.battleMons ? entry.battleActive?.pidOffsetFromSaveBase : null;
+  if (!off || !state.saveBase) return {};
+  const at = state.saveBase + hex(off) - 0x68;
+  for (const i of [1, 3]) {
+    const b = read(at + i * BMON, BMON);
+    const m = b && battleMonAt(b, 0);
+    if (m && m.pid === foe.pid && m.species === foe.species && statusOk(m.status)) return { status: m.status };
+  }
+  return {};
 }
 
 /**
@@ -1539,10 +1607,21 @@ function battleDS(entry, read, T, state, party) {
  * gone) and to the Pokémon's PID. Level and max HP may change (a level-up). Remembered per PID while that still holds,
  * rescanned at most every 2 s. → Map(pid → { hp, maxHp, addrs: [struct addresses, both copies] }).
  */
-const G5MON = { maxHp: 2, hp: 4, level: 12, pp: -0x0c };
+const G5MON = { maxHp: 2, hp: 4, level: 12, pp: -0x0c, sick: 0x10 };
 const G5_PK = 220;
+/**
+ * The status condition in a Gen 5 battle struct: one u32 per condition from +0x10 on, in the order of the party status
+ * numbers (gen5Status: +0x14 paralysis, +0x18 sleep, +0x1C freeze, +0x20 burn, +0x24 poison), non-zero while it lasts
+ * (found live in Black, a wild Patrat: Thunder Wave → +0x14 = 1, Spore → +0x18 = 18, Will-O-Wisp → +0x20 = 1, Toxic →
+ * +0x24 = 0x1E79 – the in-game SLP/PAR/BRN/PSN icon each time). → the Gen 3/4 bits (gen5Status), 0 for none, undefined when
+ * more than one is set (not a struct read cleanly).
+ */
+function gen5Sick(b, o) {
+  const set = [1, 2, 3, 4, 5].filter((k) => u32le(b, o + G5MON.sick + k * 4) !== 0);
+  return set.length > 1 ? undefined : gen5Status(set[0] || 0);
+}
 function gen5Struct(read, a, m, copies) {
-  const b = read(a + G5MON.pp, 0x0c + 14);
+  const b = read(a + G5MON.pp, 0x0c + G5MON.sick + 0x18);
   if (!b) return null;
   const o = -G5MON.pp;
   const maxHp = u16le(b, o + G5MON.maxHp);
@@ -1557,7 +1636,7 @@ function gen5Struct(read, a, m, copies) {
   }
   if (!inCopy) return null;
   const pid = read(pp, 4);
-  return pid && u32le(pid, 0) === m.pid ? { hp, maxHp } : null;
+  return pid && u32le(pid, 0) === m.pid ? { hp, maxHp, status: gen5Sick(b, o) } : null;
 }
 function gen5Structs(read, state, mons, copies) {
   const cache = state.g5mons || (state.g5mons = new Map()); // pid → [struct addresses]
@@ -1652,7 +1731,8 @@ function gen5Active(read, state, party, hpOf, structs) {
 function structBattle({ me, foe, foe2, ally }, party, live) {
   // a double battle: the one still standing (battler 1 first) leads, and both are listed while both stand
   const f = foe.hp === 0 && foe2?.hp > 0 ? foe2 : foe;
-  const enemyOf = (x) => ({ species: x.species, level: x.level, hp: x.hp, maxHp: x.maxHp, shiny: shinyOf(x.pid, x.otId), moves: x.moves });
+  // (status: BattleMon.status, what the ball formula reads – pokeheartgold CalculateBallShakes)
+  const enemyOf = (x) => ({ species: x.species, level: x.level, hp: x.hp, maxHp: x.maxHp, shiny: shinyOf(x.pid, x.otId), moves: x.moves, ...(statusOk(x.status) ? { status: x.status } : {}) });
   const index = party.findIndex((p) => p.pid === me.pid);
   // the player's second battler in a double battle – only when it's one of the player's own (a multi battle's
   // partner sends out theirs)
@@ -1700,13 +1780,29 @@ export function inBattleFlag(entry, read) {
 export function readLiveBattle(entry, read, T, state = {}, party = null) {
   if (!entry) return null;
   try {
-    if (entry.gen <= 2) return holdEnemy(state, entry.battleEnemy && entry.inBattle ? battleGB(entry, read, T, state, party) : null);
-    if (entry.gen === 3) return holdEnemy(state, entry.enemyPartyAddr && entry.inBattle ? battleGen3(entry, read, T, state) : null);
-    if (entry.gen >= 6) return readGen67Battle(entry, read, party);
-    return battleDS(entry, read, T, state, party);
+    if (entry.gen <= 2) return withCatchRates(holdEnemy(state, entry.battleEnemy && entry.inBattle ? battleGB(entry, read, T, state, party) : null), entry, T);
+    if (entry.gen === 3) return withCatchRates(holdEnemy(state, entry.enemyPartyAddr && entry.inBattle ? battleGen3(entry, read, T, state) : null), entry, T);
+    if (entry.gen >= 6) return withCatchRates(readGen67Battle(entry, read, party), entry, T);
+    return withCatchRates(battleDS(entry, read, T, state, party), entry, T);
   } catch {
     return null;
   }
+}
+
+/**
+ * The opponents' catch rates for the catch chance (shared/catchrate.mjs): Gen 1/2 read one from RAM (gbCatch); the
+ * others the species' from the running ROM's table (T.types3.catchRates, shared/live/romtypes.mjs – a hack's and the
+ * randomizer's own) or, for the 3DS games, PKHeX's table of that game (catch3ds.mjs). Unknown: none.
+ */
+function withCatchRates(fight, entry, T) {
+  if (!fight?.enemy) return fight;
+  const rateOf = (f) => {
+    if (!f?.species || f.catchRate) return f;
+    const r = entry.gen >= 6 ? catchRate3ds(entry.id, f.species) : T?.types3?.catchRates?.[f.species];
+    return r ? { ...f, catchRate: r } : f;
+  };
+  // (a new object: the DS reader keeps its last battle in its state and hands it out again)
+  return { ...fight, enemy: rateOf(fight.enemy), ...(fight.foes ? { foes: fight.foes.map(rateOf) } : {}) };
 }
 
 /**

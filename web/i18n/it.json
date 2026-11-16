@@ -1,6 +1,12 @@
 {
   "area.starter": "Starter",
   "battle.catchable": "Consentito dalle vostre regole – se è il primo incontro in questa zona.",
+  "battle.catch": "Probabilità di cattura",
+  "battle.catchCrit": "Le catture critiche non sono conteggiate: rendono solo una cattura più probabile.",
+  "battle.catchDarkGrass": "Nell’erba scura è più difficile finché non hai catturato molte specie.",
+  "battle.catchNoStatus": "stato non letto",
+  "battle.catchNoStatusTip": "souldew non può leggere le condizioni di stato in questo gioco: addormentato, congelato, paralizzato, avvelenato o scottato è più facile da catturare di quanto mostrato.",
+  "battle.catchTip": "Una Ball, come la calcola questo gioco: tasso di cattura {rate}, {hp}/{max} PS, livello {level}{status}.",
   "battle.chart": "{mon} contro i tipi",
   "battle.danger": "Cosa colpisce {mon}",
   "battle.dupe": "Clausola dei doppioni: questa linea evolutiva è già stata catturata ({area}).",
