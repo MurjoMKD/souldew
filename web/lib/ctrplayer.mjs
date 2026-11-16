@@ -217,7 +217,7 @@ layout();
 // of the bandwidth (the sped-up sound is low-passed before it is sped up) – at 4× muffled music.
 // The worklet keeps more in hand than for the fast player: the sound comes between pictures of up to 7 MB.
 const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
-const audio = { ctx: null, node: null, gain: null, key: null, events: [], probes: [], taps: [], rate: 0, exact: false, win: null, last: null };
+const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [], taps: [], rate: 0, exact: false, win: null, last: null };
 /**
  * The worklet's buffer (frames, lib/jitterring.mjs): start / restart once 60 ms are there – more after each gap, up to
  * 240 ms, for a PC whose sound arrives late now and then –, read a little faster above 200 ms (the late sound queued
@@ -270,6 +270,17 @@ async function startAudio(rate) {
       if (ev.type === 'state' || ev.type === 'error') {
         audio.events.push({ t: Math.round(performance.now()), ...ev });
         if (audio.events.length > 40) audio.events.shift();
+      }
+      // every mixer decision (loops found, switches, song keys) to the page's music log for "Save diagnostics" – as player.html;
+      // without it a native player's diagnostics showed only the speed steps (a Windows player's Pokémon Y report, 2.7.4)
+      if (ev.type !== 'probe') {
+        for (const f of audio.subs) {
+          try {
+            f({ t: Math.round(performance.now()), ...ev });
+          } catch {
+            // the page's problem
+          }
+        }
       }
     };
     audio.gain = audio.ctx.createGain();
@@ -725,6 +736,11 @@ window.__emu = {
     tellAudio({ type: 'song', key });
   },
   /** The mixer's last state changes (diagnostics). */
+  /** Every mixer event from now on (the page keeps them for "Save diagnostics"); returns the unsubscribe. */
+  onAudio(f) {
+    audio.subs.add(f);
+    return () => audio.subs.delete(f);
+  },
   turboAudio: () => ({ mode: st.turboAudio, key: audio.key, events: audio.events.slice(-10) }),
   /** Tests: what the mixer plays right now ({ playing, turbo, key, … }), or null without sound. */
   audioProbe() {

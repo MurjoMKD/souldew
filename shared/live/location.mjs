@@ -281,7 +281,7 @@ export function readMusicInfo(maps, entry, read, ctx = {}) {
  * ('p<gen>.<zone>', the u16 at the entry's zoneAddr – as readCtr) – and a battle is 'battle' (MusicKeyTracker). Without
  * any key the mixer could only tell a song change by a silence, and a 3DS game hardly ever falls silent (the ambience
  * goes on, a battle starts straight out of the field music): "Music continues" kept the battle's loop through the battle's
- * end and the next fast-forwards (a Windows player, Pokémon Sun, 2.7.4). Only once the live reader found the party at one
+ * end and the next fast-forwards (a Windows player, Pokémon Y, 2.7.4). Only once the live reader found the party at one
  * of the game's addresses (`ctx.state.g67Len`, as the location sign): before that the update version – and with it
  * whether zoneAddr holds the zone – is unknown, and a key that changes all the time switches the music all the time.
  */

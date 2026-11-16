@@ -198,7 +198,7 @@ layout();
 // mixer keeps the music going at normal speed (Settings › sound while fast-forwarding), for DS games synthesized from the
 // ROM's own sound archive (lib/sdat-worker.mjs), as in player.html.
 const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
-const audio = { ctx: null, node: null, gain: null, key: null, events: [], probes: [] };
+const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [] };
 function tellAudio(m) {
   audio.node?.port.postMessage(m);
 }
@@ -222,6 +222,17 @@ async function startAudio(rate) {
       if (ev.type === 'state' || ev.type === 'error') {
         audio.events.push({ t: Math.round(performance.now()), ...ev });
         if (audio.events.length > 40) audio.events.shift();
+      }
+      // every mixer decision (loops found, switches, song keys) to the page's music log for "Save diagnostics" – as player.html;
+      // without it a native player's diagnostics showed only the speed steps (a Windows player's Pokémon Y report, 2.7.4)
+      if (ev.type !== 'probe') {
+        for (const f of audio.subs) {
+          try {
+            f({ t: Math.round(performance.now()), ...ev });
+          } catch {
+            // the page's problem
+          }
+        }
       }
     };
     audio.gain = audio.ctx.createGain();
@@ -641,6 +652,11 @@ window.__emu = {
     sdatSong(key);
   },
   /** The mixer's last state changes (diagnostics). */
+  /** Every mixer event from now on (the page keeps them for "Save diagnostics"); returns the unsubscribe. */
+  onAudio(f) {
+    audio.subs.add(f);
+    return () => audio.subs.delete(f);
+  },
   turboAudio: () => ({ mode: st.turboAudio, key: audio.key, sdat: sdat.ready, events: audio.events.slice(-10) }),
   /** Tests: what the mixer plays right now ({ playing, turbo, key, … }), or null without sound. */
   audioProbe() {
