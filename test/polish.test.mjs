@@ -198,7 +198,7 @@ test('missed encounter question: only after a wild battle without a catch that t
   assert.equal(ask({ boxes: false, partySize: 6 }), false, 'full party and the PC is not read live: a catch would be invisible');
   assert.equal(ask({ boxes: false, partySize: 5 }), true, 'room in the party: a catch shows up there');
   assert.equal(ask({ foe: { ...foe, shiny: true } }), false, 'shiny clause');
-  assert.equal(ask({}, PAIR), true, 'a SoulLink asks each player too (2.7.5)');
+  assert.equal(ask({}, PAIR), true, 'a SoulLink asks each player too (2.8.0)');
   // where the place sign says the battle was: asked only while that area is still open for the player
   const route29 = { gen: 4, id: 177, name: 'Route 29' };
   assert.equal(ask({ here: route29 }), true);

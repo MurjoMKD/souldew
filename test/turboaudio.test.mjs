@@ -1638,7 +1638,7 @@ test('a battle key that comes 2 s late at 1× (the battle reader): nothing of th
     const e = m.lib.get('p7.20');
     if (!e) continue;
     kept++;
-    // (until 2.7.5 up to 11 % of the entry – the battle's first ~0.6 s, played on the route every time the bed came round)
+    // (before 2.8.0 up to 11 % of the entry – the battle's first ~0.6 s, played on the route every time the bed came round)
     assert.equal(battleShare(e), 0, `phase ${phase}: ${(battleShare(e) * 100).toFixed(0)} % of the route’s entry is battle music`);
   }
   assert.ok(kept >= 10, `the route’s entry is still kept on most visits (${kept} of 14)`);

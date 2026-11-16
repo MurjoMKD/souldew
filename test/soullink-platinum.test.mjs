@@ -147,7 +147,7 @@ test('board rules: the dupes clause says what counts – whose catches, and that
 });
 
 // ---------------------------------------------------------------------------
-// Missed encounters with their species (2.7.5): the dupes clause's switch, and the got-away question in a SoulLink
+// Missed encounters with their species (2.8.0): the dupes clause's switch, and the got-away question in a SoulLink
 
 /** Ana caught a Starly on Route 201; Ben's wild Bidoof there got away and was entered as missed, with its species. */
 function missedPair(rules, { by = 'b' } = {}) {

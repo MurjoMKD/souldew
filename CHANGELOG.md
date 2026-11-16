@@ -2,7 +2,7 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
-## 2.7.5
+## 2.8.0
 
 - **Catch chance in wild battles** (a community idea). The battle help now shows your chance to catch the wild
   Pokémon with a Poké Ball, Great Ball and Ultra Ball – plus a Net, Nest or Beast Ball where it helps. It is worked out
