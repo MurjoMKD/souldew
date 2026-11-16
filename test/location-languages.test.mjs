@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { readLocation, locationLabel } from '../shared/live/location.mjs';
 import { romData } from '../server/lib/romloc.mjs';
 
@@ -83,7 +84,7 @@ function yellowRom() {
 }
 
 test('Gen 1: Yellow through the real path – its ROM data (249 maps) checks the copy of the header, Summer Beach House too', () => {
-  const r = romData(yellowRom(), new URL('../shared', import.meta.url).pathname);
+  const r = romData(yellowRom(), fileURLToPath(new URL('../shared', import.meta.url)));
   // (the memory table entry wasn't found from Yellow's header, and 248 headers never matched its table of 249 maps:
   // no ROM headers at all – the place came from the unchecked English wCurMap)
   assert.equal(r.gbMaps?.headers?.length, 249, 'the ROM data hands over Yellow\'s headers');
