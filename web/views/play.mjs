@@ -344,8 +344,8 @@ export function GameSession({ session, mode }) {
   volRef.current = volume;
   const pendingRef = useRef(null);
   const pendingTimer = useRef(null);
-  // Missed encounters (Nuzlocke): every Pokémon key seen this session, when the last new one turned up, and when
-  // the current wild battle began – a catch is a new key after the start of the battle.
+  // Missed encounters (solo Nuzlocke and SoulLink): every Pokémon key seen this session, when the last new one turned
+  // up, and when the current wild battle began – a catch is a new key after the start of the battle.
   const [missed, setMissed] = useState(null); // { species, level } – the prompt on the screen
   const monKeys = useRef(null);
   const newMonAt = useRef(0);
@@ -371,10 +371,14 @@ export function GameSession({ session, mode }) {
   // Where you are and whom you fight, for the stream overlays (shared/overlay.mjs "where:<slot>"): written only
   // when the place or the battle changes, never per frame – the partners get it with the next sync like the rest.
   const whereKey = here ? `${here.gen}.${here.id}.${battle?.kind || ''}.${battle?.enemy?.species || ''}` : '';
+  // `wild`: the last wild Pokémon fought at this place (set when its battle ends, below) – it stays with the place
+  // until the player moves on; the board's "Missed" fills it in (lib/run.mjs lastWildAt).
   useEffect(() => {
     if (!isRun || !doc || !me || !here) return;
     const fight = battle?.enemy?.species ? { kind: battle.kind || 'wild', species: battle.enemy.species, level: battle.enemy.level ?? null } : null;
-    doc.set(`where:${me}`, { gen: here.gen, id: here.id, name: here.name, at: Date.now(), ...(fight ? { fight } : {}) });
+    const was = doc.get(`where:${me}`, null);
+    const wild = was?.wild && was.gen === here.gen && was.id === here.id ? was.wild : null;
+    doc.set(`where:${me}`, { gen: here.gen, id: here.id, name: here.name, at: Date.now(), ...(fight ? { fight } : {}), ...(wild ? { wild } : {}) });
   }, [whereKey, isRun, doc, me]);
   const stateUrl = (slot) => `/api/saves/state?id=${encodeURIComponent(target.stateId)}&slot=${slot}`;
 
@@ -1020,13 +1024,15 @@ export function GameSession({ session, mode }) {
     };
   }, [phase, target.key]);
 
-  // Nuzlocke: a wild battle ended without a catch → the area of that encounter is spent. It asks (without stopping
-  // the game) and offers the areas still open – the place sign's area first, where the game shows one. No question when
-  // the Pokémon was caught after all, a shiny (shiny clause) or a dupe (it doesn't count anyway).
+  // A wild battle ended without a catch → the area of that encounter is spent (solo Nuzlocke; in a SoulLink each
+  // player's own encounter – the pair fails, and the partners get it with the next sync). It asks (without stopping the
+  // game) and offers the areas still open – the place sign's area first, where the game shows one. No question when
+  // the Pokémon was caught after all, a shiny (shiny clause), a dupe (it doesn't count anyway) or when this player's
+  // encounter of the place is entered already.
   useEffect(() => {
     const prev = prevBattle.current;
     prevBattle.current = battle;
-    if (!solo) return undefined;
+    if (!isRun) return undefined;
     if (battle?.enemy) {
       if (!prev?.enemy) {
         wildFrom.current = Date.now();
@@ -1038,7 +1044,9 @@ export function GameSession({ session, mode }) {
     }
     if (battle || !prev?.enemy?.species) return undefined;
     const foe = prev.enemy;
-    const fight = { foe, wild: wildOnly.current && prev.kind === 'wild', from: wildFrom.current };
+    const fight = { foe, wild: wildOnly.current && prev.kind === 'wild', from: wildFrom.current, here };
+    const where = fight.wild && doc && me && here ? doc.get(`where:${me}`, null) : null;
+    if (where && where.gen === here.gen && where.id === here.id) doc.set(`where:${me}`, { ...where, wild: { species: foe.species, level: foe.level ?? null, at: Date.now() } });
     const id = setTimeout(() => {
       if (!doc || !manifest) return;
       const seen = liveRead.current;
@@ -1046,7 +1054,7 @@ export function GameSession({ session, mode }) {
       setMissed({ species: foe.species, level: foe.level ?? null });
     }, MISSED_WAIT);
     return () => clearTimeout(id);
-  }, [battle, solo]);
+  }, [battle, isRun]);
   // a catch that took longer (nickname screen, full party → box): no question anymore
   useEffect(() => {
     if (missed && newMonAt.current >= wildFrom.current) setMissed(null);

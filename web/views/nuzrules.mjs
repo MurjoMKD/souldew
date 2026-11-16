@@ -14,9 +14,13 @@ const presets = () => [
 
 const areaOptions = () => [['area', t('nzr.optArea', 'Count as the area')], ['free', t('nzr.optFree', 'Free extra')], ['banned', t('nzr.optBanned', 'Not allowed')]];
 
+// the dupes clause's switch – one text for the SoulLink rules (MissedDupesRule) and the solo ones (ruleDefs)
+const missedDupesLabel = () => t('rules.missedDupes', 'Fled or knocked-out encounters count as dupes');
+const missedDupesHint = () => t('rules.missedDupesHint', 'Like a catch, once it’s known which Pokémon it was – souldew notes it when it sees the battle.');
+
 /**
  * Every rule once: `check` = on/off, `choice` = one of `options`. `section` groups them on the board; `honour`
- * marks rules the app can't see (it only reminds you).
+ * marks rules the app can't see (it only reminds you); `when`: shown only while it applies (the other rules).
  */
 const ruleDefs = () => [
   { key: 'autoDeath', kind: 'check', section: 'core', label: t('nzr.autoDeath', 'Fainted means dead'), hint: t('nzr.autoDeathHint', 'Marked dead by the app as soon as its HP hits 0.') },
@@ -26,6 +30,7 @@ const ruleDefs = () => [
   { key: 'deathless', kind: 'check', section: 'core', label: t('nzr.deathless', 'Deathless'), hint: t('nzr.deathlessHint', 'The first death ends the run.') },
   { key: 'dupes', kind: 'choice', section: 'clauses', label: t('rules.dupes', 'Dupes clause'), hint: t('nz.dupesHint', 'Already caught it? Keep looking – dead ones count too.'),
     options: [['off', t('rules.off', 'Off')], ['species', t('nzr.dupesSpecies', 'Same species')], ['line', t('nzr.dupesLine', 'Whole evolution line')]] },
+  { key: 'missedDupes', kind: 'check', section: 'clauses', when: (v) => v.dupes !== 'off', label: missedDupesLabel(), hint: missedDupesHint() },
   { key: 'shinyClause', kind: 'check', section: 'clauses', label: t('nzr.shiny', 'Shiny clause'), hint: t('nz.shinyHint', 'A shiny may always be caught, even on a used area – a bonus.') },
   { key: 'gifts', kind: 'choice', section: 'clauses', label: t('nzr.gifts', 'Gifts & eggs'), hint: t('nz.giftsHint', 'Starter aside: eggs, trades, fossils and gift Pokémon.'), options: areaOptions() },
   { key: 'statics', kind: 'choice', section: 'clauses', label: t('nzr.statics', 'Static encounters'), hint: t('nz.staticsHint', 'Legendaries and fixed encounters like Sudowoodo or Snorlax.'), options: areaOptions() },
@@ -52,6 +57,14 @@ export function Choice({ value, options, onChange, label }) {
 function RuleCheck({ checked, onChange, label, hint, honour, disabled }) {
   return html`<label class="check"><input type="checkbox" checked=${!!checked} disabled=${disabled} onChange=${(e) => onChange(e.target.checked)} />
     <span>${label}${honour && html` <${Honour} />`}${hint && html`<span class="hint">${hint}</span>`}</span></label>`;
+}
+
+/**
+ * "Fled or knocked-out encounters count as dupes" (SoulLink rules on the board; the solo editor has it in ruleDefs): a
+ * missed encounter whose Pokémon is known uses up its evolution line like a catch (lib/run.mjs dupeOf).
+ */
+export function MissedDupesRule({ value, onChange }) {
+  return html`<${RuleCheck} checked=${value} onChange=${onChange} label=${missedDupesLabel()} hint=${missedDupesHint()} />`;
 }
 
 /** One rule with its title, hint and control (board layout). */
@@ -90,7 +103,7 @@ export function NuzlockeRules({ value, onChange, variant = 'board' }) {
   // editing a toggle on the board: no longer a preset (presetOf tells whether it still happens to match one);
   // in the wizard you are in "Custom" already
   const edit = (patch) => onChange({ ...patch, preset: wizard ? 'custom' : null });
-  const defs = ruleDefs();
+  const defs = ruleDefs().filter((d) => !d.when || d.when(value));
   const control = (d) => (d.kind === 'check'
     ? html`<${RuleCheck} checked=${value[d.key]} onChange=${(v) => edit({ [d.key]: v })} label=${d.label} hint=${d.hint} honour=${d.honour} />`
     : html`<${Choice} label=${d.label} value=${shown(d.key, value[d.key])} onChange=${(v) => edit({ [d.key]: v })} options=${d.options} />`);

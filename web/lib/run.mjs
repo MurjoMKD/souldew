@@ -284,9 +284,21 @@ export function setEncounter(doc, manifest, area, slot, data, { quiet, by } = {}
   }
   if (!quiet && data && !prev) {
     feedMsg(doc, manifest, data.outcome === 'missed'
-      ? { type: 'missed', slot, area, msg: msg('feed.missed', '{area}: encounter missed', { area: { area } }) }
+      ? { type: 'missed', slot, area, ...(data.species ? { species: data.species } : {}), msg: missedMsg(doc, manifest, area, data.species) }
       : { type: 'catch', slot, area, species: data.species, msg: msg('feed.caught', '{area}: caught {name}', { area: { area }, name: { species: data.species } }) });
   }
+}
+
+/**
+ * The log line of a missed encounter – with the Pokémon when it is known. In a SoulLink whose rules let a miss cost
+ * the whole pair (group), the line says so: it is what the partners read in their toast.
+ */
+function missedMsg(doc, manifest, area, species) {
+  if (!species) return msg('feed.missed', '{area}: encounter missed', { area: { area } });
+  const vars = { area: { area }, name: { species } };
+  const n = slotsOf(manifest).length;
+  if (n === 1 || rules(doc, manifest).failKillsPair === false) return msg('feed.missedSpecies', '{area}: {name} got away – the area is spent', vars);
+  return n > 2 ? msg('feed.missedGroup', '{area}: {name} got away – the group is lost', vars) : msg('feed.missedPair', '{area}: {name} got away – the pair is lost', vars);
 }
 
 /**
@@ -388,9 +400,7 @@ export function logLivesRule(doc, manifest, by, r) {
 export function markMissed(doc, manifest, area, slot, { species = null, by } = {}) {
   if (encounter(doc, area, slot)) return false;
   setEncounter(doc, manifest, area, slot, { outcome: 'missed', species, ...(by ? { by } : {}) }, { quiet: true });
-  feedMsg(doc, manifest, { type: 'missed', slot, area, ...(species ? { species } : {}), msg: species
-    ? msg('feed.missedSpecies', '{area}: {name} got away – the area is spent', { area: { area }, name: { species } })
-    : msg('feed.missed', '{area}: encounter missed', { area: { area } }) });
+  feedMsg(doc, manifest, { type: 'missed', slot, area, ...(species ? { species } : {}), msg: missedMsg(doc, manifest, area, species) });
   return true;
 }
 
@@ -400,19 +410,33 @@ export function openAreas(doc, manifest, slot = 'p1') {
 }
 
 /**
- * Nuzlocke: ask whether the wild battle that just ended spent an area? Not when a new Pokémon turned up since it
- * began (`newMonAt` ≥ `from`), when it was a trainer battle at any point (`wild` false – Gen 4 tells them apart by a
- * heuristic that can flicker), for a shiny (clause) or a dupe, when the run is over, when a curated route list has
- * no open area left, or when a catch could have gone unseen: a full party sends it to the PC, and the PC is only
- * read live in some games (`boxes` false).
- * o: { foe: {species, shiny}, wild, from, newMonAt, boxes, partySize }
+ * Ask `slot` whether the wild battle that just ended spent an area (solo Nuzlocke and every player of a SoulLink – a
+ * miss there fails the pair)? Not when a new Pokémon turned up since it began (`newMonAt` ≥ `from`), when it was a
+ * trainer battle at any point (`wild` false – Gen 4 tells them apart by a heuristic that can flicker), for a shiny
+ * (clause) or a dupe, when the run is over, when the place sign's area (`here`, where the battle ended) already has
+ * this player's encounter – no first encounter then –, when a curated route list has no open area left, or when a
+ * catch could have gone unseen: a full party sends it to the PC, and the PC is only read live in some games (`boxes`
+ * false).
+ * o: { foe: {species, shiny}, wild, from, newMonAt, boxes, partySize, here: {gen, id, name} }
  */
-export function missedQuestion(doc, manifest, rd, slot, { foe, wild, from = 0, newMonAt = 0, boxes = true, partySize = 0 } = {}) {
-  if (runMode(manifest) !== 'nuzlocke' || doc.get('run:status', null) || !wild || !foe?.species) return false;
+export function missedQuestion(doc, manifest, rd, slot, { foe, wild, from = 0, newMonAt = 0, boxes = true, partySize = 0, here = null } = {}) {
+  if (!manifest || doc.get('run:status', null) || !wild || !foe?.species) return false;
   if (newMonAt >= from || (!boxes && partySize >= 6)) return false;
   if (foe.shiny && rules(doc, manifest).shinyClause) return false;
   if (dupeOf(doc, manifest, rd, foe.species, slot)) return false;
+  const at = here ? areaForPlace(doc, manifest, genOfRun(manifest, rd), here) : null;
+  if (at && encounter(doc, at, slot)) return false;
   return !profileOf(manifest).curated || openAreas(doc, manifest, slot).some((a) => a.key !== 'starter');
+}
+
+/**
+ * The wild Pokémon `slot` last fought at the place of `area` ({ species, level, at } or null) – the play view keeps it
+ * with the place sign ("where:<slot>".wild, until the player moves on). The board's "Missed" fills it in.
+ */
+export function lastWildAt(doc, manifest, gen, area, slot) {
+  const w = doc.get(`where:${slot}`, null);
+  if (!w?.wild?.species || !area) return null;
+  return areaForPlace(doc, manifest, gen, w) === area ? w.wild : null;
 }
 
 /**
@@ -772,18 +796,27 @@ function sameDupe(r, rd, species, slot, other, s) {
   return !!rd?.familyRoot && rd.familyRoot(other, s) === rd.familyRoot(species, slot);
 }
 
+/**
+ * Is `species` a dupe for `slot`: { area, slot } of the encounter that has its line (species) already, or null.
+ * Every catch counts – also one of a failed or dead pair; whose catches is the rule's choice ('player' / 'both').
+ * A missed encounter (fled, knocked out) counts only with `missedDupes` on and its species known: then
+ * `missed: true` – a catch of the line wins over it.
+ */
 export function dupeOf(doc, manifest, rd, species, slot, exceptArea) {
   const r = rules(doc, manifest);
   if (r.dupes === 'off' || !species) return null;
   const slots = r.dupes === 'both' ? slotsOf(manifest) : [slot];
+  let missed = null;
   for (const a of progression(doc, manifest)) {
     if (a.kind !== 'area' || a.key === exceptArea) continue;
     for (const s of slots) {
       const e = encounter(doc, a.key, s);
-      if (e?.outcome === 'caught' && e.species && sameDupe(r, rd, species, slot, e.species, s)) return { area: a.key, slot: s };
+      if (!e?.species || !sameDupe(r, rd, species, slot, e.species, s)) continue;
+      if (e.outcome === 'caught') return { area: a.key, slot: s };
+      if (e.outcome === 'missed' && r.missedDupes && !missed) missed = { area: a.key, slot: s, missed: true };
     }
   }
-  return null;
+  return missed;
 }
 
 // ---------------------------------------------------------------------------
@@ -808,13 +841,13 @@ function dupeInPass(doc, manifest, rd, species, slot, exceptArea, writes) {
   const r = rules(doc, manifest);
   if (r.dupes === 'off' || !species || (r.dupes !== 'species' && !rd?.familyRoot)) return null;
   const found = dupeOf(doc, manifest, rd, species, slot, exceptArea);
-  if (found) return found;
+  if (found && !found.missed) return found;
   for (const [k, e] of Object.entries(writes)) {
     const m = /^enc:(.+):(p[1-4])$/.exec(k);
     if (!m || m[1] === exceptArea || (r.dupes !== 'both' && m[2] !== slot)) continue;
     if (e?.outcome === 'caught' && e.species && sameDupe(r, rd, species, slot, e.species, m[2])) return { area: m[1], slot: m[2] };
   }
-  return null;
+  return found;
 }
 
 /**
@@ -1002,7 +1035,7 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
       }
     } else {
       inbox.push({ mon: m, guess, occupied: !!occupied, reason: !guess ? (hatched ? 'egg' : special ? 'special' : 'unknown') : occupied ? 'occupied' : shinyHold ? 'shiny' : dupe ? 'dupe' : 'manual',
-        ...(dupe ? { dupeArea: dupe.area } : {}),
+        ...(dupe ? { dupeArea: dupe.area, ...(dupe.missed ? { dupeMissed: true } : {}) } : {}),
         where: m.metLocation !== null && m.metLocation !== undefined ? locationName(gen, m.metLocation) : '' });
     }
   }

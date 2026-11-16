@@ -124,7 +124,7 @@ export function areaOfHere(doc, manifest, gen, here) {
 }
 
 function chipFor(st, enc) {
-  if (st === 'dead' && enc?.species) return { cls: 'dead', text: t('loc.dead', 'Dead: {species}', { species: enc.nickname || speciesName(enc.species) }) };
+  if (st === 'dead' && enc?.outcome === 'caught' && enc.species) return { cls: 'dead', text: t('loc.dead', 'Dead: {species}', { species: enc.nickname || speciesName(enc.species) }) };
   if (st === 'dead') return { cls: 'used', text: t('loc.used', 'Area used up') };
   if (enc?.outcome === 'caught') return { cls: 'caught', text: t('loc.caught', 'Caught: {species}', { species: enc.nickname || speciesName(enc.species) }) };
   // a missed encounter uses the area up for the whole group

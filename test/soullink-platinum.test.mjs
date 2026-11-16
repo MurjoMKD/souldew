@@ -4,8 +4,11 @@
 // - the pair of that area failed: the caught Pokémon may not be used (an error while it is in the team);
 // - the dupes clause counts every catch – also one of a failed or dead pair: a second Pokémon of that line is a dupe;
 //   "Per player" only your own catches, "For both" the partner's too;
-// - a Pokémon that got away or was knocked out isn't a catch: it never counts as a dupe (the board stores a missed
-//   encounter without its species);
+// - a Pokémon that got away or was knocked out isn't a catch: it counts as a dupe only with the dupes clause's switch
+//   "Fled or knocked-out encounters count as dupes" on (rules.missedDupes) and its species known – souldew notes it
+//   when it saw the battle, the board's "Missed" takes it optionally;
+// - like a solo Nuzlocke, each player's play view asks after a wild battle that ended without a catch: "Mark as
+//   spent" enters that player's encounter as missed, with its species – the pair fails, the partners get it by sync;
 // - the level caps come from the game's own trainers (Platinum has no curated list) and the badges read from the game.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -94,7 +97,7 @@ test('Platinum SoulLink: a dead pair still counts for the dupes clause; a Pokém
   R.markDead(d, PT, R203, { slot: 'p2', cause: 'test' });
   assert.equal(R.pairState(d, R203, PT).state, 'dead');
   assert.deepEqual(R.dupeOf(d, PT, rd, 400, 'p2'), { area: R203, slot: 'p2' });
-  // Ben's encounter on Route 201 was knocked out, not caught: no dupe – whatever it was (the board doesn't ask)
+  // Ben's encounter on Route 201 was knocked out, not caught, and entered without its species: no dupe
   assert.equal(d.get(`enc:${R201}:p2`).species, null);
   for (const s of [396, 399, 390]) assert.equal(R.dupeOf(mkDoc({ dupes: 'both' }), PT, rd, s, 'p2'), null);
 });
@@ -136,8 +139,149 @@ test('board rules: the dupes clause says what counts – whose catches, and that
   assert.match(board, /t\('rules\.dupesBothHint'/);
   assert.match(board, /t\('rules\.dupesWhich'/);
   const en = JSON.parse(readFileSync(new URL('../web/i18n/en.json', import.meta.url), 'utf8'));
+  assert.match(board, /MissedDupesRule/, 'the switch "Fled or knocked-out encounters count as dupes"');
   for (const lang of ['de', 'fr', 'es', 'it']) {
     const tr = JSON.parse(readFileSync(new URL(`../web/i18n/${lang}.json`, import.meta.url), 'utf8'));
-    for (const k of Object.keys(en).filter((x) => x.startsWith('rules.dupes'))) assert.ok(tr[k], `${lang}: ${k}`);
+    for (const k of Object.keys(en).filter((x) => /^(rules\.(dupes|missedDupes)|enc\.(missed|dupe)|feed\.missed|battle\.dupe|inbox\.dupe)/.test(x))) assert.ok(tr[k], `${lang}: ${k}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Missed encounters with their species (2.7.5): the dupes clause's switch, and the got-away question in a SoulLink
+
+/** Ana caught a Starly on Route 201; Ben's wild Bidoof there got away and was entered as missed, with its species. */
+function missedPair(rules, { by = 'b' } = {}) {
+  const d = mkDoc(rules);
+  d.by = by;
+  snap(d, 'p1', [mon({ key: 'a1' }), mon({ key: 'a2', species: 396, nickname: 'STARLY', metLocation: 16 })]);
+  snap(d, 'p2', [mon({ key: 'b1', species: 390, nickname: 'CHIMCHAR' })]);
+  assert.equal(R.markMissed(d, PT, R.areaForCatch(d, PT, 4, 16), 'p2', { species: 399, by: 'p2' }), true);
+  return d;
+}
+
+test('missed with its species, switch off (the default and every older run): it never counts as a dupe', () => {
+  for (const rules of [{ dupes: 'player' }, { dupes: 'both' }, { dupes: 'both', missedDupes: false }]) {
+    const d = missedPair(rules);
+    assert.equal(d.get(`enc:${R201}:p2`).species, 399, 'the species is kept with the missed encounter');
+    assert.equal(R.rules(d, PT).missedDupes, false);
+    assert.equal(R.dupeOf(d, PT, rd, 399, 'p2'), null);
+    assert.equal(R.dupeOf(d, PT, rd, 400, 'p1'), null);
+    // the catches still count as before
+    assert.deepEqual(R.dupeOf(d, PT, rd, 396, 'p1'), { area: R201, slot: 'p1' });
+  }
+});
+
+test('missed with its species, switch on, "Per player": the line is used up for the one it got away from', () => {
+  const d = missedPair({ dupes: 'player', missedDupes: true });
+  assert.deepEqual(R.dupeOf(d, PT, rd, 399, 'p2'), { area: R201, slot: 'p2', missed: true });
+  assert.deepEqual(R.dupeOf(d, PT, rd, 400, 'p2'), { area: R201, slot: 'p2', missed: true }, 'the whole evolution line');
+  assert.equal(R.dupeOf(d, PT, rd, 399, 'p1'), null, 'Ana: the partner’s encounters don’t matter per player');
+  // Ben catches a Bidoof on Route 202 anyway: not his encounter there – the inbox says it got away before
+  const res = snap(d, 'p2', [mon({ key: 'b1', species: 390, nickname: 'CHIMCHAR' }), mon({ key: 'b2', species: 399, nickname: 'BIDOOF', metLocation: 17 })]);
+  assert.equal(d.get(`enc:${R202}:p2`, null), null);
+  assert.deepEqual(res.inbox.map((i) => [i.reason, i.dupeArea, i.dupeMissed]), [['dupe', R201, true]]);
+  // a catch of the line (Ben assigns a Bibarel by hand) wins over the missed one – the texts say "already caught"
+  R.setEncounter(d, PT, R.areaForCatch(d, PT, 4, 18), 'p2', { outcome: 'caught', species: 400, key: 'b3' }, { by: 'p2' });
+  assert.deepEqual(R.dupeOf(d, PT, rd, 399, 'p2'), { area: R203, slot: 'p2' });
+});
+
+test('missed with its species, switch on, "For both": the line is used up for either player; dupes "species" compares species', () => {
+  const d = missedPair({ dupes: 'both', missedDupes: true });
+  assert.deepEqual(R.dupeOf(d, PT, rd, 400, 'p1'), { area: R201, slot: 'p2', missed: true });
+  const res = snap(d, 'p1', [mon({ key: 'a1' }), mon({ key: 'a2', species: 396, nickname: 'STARLY', metLocation: 16 }), mon({ key: 'a3', species: 399, nickname: 'BIDOOF', metLocation: 17 })]);
+  assert.equal(d.get(`enc:${R202}:p1`, null), null);
+  assert.deepEqual(res.inbox.map((i) => [i.reason, i.dupeMissed]), [['dupe', true]]);
+  const sp = missedPair({ dupes: 'species', missedDupes: true });
+  assert.ok(R.dupeOf(sp, PT, rd, 399, 'p2')?.missed);
+  assert.equal(R.dupeOf(sp, PT, rd, 400, 'p2'), null);
+  // off is off
+  assert.equal(R.dupeOf(missedPair({ dupes: 'off', missedDupes: true }), PT, rd, 399, 'p2'), null);
+});
+
+test('old runs: a missed encounter without its species never counts, also with the switch on', () => {
+  const { d } = failedPair({ dupes: 'both', missedDupes: true });
+  assert.equal(d.get(`enc:${R201}:p2`).species, null);
+  for (const s of [399, 400]) assert.equal(R.dupeOf(d, PT, rd, s, 'p2'), null);
+  // rules stored before the switch existed: off
+  const old = mkDoc({ dupes: 'both', failKillsPair: true });
+  assert.equal(R.rules(old, PT).missedDupes, false);
+});
+
+test('SoulLink got-away question: each player is asked after a wild battle without a catch – unless their encounter there is entered', () => {
+  const d = mkDoc({ dupes: 'player' });
+  snap(d, 'p1', [mon({ key: 'a1' })]);
+  snap(d, 'p2', [mon({ key: 'b1', species: 390, nickname: 'CHIMCHAR' })]);
+  const here = { gen: 4, id: 16, name: 'Route 201' };
+  const base = { foe: { species: 399, level: 3 }, wild: true, from: 1000, newMonAt: 0, boxes: true, partySize: 1, here };
+  const ask = (slot, o = {}, doc = d) => R.missedQuestion(doc, PT, rd, slot, { ...base, ...o });
+  assert.equal(ask('p1'), true);
+  assert.equal(ask('p2'), true);
+  assert.equal(ask('p2', { wild: false }), false, 'a trainer battle');
+  assert.equal(ask('p2', { newMonAt: 2000 }), false, 'caught after all');
+  assert.equal(ask('p2', { foe: { species: 399, shiny: true } }), false, 'shiny clause');
+  // Ana catches a Starly on Route 201: her encounter there is entered – no first encounter for her anymore, Ben still has his
+  snap(d, 'p1', [mon({ key: 'a1' }), mon({ key: 'a2', species: 396, nickname: 'STARLY', metLocation: 16 })]);
+  assert.equal(ask('p1'), false, 'Ana’s encounter on Route 201 is entered');
+  assert.equal(ask('p1', { here: { gen: 4, id: 17, name: 'Route 202' } }), true, 'on Route 202 it is her first');
+  assert.equal(ask('p2'), true);
+  assert.equal(ask('p1', { foe: { species: 397 }, here: { gen: 4, id: 17, name: 'Route 202' } }), false, 'a dupe for Ana doesn’t count anyway');
+  // the run is over: nobody is asked
+  d.set('run:status', { state: 'failed', at: Date.now() });
+  assert.equal(ask('p2'), false);
+});
+
+test('SoulLink got-away → Missed with its species: the pair fails, the partner gets it by sync, the log says so', () => {
+  // Ana's and Ben's computers: two copies of the run document, merged like the run sync does
+  const ana = mkDoc({ dupes: 'both', missedDupes: true });
+  const ben = mkDoc();
+  ben.by = 'b';
+  ben.merge(structuredClone(ana.entries));
+  snap(ana, 'p1', [mon({ key: 'a1' }), mon({ key: 'a2', species: 396, nickname: 'STARLY', metLocation: 16 })]);
+  snap(ben, 'p2', [mon({ key: 'b1', species: 390, nickname: 'CHIMCHAR' })]);
+  ben.merge(structuredClone(ana.entries));
+  assert.equal(R.pairState(ben, R201, PT).state, 'waiting');
+  // Ben's wild Bidoof on Route 201 got away: his play view asks, he marks the area (the place sign's) as spent
+  assert.equal(R.missedQuestion(ben, PT, rd, 'p2', { foe: { species: 399, level: 3 }, wild: true, from: 1000, here: { gen: 4, id: 16, name: 'Route 201' } }), true);
+  assert.equal(R.markMissed(ben, PT, R.areaForCatch(ben, PT, 4, 16, { create: false }), 'p2', { species: 399, by: 'p2' }), true);
+  assert.equal(R.markMissed(ben, PT, R201, 'p2', { species: 399 }), false, 'once');
+  ana.merge(structuredClone(ben.entries));
+  for (const d of [ana, ben]) {
+    assert.equal(R.pairState(d, R201, PT).state, 'failed');
+    assert.deepEqual(d.get(`enc:${R201}:p2`), { ...d.get(`enc:${R201}:p2`), outcome: 'missed', species: 399, by: 'p2' });
+  }
+  // Ana's Starly may not be used now, and Bidoof's line is a dupe for her too (for both + the switch)
+  assert.deepEqual(R.checks(ana, PT, rd).filter((c) => c.level === 'error').map((c) => c.area), [R201]);
+  assert.deepEqual(R.dupeOf(ana, PT, rd, 400, 'p1'), { area: R201, slot: 'p2', missed: true });
+  // the log line Ana's toast shows
+  const f = R.feedList(ana).find((x) => x.type === 'missed');
+  assert.deepEqual([f.slot, f.species, f.msg.key], ['p2', 399, 'feed.missedPair']);
+  assert.match(R.feedText(ana, PT, f), /Route 201|#16/);
+  assert.match(R.feedText(ana, PT, f), /got away – the pair is lost/);
+  // with "a missed encounter costs the whole pair" off it is just Ben's area
+  const off = missedPair({ failKillsPair: false });
+  assert.equal(R.feedList(off).find((x) => x.type === 'missed').msg.key, 'feed.missedSpecies');
+  assert.equal(R.checks(off, PT, rd).filter((c) => c.level === 'error').length, 0);
+  // the switch set on one computer reaches the other one like every rule
+  ben.set('rules', { ...ben.get('rules'), missedDupes: false });
+  ana.merge(structuredClone(ben.entries));
+  assert.equal(R.rules(ana, PT).missedDupes, false);
+  assert.equal(R.dupeOf(ana, PT, rd, 400, 'p1'), null);
+});
+
+test('the board’s Missed: entered by hand with its species (it logs it), and the last wild Pokémon of the place fills it in', () => {
+  const d = mkDoc({ dupes: 'player', missedDupes: true });
+  snap(d, 'p2', [mon({ key: 'b1', species: 390, nickname: 'CHIMCHAR' })]);
+  // the play view keeps the last wild Pokémon with the place sign ("where:<slot>".wild)
+  d.set('where:p2', { gen: 4, id: 16, name: 'Route 201', at: Date.now(), wild: { species: 399, level: 3, at: Date.now() } });
+  R.areaForCatch(d, PT, 4, 16);
+  assert.deepEqual(R.lastWildAt(d, PT, 4, R201, 'p2'), { species: 399, level: 3, at: d.get('where:p2').wild.at });
+  assert.equal(R.lastWildAt(d, PT, 4, R202, 'p2'), null, 'another area');
+  assert.equal(R.lastWildAt(d, PT, 4, R201, 'p1'), null, 'another player');
+  // (what EncounterModal saves for "Missed" with a species)
+  R.setEncounter(d, PT, R201, 'p2', { outcome: 'missed', species: 399, nickname: '', level: null, shiny: false, key: null }, { by: 'p2' });
+  assert.deepEqual(R.feedList(d).find((x) => x.type === 'missed').species, 399);
+  assert.deepEqual(R.dupeOf(d, PT, rd, 400, 'p2'), { area: R201, slot: 'p2', missed: true });
+  // without a species (optional): as before
+  R.setEncounter(d, PT, R202, 'p2', { outcome: 'missed', species: null }, { by: 'p2' });
+  assert.equal(R.feedList(d).filter((x) => x.type === 'missed').find((x) => x.area === R202).msg.key, 'feed.missed');
 });
