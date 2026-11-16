@@ -760,7 +760,7 @@ function readDS(entry, read, T, state) {
     if (party) {
       state.partyAddr = core;
       state.ptrOk = true;
-      return { party, boxes: readBoxesGen4(entry, read, T, state), badges: gen === 5 ? readBadgesGen5(entry, read, state, party) : readBadgesGen4(entry, read, state, party) };
+      return dsResult(entry, read, T, state, party);
     }
     // The pointer has worked in this session, so the layout is right and the party is just not there right
     // now (title screen after a soft reset, save being reloaded). Scanning would grab whatever PartyCore is
@@ -773,10 +773,7 @@ function readDS(entry, read, T, state) {
   // 2) remembered address from a previous scan
   if (state.partyAddr) {
     const party = readPartyCore(read, state.partyAddr, size, gen, T);
-    if (party) {
-      saveBaseFromScan(entry, read, state);
-      return gen === 5 ? { party, badges: readBadgesGen5(entry, read, state, party) } : { party };
-    }
+    if (party) return scannedResult(entry, read, T, state, party, size);
     state.partyAddr = null;
   }
   // 3) full scan (throttled by the caller)
@@ -790,41 +787,83 @@ function readDS(entry, read, T, state) {
   state.partyAddr = hits[0];
   const party = readPartyCore(read, state.partyAddr, size, gen, T);
   if (!party) return null;
-  return gen === 5 ? { party, badges: readBadgesGen5(entry, read, state, party) } : { party };
+  return scannedResult(entry, read, T, state, party, size);
+}
+
+/** Party, PC boxes (Gen 4) and badges of a DS game whose party was found at state.partyAddr. */
+function dsResult(entry, read, T, state, party) {
+  if (entry.gen === 5) return { party, badges: readBadgesGen5(entry, read, state, party) };
+  return { party, boxes: readBoxesGen4(entry, read, T, state), badges: readBadgesGen4(entry, read, state, party) };
 }
 
 /**
- * Scanned party (other languages): if Ironmon's module-params pointer leads to exactly this party, that pointer is
- * the save data – the battle mon struct (battleActive) is found relative to it.
+ * A party found by scanning (the game's other languages – their static data sits elsewhere, so the English pointer
+ * doesn't apply – or the pointer not working yet). Gen 4: the save data, and with it the badges and the PC, is found
+ * from there (saveBaseFromScan); when the scan had settled on a copy of the party, the save's own party is taken.
  */
-function saveBaseFromScan(entry, read, state) {
-  if (state.saveBase || !entry.partyMonsOffset || !entry.battleActive?.pidOffsetFromSaveBase) return;
+function scannedResult(entry, read, T, state, party, size) {
+  if (entry.gen !== 4) return dsResult(entry, read, T, state, party);
+  const base = saveBaseFromScan(entry, read, state, party);
+  const own = base ? base + hex(entry.partyMonsOffset) - 8 : 0;
+  if (own && own !== state.partyAddr) {
+    const saved = readPartyCore(read, own, size, entry.gen, T);
+    if (saved) {
+      state.partyAddr = own;
+      return dsResult(entry, read, T, state, saved);
+    }
+  }
+  return dsResult(entry, read, T, state, party);
+}
+
+/**
+ * The save data of a Gen 4 game whose party was found by scanning (every language but English): the party in the save
+ * image sits a fixed step after the start of the SaveData (addresses.json partyMonsOffset), so the save data is where
+ * the party is – or where Ironmon's module-params pointer leads (*(0x02000BA8)+0x20 on HGSS/Pt, *(0x02000B70)+0x20 on
+ * DP), which also finds it when the scan settled on a copy of the party (a battle's). A place counts once the trainer in
+ * its general block (TID/SID) owns a Pokémon of the team, or the pointer leads to the very party that was found.
+ * Without that, no save data: badges and the PC stay unknown rather than read from the wrong place. Set as
+ * state.saveBase (the badges, the PC, the battle structs and the bag go from there); returns it, or 0.
+ */
+function saveBaseFromScan(entry, read, state, party) {
+  state.saveBase = 0;
+  if (!entry.partyMonsOffset || !state.partyAddr) return 0;
+  const mons = hex(entry.partyMonsOffset) - 8;
+  const fromParty = state.partyAddr - mons;
   const mp = read(/^(diamond|pearl)/.test(entry.id) ? 0x02000b70 : 0x02000ba8, 4);
   const mpv = mp ? u32le(mp, 0) : 0;
-  if (mpv < 0x02000000 || mpv >= 0x02400000) return;
-  const p = read(mpv + 0x20, 4);
-  const base = p ? u32le(p, 0) : 0;
-  if (base >= 0x02000000 && base < 0x02400000 && base + hex(entry.partyMonsOffset) - 8 === state.partyAddr) state.saveBase = base;
+  const p = mpv >= 0x02000000 && mpv < 0x02400000 ? read(mpv + 0x20, 4) : null;
+  const viaPointer = p ? u32le(p, 0) : 0;
+  const ok = (base) => base >= 0x02000000 && base + mons < 0x02400000;
+  let base = 0;
+  if (ok(fromParty) && (viaPointer === fromParty || ownsTeam(entry, read, fromParty, party))) base = fromParty;
+  else if (ok(viaPointer) && ownsTeam(entry, read, viaPointer, party)) base = viaPointer;
+  state.saveBase = base;
+  return base;
+}
+
+/** The trainer data in the general block of the save data at `base` (PKHeX Trainer1: TID +0x10, SID +0x12), or null. */
+function gen4Trainer(entry, read, base) {
+  const b = entry.badges;
+  if (!base || !b?.trainerOffset) return null;
+  return read(base + hex(b.generalOffsetFromSaveBase) + hex(b.trainerOffset), 0x20);
+}
+
+/** Is the trainer of the save data at `base` the original trainer of a Pokémon in `party`? → the trainer data, or null */
+function ownsTeam(entry, read, base, party) {
+  const t = gen4Trainer(entry, read, base);
+  return t && party?.some((m) => m.key?.endsWith(`-${u16le(t, 0x10)}-${u16le(t, 0x12)}`)) ? t : null;
 }
 
 /**
- * Gen 4 badges sit in the general block of the save image in RAM, like in the .sav file. HGSS: the Johto and Kanto
- * bytes; Diamond/Pearl/Platinum: one byte in the trainer data (PKHeX Trainer1 + 0x1A), trusted only while the trainer ID
- * and secret ID in front of it (+0x10/+0x12) are those of a Pokémon in the team.
+ * Gen 4 badges sit in the trainer data of the general block of the save image in RAM, like in the .sav file (PKHeX
+ * Trainer1 + 0x1A, a bit per badge; HGSS: the Kanto badges at + 0x1F). Trusted only while the trainer ID and secret
+ * ID in front of them (+0x10/+0x12) are those of a Pokémon in the team.
  */
 function readBadgesGen4(entry, read, state, party = null) {
   const b = entry.badges;
-  if (!state.saveBase || !b) return undefined;
-  const general = state.saveBase + hex(b.generalOffsetFromSaveBase);
-  if (b.trainerOffset) {
-    const t = read(general + hex(b.trainerOffset), 0x1b);
-    if (!t || !party?.some((m) => m.key?.endsWith(`-${u16le(t, 0x10)}-${u16le(t, 0x12)}`))) return undefined;
-    return popcount(t[0x1a]);
-  }
-  if (!b.johtoOffset) return undefined;
-  const j = read(general + hex(b.johtoOffset), 1);
-  const k = read(general + hex(b.kantoOffset), 1);
-  return j && k ? popcount(j[0]) + popcount(k[0]) : undefined;
+  const t = ownsTeam(entry, read, state.saveBase, party);
+  if (!t) return undefined;
+  return popcount(t[0x1a]) + (b.kantoOffset ? popcount(t[hex(b.kantoOffset) - hex(b.trainerOffset)]) : 0);
 }
 
 /**
