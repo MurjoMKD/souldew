@@ -367,8 +367,9 @@ export function cardModel({ doc, manifest, gen = 4, event, app = '' }) {
     const st = event.status || {};
     const who = names[st.by]?.name || playerNames[0];
     if (solo || st.auto) highlights = [{ text: who, color: PLAYER_COLORS[st.by] || PLAYER_COLORS.p1 }];
-    headline = solo ? (st.reason === 'deathless' ? t('live.hDeathless', '{name}’s deathless run is over', { name: who }) : t('live.hWipeSolo', '{name}’s Nuzlocke is over', { name: who }))
-      : st.auto ? t('live.hWipe', '{name}’s team was wiped', { name: who }) : t('live.hEnded', 'The SoulLink is over');
+    headline = st.auto && st.reason === 'lives' ? (solo ? t('live.hLivesSolo', '{name}’s Nuzlocke is out of lives', { name: who }) : t('live.hLives', 'Out of lives – the SoulLink is over'))
+      : solo ? (st.reason === 'deathless' ? t('live.hDeathless', '{name}’s deathless run is over', { name: who }) : t('live.hWipeSolo', '{name}’s Nuzlocke is over', { name: who }))
+        : st.auto ? t('live.hWipe', '{name}’s team was wiped', { name: who }) : t('live.hEnded', 'The SoulLink is over');
     const last = lastDeath(doc, manifest, st);
     if (last) {
       const d = deathCause(doc, manifest, last.area, last.pair, { killer: t('live.lastFellTo', 'The last one fell to'), none: t('live.lastToFall', 'The last to fall') });

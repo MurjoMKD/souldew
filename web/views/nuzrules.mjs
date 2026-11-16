@@ -4,6 +4,7 @@
 import { html, useState } from '/vendor/htm-preact.mjs';
 import { t } from '../lib/i18n.mjs';
 import { RULE_PRESETS, presetOf } from '../lib/run.mjs';
+import { LIVES_DEFAULT, LIVES_MIN, LIVES_MAX, clampLives } from '/shared/lives.mjs';
 
 const presets = () => [
   ['classic', t('nzr.classic', 'Classic'), t('nzr.classicText', 'The two core rules – only the first Pokémon of each area, fainted means dead – plus the dupes clause (an evolution line you already caught doesn’t count, keep looking) and the shiny clause (a shiny is a free catch). A blackout ends the run.')],
@@ -153,4 +154,53 @@ export function TypeHelpRule({ value, onChange, locked, hostName, solo }) {
   return html`<label class=${`check ${locked ? 'locked' : ''}`}><input type="checkbox" checked=${value !== false} disabled=${locked} onChange=${(e) => onChange(e.target.checked)} />
     <span>${t('rules.typeHelp', 'Show type matchup help')}<span class="hint">${hint}</span>
       ${locked && html`<span class="hint host-only">${hostName ? t('rules.hostOnlyName', 'Only {name} can change this (host).', { name: hostName }) : t('rules.hostOnly', 'Only the host can change this.')}</span>`}</span></label>`;
+}
+
+/** What the lives rule does, for 1 (solo), 2 or 3–4 players and the chosen pool – one text for the wizard and the board. */
+function livesHint(players, pool) {
+  if (players < 2) return t('lives.hintSolo', 'Every death costs a life – also one you mark by hand, and a bonus Pokémon. The death that takes the last life ends the run; undoing a death gives its life back.');
+  const what = players > 2
+    ? t('lives.hintGroup', 'Every death costs one life – only the Pokémon that fell, not the ones of its group that go with it.')
+    : t('lives.hintPair', 'Every death costs one life – only the Pokémon that fell, not its partner that goes with it.');
+  const how = pool === 'player'
+    ? t('lives.hintPlayer', 'Per player: the life comes off the player whose Pokémon fell – once anyone has none left, the run is over, like a wiped team.')
+    : players > 2 ? t('lives.hintSharedGroup', 'Shared: one pool for all of you – the death that takes the last life ends the run.')
+      : t('lives.hintShared', 'Shared: one pool for both of you – the death that takes the last life ends the run.');
+  return `${what} ${how} ${t('lives.hintUndo', 'Undoing a death gives its life back.')}`;
+}
+
+/** Off / on, how many (LIVES_MIN–LIVES_MAX), and with 2–4 players whose lives they are. onChange(patch of the rules). */
+function LivesControl({ value, pool, players, onChange }) {
+  const n = value > 0 ? value : 0;
+  return html`<div class="row" style="gap:8px">
+    <${Choice} label=${t('lives.title', 'Lives')} value=${n > 0 ? 'on' : 'off'} onChange=${(v) => onChange({ lives: v === 'on' ? n || LIVES_DEFAULT : 0 })}
+      options=${[['off', t('rules.off', 'Off')], ['on', t('common.on', 'On')]]} />
+    ${n > 0 && html`<input type="number" class="num-in" min=${LIVES_MIN} max=${LIVES_MAX} value=${n} aria-label=${t('lives.count', 'Number of lives')}
+      onChange=${(e) => onChange({ lives: clampLives(e.target.value) })} />`}
+    ${n > 0 && players > 1 && html`<${Choice} label=${t('lives.pool', 'Whose lives')} value=${pool === 'player' ? 'player' : 'shared'} onChange=${(v) => onChange({ livesPool: v })}
+      options=${[['shared', t('lives.shared', 'Shared')], ['player', t('rules.perPlayer', 'Per player')]]} />`}
+  </div>`;
+}
+
+/**
+ * The lives rule (shared/lives.mjs) – for every run, off unless switched on: a number of lives, every death costs
+ * one, the death that takes the last ends the run; with 2–4 players one pool for everyone or each player's own.
+ * value / pool: the rules' `lives` / `livesPool`; onChange(patch). `players`: how many play. Variant 'wizard': compact,
+ * with its title; 'board': the hint over the control (the panel carries the title) and `left` – how many are left
+ * (run.mjs lives()) with the players' `names`.
+ */
+export function LivesRule({ value, pool, players = 1, onChange, variant = 'board', left = null, names = {} }) {
+  const control = html`<${LivesControl} value=${value} pool=${pool} players=${players} onChange=${onChange} />`;
+  const hint = livesHint(players, pool);
+  if (variant === 'wizard') {
+    return html`<div class="stack-s"><b class="small">${t('lives.title', 'Lives')}</b>${control}${value > 0 && html`<span class="tiny faint">${hint}</span>`}</div>`;
+  }
+  const pools = left ? Object.entries(left.pools) : [];
+  return html`<div class="stack-s">
+    <p class="small muted">${value > 0 ? hint : t('lives.hintOff', 'An extra rule: a number of lives for the run – every death costs one, and the run is over once they are gone.')}</p>
+    ${control}
+    ${pools.length > 0 && html`<p class="small lives-left">${pools.map(([id, p], i) => html`${i ? ' · ' : ''}<span class=${`fact ${p.low || p.out ? 'low' : ''}`}>${id === 'all'
+      ? t('lives.leftOf', '{left} of {total} left', { left: p.left, total: left.total })
+      : t('lives.leftOfNamed', '{name}: {left} of {total} left', { name: names[id] || id.toUpperCase(), left: p.left, total: left.total })}</span>`)}</p>`}
+  </div>`;
 }

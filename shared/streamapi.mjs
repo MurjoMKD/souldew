@@ -10,6 +10,7 @@ import { slotsOf, runMode } from './slots.mjs';
 import { runGen, areaLabel, statusKey, validLevel } from './overlay.mjs';
 import { legendaryKind } from './legendaries.mjs';
 import { rulesWithDefaults } from './rules.mjs';
+import { livesLeft, livesOf, deathsIn } from './lives.mjs';
 import { levelCapFor, gymCapsFamily, vanillaCapFor, romCapFor, prettyTrainer } from './routes.mjs';
 
 export const API_VERSION = 1;
@@ -177,6 +178,13 @@ export function buildState(manifest, doc, opts = {}) {
   const rules = rulesWithDefaults(val('rules'), mode);
   delete rules.discordWebhook; // stays on the streamer's computer (and older runs kept it here)
   const cleanRules = Object.fromEntries(Object.entries(rules).filter(([, v]) => ['string', 'number', 'boolean'].includes(typeof v)));
+  // the lives rule (shared/lives.mjs), counted from the deaths that stand – as the app counts them
+  const scan = (prefix) => Object.fromEntries(Object.keys(raw).filter((k) => k.startsWith(prefix)).map((k) => [k.slice(prefix.length), obj(val(k))]));
+  const lives = livesLeft(rules, slots, deathsIn(scan('pair:'), scan('extra:')));
+  const livesFor = (slot) => {
+    const p = livesOf(lives, slot, slots);
+    return p ? { left: p.left, used: p.used } : null;
+  };
 
   const players = slots.map((slot) => {
     const live = obj(val(`live:${slot}`));
@@ -197,6 +205,7 @@ export function buildState(manifest, doc, opts = {}) {
       slot, name: str(meta.name, 24) || str(manifest?.players?.[slot]?.name, 24) || slot.toUpperCase(), color: PLAYER_COLORS[slot],
       live: Number.isFinite(live?.at) && Math.abs(now - live.at) < LIVE_FRESH, updatedAt: num(live?.at),
       badges: int(live?.badges), levelCap: live ? levelCapOf(manifest, rules, raw, int(live.badges) ?? 0, slot) : null, playTime: playTime(live?.playTime),
+      lives: livesFor(slot),
       location: where ? {
         id: int(where.id), gen: int(where.gen), name: str(where.name, 60) || null, at: num(where.at),
         battle: fight && Number.isInteger(fight.species) ? { kind: fight.kind === 'trainer' ? 'trainer' : 'wild', species: fight.species, name: sp(fight.species),
@@ -256,6 +265,7 @@ export function buildState(manifest, doc, opts = {}) {
       createdAt: manifest?.createdAt || null,
       status: status?.state ? { state: str(status.state, 12), reason: str(status.reason, 16) || null, at: num(status.at), by: slots.includes(status.by) ? status.by : null } : null,
       rules: cleanRules, counts,
+      lives: lives ? { total: lives.total, pool: lives.pool, left: lives.pools.all?.left ?? null, used: lives.pools.all?.used ?? null } : null,
     },
     players, links, graveyard, encounters, feed,
     lang, generatedAt: now, updatedAt: updatedAt || null,
