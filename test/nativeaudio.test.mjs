@@ -126,3 +126,26 @@ test('in-band commands still arrive after a clear (a loaded state) – nothing i
   send('clear');
   assert.ok(got.some((m) => m.type === 'rate' && m.ratio === 3));
 });
+
+test('the 3DS host’s own fast-forward sound goes straight to the mixer’s recording, split into channels – not into the buffer', () => {
+  const { w, send } = worklet({ prime: 256 });
+  send({ type: 'mode', mode: 'music' }); // (the helper starts in "plain")
+  const seen = [];
+  w.mixer.ffSound = (l, r, n) => seen.push({ l: Array.from(l.subarray(0, n)), r: Array.from(r.subarray(0, n)) });
+  const pushed = w.ring.pushed;
+  send({ type: 'ffsound', f: Float32Array.from([0.1, -0.1, 0.2, -0.2, 0.3, -0.3]) });
+  assert.equal(w.ring.pushed, pushed, 'nothing in the buffer: it is not played as it is');
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].l.map((x) => +x.toFixed(3)), [0.1, 0.2, 0.3]);
+  assert.deepEqual(seen[0].r.map((x) => +x.toFixed(3)), [-0.1, -0.2, -0.3]);
+  // "plain" leaves the mixer out: nothing for it to record; a mixer that fails is reported and left alone
+  send({ type: 'mode', mode: 'plain' });
+  send({ type: 'ffsound', f: new Float32Array(4) });
+  assert.equal(seen.length, 1);
+  send({ type: 'mode', mode: 'music' });
+  w.mixer.ffSound = () => {
+    throw new Error('boom');
+  };
+  send({ type: 'ffsound', f: new Float32Array(4) });
+  assert.ok(w.broken && w.posted.some((m) => m.type === 'mixer' && m.e.type === 'error'));
+});

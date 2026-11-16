@@ -258,11 +258,13 @@ function readSong(m, read) {
  * the map's music wMapMusicSoundID / wMapMusic, Gen 3 sCurrentMapMusic, not a battle's – maps that share a song share
  * it), `map` the map the player is on ('p<gen>.<map>'), `expected` the music the map header names ('m<id>', HGSS – the
  * same numbers as `song`), `own` the song is the player's own (bicycle, surfing). Any of them may be null; never throws.
+ * `ctx.state`: the live party reader's state (the 3DS games, see ctrMusicInfo).
  */
-export function readMusicInfo(maps, entry, read) {
+export function readMusicInfo(maps, entry, read, ctx = {}) {
   try {
+    if (typeof read !== 'function') return null;
     const m = mapEntryFor(maps, entry);
-    if (!m || typeof read !== 'function') return null;
+    if (!m) return ctrMusicInfo(entry, read, ctx);
     const r = readLocation(maps, entry, read);
     const music = r && m.musicTable ? maps.tables?.gen4Music?.[m.musicTable]?.[r.map] : null;
     const song = readSong(m, read);
@@ -272,6 +274,24 @@ export function readMusicInfo(maps, entry, read) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Nintendo 3DS (Gen 6/7): no song number is known in RAM, so the turbo mixer's key is the zone the game is in
+ * ('p<gen>.<zone>', the u16 at the entry's zoneAddr – as readCtr) – and a battle is 'battle' (MusicKeyTracker). Without
+ * any key the mixer could only tell a song change by a silence, and a 3DS game hardly ever falls silent (the ambience
+ * goes on, a battle starts straight out of the field music): "Music continues" kept the battle's loop through the battle's
+ * end and the next fast-forwards (a Windows player, Pokémon Sun, 2.7.4). Only once the live reader found the party at one
+ * of the game's addresses (`ctx.state.g67Len`, as the location sign): before that the update version – and with it
+ * whether zoneAddr holds the zone – is unknown, and a key that changes all the time switches the music all the time.
+ */
+function ctrMusicInfo(entry, read, ctx) {
+  if (entry?.platform !== '3ds' || !entry.zoneAddr || !(ctx.state?.g67Len > 0)) return null;
+  const b = read(hex(entry.zoneAddr), 2);
+  if (!ok(b, 2)) return null;
+  const zone = u16le(b, 0);
+  if (zone >= 0x400) return null; // (no 3DS Pokémon game has that many zones: not the zone)
+  return { song: null, map: `p${entry.gen}.${zone}`, expected: null, playing: false, own: false };
 }
 
 /** The song key alone (readMusicInfo): the game's song number, else the map. */

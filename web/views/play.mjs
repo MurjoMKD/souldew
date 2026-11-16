@@ -877,7 +877,8 @@ export function GameSession({ session, mode }) {
       liveRef.current = { entry, state };
       setCheatGame(cheatSupported(entry));
       // the music playing now, for the turbo mixer: a new route's song while fast-forwarding (a few bytes, often);
-      // the tracker falls back to the map's music when the song number doesn't follow the game (ROM hacks)
+      // the tracker falls back to the map's music when the song number doesn't follow the game (ROM hacks), and a battle
+      // is 'battle' where the key doesn't cover battles (Gen 1–3, the 3DS games' zone)
       const songs = new MusicKeyTracker({ settle: 20 }); // (2 s of readings: the map settles before it is judged)
       diag('session', { system: target.system, code: target.code || null, title: target.title || null, game: target.gameId || null, core: core || null, live: entry?.name || null, run: !!isRun });
       let lastKey = null;
@@ -890,7 +891,7 @@ export function GameSession({ session, mode }) {
         const sp = e.speed?.() ?? 1;
         if (sp !== lastSpeed) diag('music', { type: 'speed', ratio: (lastSpeed = sp) });
         if (!e.songKey || e.ramInfo().base < 0) return;
-        const info = musicInfo(entry, e.read);
+        const info = musicInfo(entry, e.read, { state }); // (3DS: the zone, once the live reader found the party)
         const key = songs.next(info, inBattle);
         if (key !== lastKey) {
           lastKey = key;
@@ -1370,12 +1371,12 @@ export function GameSession({ session, mode }) {
               <span class="mono tiny vol">${muted ? t('play.mutedShort', 'off') : `${Math.round(volume * 100)} %`}</span>
               ${btn(muted ? 'sound' : 'mute', muted ? t('play.unmute', 'Sound on') : t('play.mute', 'Mute') + ' (M)', actions.mute)}
               </div>
-              <label class="turbo-audio" title=${t('play.turboAudioHint', 'What you hear while fast-forwarding. “Music continues” loops the music recorded at normal speed – sound effects stay silent.')}>
+              <label class="turbo-audio" title=${t('play.turboAudioHint', 'What you hear while fast-forwarding. “Music continues” keeps the music at its normal speed and pitch – sound effects stay silent. “Sped-up original” plays the game’s own sound, faster and higher.')}>
                 <span class="tiny">${t('play.turboAudio', 'Turbo audio')}</span>
                 <select value=${turboAudio} onChange=${(e) => actions.turboAudio(e.target.value)}>
                   <option value="music">${t('play.turboAudioMusic', 'Music continues')}</option>
                   <option value="mute">${t('play.turboAudioMute', 'Mute')}</option>
-                  <option value="original">${t('play.turboAudioOriginal', 'Sped-up original')}</option>
+                  <option value="original" title=${t('play.turboAudioOriginalHint', 'The game’s own sound, sped up with it – music and effects play faster and higher.')}>${t('play.turboAudioOriginal', 'Sped-up original')}</option>
                   <option value="plain" title=${t('play.turboAudioPlainHint', 'The emulator’s sound only – no recording, no mixer. Try it if the sound crackles.')}>${t('play.turboAudioPlain', 'Plain (no extra processing)')}</option>
                 </select>
               </label>

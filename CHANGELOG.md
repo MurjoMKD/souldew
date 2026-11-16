@@ -31,6 +31,14 @@
   and harsh. It now bridges a gap with a soft fade, keeps a slightly larger buffer on such PCs, and catches up with an
   inaudible speed change of at most 0.5 %. In the fast player (Game Boy, GBA, DS) short drop-outs fade instead of
   clicking, too. Save diagnostics now includes the 3DS player's sound drop-outs, to help with sound reports.
+- **“Music continues” in the 3DS player: clear music, and battle music that ends with the battle** (thanks to a player
+  on Discord for the report). While fast-forwarding, the music of a place souldew hadn't recorded yet came out
+  muffled – at 4× nothing above about 1.8 kHz was left. The 3DS player now hands souldew the game's own sound as well,
+  so the music keeps its full sound at its normal pitch (measured in Pokémon Sun: the same highs as at 1×). And in the
+  3DS games souldew didn't know which song was playing: once it had picked up a battle's music while fast-forwarding,
+  that music kept looping after the battle – and came back with the next fast-forward. souldew now follows the place
+  you're in and battles (with live tracking running), switches to the battle music when a battle starts and back to
+  the place's music when it ends, and no longer files the first moments of a battle under the place's music.
 
 ## 2.7.4
 

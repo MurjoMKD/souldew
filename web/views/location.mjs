@@ -96,12 +96,12 @@ export function readHere(entry, read, state = null) {
 }
 
 /** What the music is right now (readMusicInfo, for a MusicKeyTracker), or null – cheap, read every few frames. */
-export function musicInfo(entry, read) {
+export function musicInfo(entry, read, ctx = {}) {
   if (!MAPS) {
     load();
     return null;
   }
-  return readMusicInfo(MAPS, entry, read);
+  return readMusicInfo(MAPS, entry, read, ctx);
 }
 
 /**
