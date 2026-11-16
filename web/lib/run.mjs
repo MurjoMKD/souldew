@@ -959,10 +959,14 @@ export function hatchedMon(gen, m, { wasEgg = null, levelOneWild = false } = {})
 /** Can a wild Pokémon be level 1 in this run's game? A randomized run or a ROM hack (Crystal: see hatchedMon). */
 export const levelOneWild = (manifest) => !!(manifest?.randomizer?.enabled || manifest?.patch || manifest?.game?.hackId || manifest?.game?.hackName);
 
-function liveMon(m, area) {
+/** doc → Map(slot → Set(key)): the Pokémon the app saw as eggs this session (see applySnapshot's `wasEgg`). */
+const hatchedKeys = new WeakMap();
+
+/** `wasEgg`: the app saw this Pokémon as an egg – an untracked one keeps that mark in the live team (hatchedMon). */
+function liveMon(m, area, wasEgg = false) {
   return {
     key: m.key, area, species: m.species, nick: m.nickname, level: m.level, hp: m.hp, maxHp: m.maxHp, item: m.item ?? m.heldItem,
-    status: m.status, shiny: m.shiny, gender: m.gender, moves: m.moves, ...(m.isEgg ? { egg: true } : {}),
+    status: m.status, shiny: m.shiny, gender: m.gender, moves: m.moves, ...(m.isEgg ? { egg: true } : !area && wasEgg ? { hatched: true } : {}),
     // an expanded engine's own item numbers: no retail name for them – the game's own name where the ROM gave it
     ...(m.itemOwn ? { itemOwn: true, ...(m.itemName ? { itemName: String(m.itemName).slice(0, 24) } : {}) } : {}),
     // where an untracked mon was met – the Nuzlocke checks tell a second catch on a spent area by it
@@ -1047,8 +1051,15 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
   const party = trustLevels(doc, slot, (snap.party || []).map((m) => ({ ...m, inParty: true })), known, snap.source);
   const all = [...party, ...(snap.boxes || [])];
   const seen = new Set();
-  // the eggs of the last live team (a hatched Pokémon keeps the egg's key – Crystal: hatchedMon)
-  const wasEgg = new Set((was?.party || []).filter((x) => x?.egg && x.key).map((x) => x.key));
+  // the Pokémon the app saw as eggs (a hatched Pokémon keeps the egg's key – Crystal: hatchedMon): the eggs of the last
+  // live team, the hatched ones it still carries untracked (liveMon `hatched` – the egg is gone from the team after the
+  // first poll, and without the mark the next poll filed the Pokémon waiting in the inbox as a catch where it hatched)
+  // and those seen this session (a hatched one put in the PC leaves the live team)
+  const eggsSeen = hatchedKeys.get(doc) || new Map();
+  hatchedKeys.set(doc, eggsSeen);
+  const wasEgg = eggsSeen.get(slot) || new Set();
+  eggsSeen.set(slot, wasEgg);
+  for (const x of was?.party || []) if ((x?.egg || x?.hatched) && x.key) wasEgg.add(x.key);
   const oneWild = levelOneWild(manifest);
   let starterOffered = false;
   const battles = lastBattle.get(doc) || new Map();
@@ -1184,7 +1195,7 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
       }
     }
   }
-  const liveParty = party.map((m) => liveMon(m, known.get(m.key)?.area || null));
+  const liveParty = party.map((m) => liveMon(m, known.get(m.key)?.area || null, wasEgg.has(m.key)));
   const down = snap.source !== 'save' && partyDown(liveParty);
   // the level caps read from this player's game (romcaps.mjs, sent along by the play view): kept with the run, so the
   // board, the partners and the stream API know them too

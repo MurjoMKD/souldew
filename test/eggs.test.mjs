@@ -147,3 +147,37 @@ test('Crystal\'s level 1: hatched in the original game; in a randomized run or a
   const h = R.applySnapshot(egg, M, 2, 'p1', { source: 'live', party: [mon({ metLocation: 1 }), mon({ key: 'h', species: 175, level: 5, metLocation: 5, metLevel: 1 })] });
   assert.deepEqual(h.inbox.map((i) => [i.mon.key, i.reason]), [['h', 'egg']]);
 });
+
+test('Crystal\'s hatch mark sticks: the hatched Pokémon stays in the inbox on the next polls, never filed as a catch', () => {
+  // a randomized Crystal: level 1 is no hatch mark by itself – only the egg the app saw counts, and after the first poll
+  // the egg is gone from the team (it is the hatched Pokémon now)
+  const M = { ...SOLO('crystal', 'gbc'), randomizer: { enabled: true } };
+  const starter = mon({ metLocation: 1 });
+  const hatched = mon({ key: 'h', species: 175, level: 5, metLocation: 5, metLevel: 1 });
+  const d = mkDoc();
+  R.applySnapshot(d, M, 2, 'p1', { source: 'live', party: [starter] });
+  R.applySnapshot(d, M, 2, 'p1', { source: 'live', party: [starter, mon({ key: 'h', species: 175, level: 5, isEgg: true })] });
+  const caught = () => Object.keys(d.scan('enc:')).filter((k) => k !== 'starter:p1');
+  for (const poll of [1, 2, 3]) {
+    const res = R.applySnapshot(d, M, 2, 'p1', { source: 'live', party: [starter, hatched] });
+    assert.deepEqual(res.inbox.map((i) => [i.mon.key, i.reason]), [['h', 'egg']], `poll ${poll}: still in the inbox`);
+    assert.deepEqual([res.newCatches, caught()], [[], []], `poll ${poll}: no catch filed`);
+    assert.ok(!R.feedList(d).some((f) => f.type === 'catch' && f.area !== 'starter'), `poll ${poll}: no "caught" line in the log`);
+  }
+  assert.equal(d.get('live:p1').party.find((m) => m.key === 'h').hatched, true, 'the live team carries the mark');
+  // put in the PC (the live team no longer has it): still the hatched egg, not a catch
+  const boxed = R.applySnapshot(d, M, 2, 'p1', { source: 'live', party: [starter], boxes: [hatched] });
+  assert.deepEqual(boxed.inbox.map((i) => [i.mon.key, i.reason]), [['h', 'egg']]);
+  const again = R.applySnapshot(d, M, 2, 'p1', { source: 'live', party: [starter], boxes: [hatched] });
+  assert.deepEqual([again.inbox.map((i) => i.reason), caught()], [['egg'], []]);
+  // reopened (a new session, the same run): the mark in the live team still holds
+  const d2 = mkDoc();
+  R.applySnapshot(d2, M, 2, 'p1', { source: 'live', party: [starter] });
+  d2.set('live:p1', { ...d2.get('live:p1'), party: [...d2.get('live:p1').party, { key: 'h', area: null, species: 175, level: 5, hatched: true }] });
+  const reopened = R.applySnapshot(d2, M, 2, 'p1', { source: 'live', party: [starter, hatched] });
+  assert.deepEqual(reopened.inbox.map((i) => [i.mon.key, i.reason]), [['h', 'egg']]);
+  // another run of the same game knows nothing of it: a level-1 Pokémon with that key never seen as an egg is a catch
+  const other = mkDoc();
+  R.applySnapshot(other, M, 2, 'p1', { source: 'live', party: [starter] });
+  assert.deepEqual(R.applySnapshot(other, M, 2, 'p1', { source: 'live', party: [starter, hatched] }).newCatches.length, 1);
+});
