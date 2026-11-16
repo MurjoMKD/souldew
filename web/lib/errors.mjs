@@ -57,6 +57,7 @@ const TEXTS = {
   emulatorOpen: (v) => t('err.emulatorOpen', '{emu} is already open – start the game there, or close {emu} and start it from here', v),
   ctrNoPatch: () => t('err.ctrNoPatch', 'Nintendo 3DS games can’t be patched here'),
   ctrInArchive: () => t('err.ctrInArchive', 'Unpack the 3DS game from its archive into the library first'),
+  shinyUnsupported: () => t('err.shinyUnsupported', 'This run changes the shiny rate, and souldew can’t build that into this copy of the game – it needs an original Gen 3–5 game (Game Boy Advance or DS).'),
 // (one text for playing and randomizing: the player, the randomizer and Azahar all need a decrypted dump)
   ctrEncrypted: () => t('err.ctrEncrypted', 'This 3DS game file is encrypted. souldew and Azahar only play decrypted games, and the randomizer needs a decrypted copy too (.3ds, .cci or .cxi) – souldew doesn’t decrypt games. Dump your cartridge decrypted (for example with GodMode9 on your 3DS) and add that file.'),
   notCtr: () => t('err.notCtr', 'Not a Nintendo 3DS game'),

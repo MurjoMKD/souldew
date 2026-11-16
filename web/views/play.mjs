@@ -28,6 +28,7 @@ import { SlowWatch, slowTips } from '../lib/slowdown.mjs';
 import { gpuBackends } from '/shared/gpu.mjs';
 import { GPU_LABELS } from './settings.mjs';
 import { CTR_LAYOUTS, ctrLayoutAspect } from '/shared/ctrlayout.mjs';
+import { shinyThreshold } from '/shared/shiny.mjs';
 import { claimPad } from '../lib/padnav.mjs';
 import { presenceLoop, presenceBody } from '../lib/presence.mjs';
 
@@ -67,6 +68,8 @@ function useTarget() {
       rom: `/api/runs/${manifest.id}/file?inline=1&name=${encodeURIComponent(out.rom)}`, name: out.rom.replace(/\.\w+$/, ''),
       saveUrl: `/api/runs/${manifest.id}/save/${me}`, stateId: `run-${manifest.id}-${me}`, label: manifest.name, gameId: manifest.game?.id,
       runId: manifest.id, params: { run: manifest.id },
+      // the run's game may call more Pokémon shiny (shared/shiny.mjs) – the live reader counts them as the game does
+      shinyOdds: shinyThreshold(manifest.shiny),
     };
   }
   if (p.rom) {
@@ -947,7 +950,7 @@ export function GameSession({ session, mode }) {
             // a hack's own Pokémon in the slots (Light Platinum); an expanded engine's own items and moves (Unbound); the
             // ROM's types and badge flags (the battle's current types, Gen 3 badges)
             const own = romOwnNow();
-            const TT = (sp ? T.withSpecies(sp, own) : T).withRom(own);
+            const TT = (sp ? T.withSpecies(sp, own) : T).withRom(own).withShinyOdds(target.shinyOdds);
             const res = readLiveParty(ent, e.read, TT, state);
             if (!fc && romDataReady()) {
               const rd = romDataNow();
@@ -1651,7 +1654,7 @@ export function ExternalFeed() {
         sp = romSpeciesNow();
         if (sp?.engine === 'expanded' || romMaps3Now()?.moved) return;
       }
-      const res = readLiveParty(entry, regionReader(liveInfo.regions), sp ? T.withSpecies(sp) : T, readState.current);
+      const res = readLiveParty(entry, regionReader(liveInfo.regions), (sp ? T.withSpecies(sp) : T).withShinyOdds(shinyThreshold(manifest.shiny)), readState.current);
       if (res?.party) applySnap({ source: 'live', party: confirmFaints(res.party, readState.current), game: entry.id, ...(res.badges !== undefined ? { badges: res.badges } : {}) });
     })().catch((err) => console.warn('live frame', err));
   }, [liveInfo?.at]);

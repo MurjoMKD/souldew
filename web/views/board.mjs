@@ -8,7 +8,7 @@ import { play } from '../lib/sound.mjs';
 import {
   progression, pairState, setEncounter, markDead, revive, markExtraDead, party, live, counts, checks, feedList, feed, feedText, causeText, msg, areaName, joinNames,
   players as getPlayers, rules as getRules, levelCap, dupeOf, resumeRun, slotsOf, encounter, openAreas, runStats, isNuzlocke, logCheatRule,
-  logTypeHelpRule, allowedRulesPatch, isHost, HOST_SLOT,
+  logTypeHelpRule, allowedRulesPatch, isHost, HOST_SLOT, shinyNote,
 } from '../lib/run.mjs';
 import { PartyPanel, PartyGrid, TeamColumns, unhatched } from './party.mjs';
 import { HostCode } from './invitecode.mjs';
@@ -190,7 +190,7 @@ function BoardHead({ counts: c }) {
         ${stat('alive', c.linked, t('board.alive', 'alive'))}${stat('dead', c.dead, t('board.dead', 'dead'))}${stat('', c.waiting, t('board.waiting', 'waiting'))}</div>`;
   return html`<div class="stack" style="margin-bottom:6px">
     <div class="row"><h1 style="margin-right:auto">${manifest.name}</h1>
-      <span class="small muted">${solo ? `${t('board.nuzlocke', 'Nuzlocke')} · ` : ''}${h ? h.name : g ? gameTitle(g) : manifest.game?.title || ''}${manifest.randomizer?.enabled ? ` · ${t('board.randomized', 'randomized')}` : ''}</span>
+      <span class="small muted">${solo ? `${t('board.nuzlocke', 'Nuzlocke')} · ` : ''}${h ? h.name : g ? gameTitle(g) : manifest.game?.title || ''}${manifest.randomizer?.enabled ? ` · ${t('board.randomized', 'randomized')}` : ''}${shinyNote(manifest) ? ` · ${shinyNote(manifest)}` : ''}</span>
       ${invite && html`<button class="btn primary small" onClick=${() => setModal('invite')}><${Icon} name="user" size=${14} />${t('board.invitePlayer', 'Invite player')}</button>`}
       <${FilesMenu} />
       ${!st && html`<button class="btn small ghost" onClick=${() => setModal('end')}><${Icon} name="grave" size=${14} />${t('board.endRun', 'End run')}</button>`}</div>

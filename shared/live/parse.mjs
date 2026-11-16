@@ -141,7 +141,22 @@ export class LiveTables {
     t.badges3 = Number.isInteger(rom.caps?.badgeFlags) ? rom.caps.badgeFlags : null;
     return t;
   }
+
+  /**
+   * These tables for a run whose game compares with another shiny threshold (shared/shiny.mjs shinyThreshold – the
+   * run's shiny rate): a Pokémon is shiny when its shiny value is below it, as the game itself decides.
+   */
+  withShinyOdds(odds) {
+    if (!Number.isInteger(odds) || odds === SHINY_ODDS) return this;
+    const t = Object.create(this);
+    t.shinyOdds = odds;
+    return t;
+  }
 }
+
+/** Gen 3–5: shiny when the XOR of the halves of OT ID and personality is below this (8 – or the run's own, withShinyOdds). */
+const SHINY_ODDS = 8;
+const isShiny = (pid, otId, T) => (((pid >>> 16) ^ (pid & 0xffff) ^ (otId >>> 16) ^ (otId & 0xffff)) >>> 0) < (T?.shinyOdds ?? SHINY_ODDS);
 
 // ---------------------------------------------------------------------------
 // Gen 1 / 2 (Game Boy): plain structs, big-endian HP, internal species index in Gen 1.
@@ -254,7 +269,7 @@ export function parsePk3(d, T) {
   if (!species) return null;
   const origins = u16le(M, 2);
   const ivs = u32le(M, 4);
-  const shiny = (((pid >>> 16) ^ (pid & 0xffff) ^ (otId >>> 16) ^ (otId & 0xffff)) >>> 0) < 8;
+  const shiny = isShiny(pid, otId, T);
   const item = u16le(G, 2);
   const moves = [u16le(A, 0), u16le(A, 2), u16le(A, 4), u16le(A, 6)];
   return {
@@ -694,7 +709,7 @@ function pkMon(raw, gen, T) {
     pid, species, nickname, isEgg: !!(iv32 & 0x40000000), item: u16le(d, 0x0a),
     moves: [u16le(d, 0x28), u16le(d, 0x2a), u16le(d, 0x2c), u16le(d, 0x2e)].filter(Boolean),
     metLocation, eggLocation, metLevel: d[0x84] & 0x7f, gender: ['M', 'F', '-'][(d[0x40] >> 1) & 3],
-    shiny: (((pid >>> 16) ^ (pid & 0xffff) ^ tid ^ sid) >>> 0) < 8,
+    shiny: isShiny(pid, ((sid << 16) | tid) >>> 0, T),
     status: gen === 5 ? gen5Status(d[0x88]) : d[0x88], level: d[0x8c], hp: u16le(d, 0x8e), maxHp: u16le(d, 0x90),
   };
 }
@@ -1363,7 +1378,6 @@ function battleStructs(entry, read, state, party) {
   if (state.bmonStale && state.bmonStale === foe.pid) return { why: 'foe-stale' };
   return { me, foe, foe2: saneBattleMon(foe2) && foe2.pid !== foe.pid ? foe2 : null, ally: saneBattleMon(ally) ? ally : null };
 }
-const shinyOf = (pid, otId) => (((pid >>> 16) ^ (pid & 0xffff) ^ (otId >>> 16) ^ (otId & 0xffff)) >>> 0) < 8;
 
 function battleDS(entry, read, T, state, party) {
   if (!party?.length) return null;
@@ -1442,7 +1456,7 @@ function battleDS(entry, read, T, state, party) {
     }
     const use = s.foe ? s : state.bmonHeld && now - state.bmonHeld.at < 3000 ? state.bmonHeld.s : null; // a switch in progress
     note(state, s.foe ? `struct ${s.foe.species}/${s.foe.level}` : use ? `held (${s.why})` : `none (${s.why})`, flag);
-    if (use) return (state.battle = structBattle(use, party, live));
+    if (use) return (state.battle = structBattle(use, party, live, T));
     if (state.bmonOk) {
       // in battle, the opponent not sent out yet (or the previous battle's still there): a battle without an opponent
       if (flag) return (state.battle = { kind: state.battle?.kind || 'wild', enemy: null, active: null });
@@ -1649,10 +1663,10 @@ function gen5Active(read, state, party, hpOf, structs) {
 }
 
 /** The battle from the battle structs; `live` is the battle's party copy (HP of the mons that aren't out). */
-function structBattle({ me, foe, foe2, ally }, party, live) {
+function structBattle({ me, foe, foe2, ally }, party, live, T) {
   // a double battle: the one still standing (battler 1 first) leads, and both are listed while both stand
   const f = foe.hp === 0 && foe2?.hp > 0 ? foe2 : foe;
-  const enemyOf = (x) => ({ species: x.species, level: x.level, hp: x.hp, maxHp: x.maxHp, shiny: shinyOf(x.pid, x.otId), moves: x.moves });
+  const enemyOf = (x) => ({ species: x.species, level: x.level, hp: x.hp, maxHp: x.maxHp, shiny: isShiny(x.pid, x.otId, T), moves: x.moves });
   const index = party.findIndex((p) => p.pid === me.pid);
   // the player's second battler in a double battle – only when it's one of the player's own (a multi battle's
   // partner sends out theirs)
