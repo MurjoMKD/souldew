@@ -212,14 +212,35 @@ layout();
 // ff_frame), and says by how much ("ffrate", right before that sound – the worklet hands the ratio to the mixer when the
 // sound plays); the mixer then plays what Settings › "Turbo audio" asks for: the music recorded at 1× going on
 // ("music"), silence ("mute"), the sped-up original ("original"), or the host's sound with no mixer at all ("plain").
-// The worklet keeps a little more in hand than for the fast player: the sound comes between pictures of up to 7 MB.
+// The worklet keeps more in hand than for the fast player: the sound comes between pictures of up to 7 MB.
 const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
-const audio = { ctx: null, node: null, gain: null, key: null, events: [], probes: [], rate: 0, exact: false };
+const audio = { ctx: null, node: null, gain: null, key: null, events: [], probes: [], taps: [], rate: 0, exact: false, win: null, last: null };
 /**
- * The worklet's buffer (frames): start / restart once 60 ms are there, fold the excess in gently above 200 ms (only if
- * the sound runs ahead of the sound card's clock for long – ctrhost paces 1× by the core's sound), never over 400 ms.
+ * The worklet's buffer (frames, lib/jitterring.mjs): start / restart once 60 ms are there – more after each gap, up to
+ * 240 ms, for a PC whose sound arrives late now and then –, read a little faster above 200 ms (the late sound queued
+ * behind a gap; ctrhost paces 1× by the core's sound, so nothing else piles up), skip ahead above 450 ms.
  */
-const ringFor = (rate) => ({ prime: Math.round(rate * 0.06), trim: Math.round(rate * 0.2), maxLag: Math.round(rate * 0.4) });
+const ringFor = (rate) => ({ prime: Math.round(rate * 0.06), primeMax: Math.round(rate * 0.24), trim: Math.round(rate * 0.2), maxLag: Math.round(rate * 0.45) });
+/**
+ * Diagnostics (perf().last, logged by the play view every 10 s): what the sound buffer went through over the last 10 s
+ * of sound – gaps, how long it was silent for them, how much it skipped, how long it read faster or slower, its fill.
+ */
+function ringWindow(r) {
+  const rate = audio.ctx?.sampleRate || 32728;
+  const w = audio.win;
+  if (!w || r.underruns < w.underruns) audio.win = { ...r, at: performance.now() };
+  else if (performance.now() - w.at >= 10000) {
+    audio.last = {
+      soundGaps: r.underruns - w.underruns,
+      soundSilentMs: Math.round(((r.silent - w.silent) / rate) * 1000),
+      soundSkippedMs: Math.round(((r.dropped - w.dropped) / rate) * 1000),
+      soundResampledPct: Math.round(((r.resampled - w.resampled) * 128 * 100) / (((performance.now() - w.at) / 1000) * rate)),
+      soundMs: Math.round((r.lag / rate) * 1000),
+      soundPrimeMs: Math.round((r.prime / rate) * 1000),
+    };
+    audio.win = { ...r, at: performance.now() };
+  }
+}
 function tellAudio(m) {
   audio.node?.port.postMessage(m);
 }
@@ -237,6 +258,8 @@ async function startAudio(rate) {
     await audio.ctx.audioWorklet.addModule('/lib/native-audio-worklet.mjs');
     audio.node = new AudioWorkletNode(audio.ctx, 'native-audio', { outputChannelCount: [2], processorOptions: { init: audioInit(), ...ringFor(audio.ctx.sampleRate) } });
     audio.node.port.onmessage = (e) => {
+      if (e.data?.type === 'tap') return audio.taps.splice(0).forEach((f) => f(e.data));
+      if (e.data?.type === 'ring') return ringWindow(e.data.ring);
       const ev = e.data?.e;
       if (!ev) return;
       if (ev.type === 'error') st.log.push(`turbo audio: ${ev.message}`);
@@ -697,7 +720,23 @@ window.__emu = {
       setTimeout(() => res(null), 2000);
     });
   },
-  perf: () => ({ fps: st.fps, speed: st.hostSpeed, frames: st.hostFrame, shown: st.frames, title: st.title, liveMemory: st.liveMemory, error: st.error, renderer: st.renderer, log: st.log.slice(-20) }),
+  /**
+   * Tests, diagnostics: a recording of what the sound worklet plays over the next `seconds` (before the volume) –
+   * { sampleRate, l, r, ring } (ring: the buffer's numbers, lib/jitterring.mjs) – or null without sound.
+   */
+  audioTap(seconds = 10) {
+    if (!audio.node) return Promise.resolve(null);
+    return new Promise((res) => {
+      audio.taps.push(res);
+      tellAudio({ type: 'tap', frames: Math.round(audio.ctx.sampleRate * seconds) });
+      setTimeout(() => res(null), seconds * 1000 + 5000);
+    });
+  },
+  perf: () => ({
+    fps: st.fps, speed: st.hostSpeed, frames: st.hostFrame, shown: st.frames, title: st.title, liveMemory: st.liveMemory, error: st.error, renderer: st.renderer, log: st.log.slice(-20),
+    sound: audio.ctx ? { contextRate: audio.ctx.sampleRate, state: audio.ctx.state, baseLatencyMs: +(audio.ctx.baseLatency * 1000).toFixed(1), outputLatencyMs: +((audio.ctx.outputLatency || 0) * 1000).toFixed(1) } : null,
+    last: audio.last,
+  }),
   /** Tests / diagnostics: hold buttons by name (["a"], ["up", "b"] …) – what a controller would do. */
   hold(names = []) {
     inp.keys = names.reduce((m, n) => (n in BIT ? m | (1 << BIT[n]) : m), 0);
