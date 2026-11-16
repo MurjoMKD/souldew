@@ -4,6 +4,31 @@
 
 ## 2.7.5
 
+- **Catch chance in wild battles** (a community idea). The battle help now shows your chance to catch the wild
+  Pokémon with a Poké Ball, Great Ball and Ultra Ball – plus a Net, Nest or Beast Ball where it helps. It is worked out
+  live with each generation's own formula, from the Pokémon's catch rate, HP, level and status, and uses the game's own
+  catch rates, so ROM hacks and randomized runs show the right numbers. The foe's status now shows in the battle help
+  too. Status is read in Gen 1–5; in the 3DS games the chance is shown without it, and the panel says so.
+- **New rule: Lives** (a community idea). Give a run a number of lives, for example 20. Every Pokémon that falls costs
+  one, and the death that takes the last one ends the run. In a SoulLink the lives are shared or per player; only the
+  Pokémon that fell costs a life, not the partners that go with it. Undoing a death gives the life back. Lives left show
+  on the board, next to the game and in the death notice, with a quiet warning when only a few are left. Off by default
+  – set it when you create a run or under Rules.
+- **Shiny rate** (a community idea). New runs of the original Gen 3–5 games can make shinies more common: 1 in 4096,
+  1024, 512 or 256 instead of 1 in 8192, and in Gen 3 and 4 trainers' Pokémon can be shiny too. It works with and
+  without the randomizer, and every player in a SoulLink gets the same rate. Shinies from a raised rate fill the
+  Pokédex but don't count for the shiny achievements. Not for ROM hacks, Gen 1/2 or the 3DS games.
+- **Missed encounters remember the Pokémon** (thanks to a player on Discord). When an encounter gets away, souldew now
+  fills in which Pokémon it was if it saw the battle. A new switch under the dupes clause, “Fled or knocked-out
+  encounters count as dupes”, makes such a Pokémon block its evolution line (off by default). And SoulLinks now ask
+  after a wild battle without a catch whether it got away, like solo Nuzlockes do – marking it as spent fails the pair
+  and tells your partner. No more question when the area you're in already has your encounter.
+- **Messages always in your language** (thanks to a player for the report). Error messages, the log while a run is
+  built, save-file problems, update errors and the menu before the app has loaded showed some German text with English,
+  French, Spanish or Italian selected. A partner's ping and “boss defeated” in the log now show in your language too.
+- **Black and White: the place sign works in every language** (thanks to a player on Discord). In versions other than
+  English it showed Black City in the intro and then no place at all. souldew now reads the game's own copy of the
+  zone data, and the title screen no longer shows Black City (Black/White, and Black 2/White 2 when switched on).
 - **Badges and level caps in every language of Diamond, Pearl, Platinum, HeartGold and SoulSilver** (thanks to a player
   on Discord for the report). In versions other than English, souldew found the team but never the badges: the overlay
   showed none and the level cap stayed at the first gym's, so a team at level 10 after Falkner was flagged as over the
