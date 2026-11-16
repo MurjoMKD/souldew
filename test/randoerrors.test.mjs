@@ -39,7 +39,7 @@ test('a randomizer crash becomes a translated answer naming only the exception\'
   assert.deepEqual(e.vars.trace, [AIOOBE, 'Gen5RomHandler.setStarters:1']);
   assert.ok(!body.includes('/Users/someone'));
   const io = randomizerError(bridgeFailure('java.io.FileNotFoundException: /Users/someone/Library/Caches/souldew/a/0/1/6 (No such file)'));
-  assert.equal(io.vars.trace[0], 'java.io.FileNotFoundException: …/6 (No such file)');
+  assert.equal(io.vars.trace[0], 'java.io.FileNotFoundException: … (No such file)');
   // a wrapped one (UPR's RandomizerIOException) and one without an @@ERROR line
   assert.equal(randomizerError(bridgeFailure('com.dabomstew.pkrandom.exceptions.RandomizerIOException: java.io.FileNotFoundException: /x/a002')).vars.what, 'RandomizerIOException');
   const bare = randomizerError(Object.assign(new Error('Randomizer-Fehler: Exit-Code 137'), { details: { error: null, exitCode: 137, stdout: '', stderr: '' } }));
@@ -132,24 +132,36 @@ test('a randomizer message names no folder – not even one with spaces in it (W
   const { randomizerTrace } = await import('../server/lib/toolchain.mjs');
   const first = (error) => randomizerTrace({ error })[0];
   const cases = [
-    ['java.io.FileNotFoundException: C:\\Users\\Max Mustermann\\AppData\\Local\\souldew\\Cache\\upr-work\\ab12\\6 (Das System kann die angegebene Datei nicht finden)', 'java.io.FileNotFoundException: …/6 (Das System kann die angegebene Datei nicht finden)'],
-    ['java.io.FileNotFoundException: C:/Users/Max Mustermann/Spiele/White.nds (Access is denied)', 'java.io.FileNotFoundException: …/White.nds (Access is denied)'],
-    ['java.io.IOException: \\\\nas\\Spiele von Max\\White.nds', 'java.io.IOException: …/White.nds'],
-    ['java.io.FileNotFoundException: /Users/anna maria/Library/Application Support/SoulLink Studio/cache/a/0/1/6 (No such file or directory)', 'java.io.FileNotFoundException: …/6 (No such file or directory)'],
-    ['java.io.FileNotFoundException: /home/jan de vries/.cache/souldew/a002 (Permission denied)', 'java.io.FileNotFoundException: …/a002 (Permission denied)'],
-    ['java.io.IOException: file:/Users/anna maria/x.nds', 'java.io.IOException: file:…/x.nds'],
+    ['java.io.FileNotFoundException: C:\\Users\\Max Mustermann\\AppData\\Local\\souldew\\Cache\\upr-work\\ab12\\6 (Das System kann die angegebene Datei nicht finden)', 'java.io.FileNotFoundException: … (Das System kann die angegebene Datei nicht finden)'],
+    ['java.io.FileNotFoundException: C:/Users/Max Mustermann/Spiele/White.nds (Access is denied)', 'java.io.FileNotFoundException: … (Access is denied)'],
+    ['java.io.IOException: \\\\nas\\Spiele von Max\\White.nds', 'java.io.IOException: …'],
+    ['java.io.FileNotFoundException: /Users/anna maria/Library/Application Support/SoulLink Studio/cache/a/0/1/6 (No such file or directory)', 'java.io.FileNotFoundException: … (No such file or directory)'],
+    ['java.io.FileNotFoundException: /home/jan de vries/.cache/souldew/a002 (Permission denied)', 'java.io.FileNotFoundException: … (Permission denied)'],
+    ['java.io.IOException: file:/Users/anna maria/x.nds', 'java.io.IOException: file:…'],
+    // the last part of a path is a user's folder too (it was kept as the file's name: "…/Max")
+    ['java.io.IOException: x.nds (in C:\\Users\\Max)', 'java.io.IOException: x.nds (in …)'],
+    ['java.io.IOException: C:\\Users\\Max Mustermann', 'java.io.IOException: …'],
+    ['java.io.IOException: /home/max', 'java.io.IOException: …'],
+    // relative paths (they were left as they were)
+    ['java.io.FileNotFoundException: Users\\Max\\rom.gba (x)', 'java.io.FileNotFoundException: … (x)'],
+    ['java.io.FileNotFoundException: ..\\Max Mustermann\\x.gba', 'java.io.FileNotFoundException: …'],
+    ['java.io.FileNotFoundException: ../Max Mustermann/x.gba (No such file or directory)', 'java.io.FileNotFoundException: … (No such file or directory)'],
+    ['java.io.IOException: cannot open Users/Max/x.gba now', 'java.io.IOException: cannot open …'],
+    ['java.io.IOException: Spiele\\Max\\x.gba', 'java.io.IOException: …'],
   ];
   for (const [error, want] of cases) {
     const got = first(error);
     assert.equal(got, want);
-    for (const name of ['Max', 'Mustermann', 'anna', 'maria', 'jan de vries', 'Users', 'home']) assert.ok(!got.includes(name), `${name} in ${got}`);
+    for (const name of ['Max', 'Mustermann', 'anna', 'maria', 'jan de vries', 'Users', 'home', 'Spiele']) assert.ok(!got.includes(name), `${name} in ${got}`);
   }
   // what isn't a path stays as it is: a class name's slashes, a message without a path
   assert.equal(first('java.lang.NoClassDefFoundError: com/dabomstew/pkrandom/Foo'), 'java.lang.NoClassDefFoundError: com/dabomstew/pkrandom/Foo');
+  for (const keep of ['java.lang.IllegalStateException: com.dabomstew.pkrandom.Foo.bar:123', 'java.lang.NoClassDefFoundError: com/dabomstew/pkrandom/romhandlers/Gen5RomHandler$1 (wrong name: x)',
+    'java.lang.IllegalArgumentException: 3 / 4 slots', 'java.lang.RuntimeException: Users of this ROM: 2']) assert.equal(first(keep), keep);
   assert.equal(first(AIOOBE), AIOOBE);
   // the stack trace's first exception line, when no @@ERROR line came, is stripped the same way
   const fromStderr = randomizerTrace({ stderr: 'java.io.FileNotFoundException: C:\\Users\\Max Mustermann\\a\\6 (x)\n\tat com.dabomstew.pkrandom.romhandlers.Gen5RomHandler.loadRom(Gen5RomHandler.java:12)' });
-  assert.deepEqual(fromStderr, ['java.io.FileNotFoundException: …/6 (x)', 'Gen5RomHandler.loadRom:12']);
+  assert.deepEqual(fromStderr, ['java.io.FileNotFoundException: … (x)', 'Gen5RomHandler.loadRom:12']);
 });
 
 test('the randomizer\'s answer never waits for its working folder to go (Windows: a scanner holding a file)', async (t) => {

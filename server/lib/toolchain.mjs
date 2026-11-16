@@ -226,17 +226,20 @@ export function randomizerError(e) {
  * reports, 2.7.4). Only class names and line numbers: no paths, no ROM data.
  */
 /**
- * A path inside a message, up to its last separator: a drive (C:\ or C:/), a UNC share (\\server) or a separator that
- * doesn't continue a word (/Users/…, ~/…, but not the "com/dabomstew" of a class name). Folder names may hold spaces
+ * A path inside a message, the whole of it – its last part too, which can be the user's folder ("x.nds (in C:\Users\Max)"):
+ * from a drive (C:\ or C:/), a UNC share or a root with a folder after it (\\server\…, /Users/…, but not the
+ * "com/dabomstew" of a class name), a relative path starting at a user folder's parent or a ".." ("Users\Max\…",
+ * "..\Max Mustermann\…") or any word with a backslash in it (a class name never has one). Folder names may hold spaces
  * ("C:\Users\Max Mustermann\…", "/Users/anna maria/Library/Application Support/…"), so it runs to the line's last
- * separator – a message with text after a path loses a little of it rather than show a user name.
+ * separator and then to the reason Java puts after a file (" (No such file or directory)"), a ")" or the line's end – a
+ * message with text after a path loses a little of it rather than show a user name.
  */
-export const PATH_IN_TEXT = /(?:(?<![A-Za-z])[A-Za-z]:[\\/]|(?<![\w.$-])[\\/])[^\r\n]*[\\/]/g;
+export const PATH_IN_TEXT = /(?:(?<![A-Za-z])[A-Za-z]:[\\/]|(?<![\w.$-])(?:\.\.?|[Uu]sers|home)[\\/]|(?<![^\s"'(=,])[^\s"'(=,\\/]*\\|(?<![\w.$-])[\\/](?=[^\r\n]*[\\/]))(?:[^\r\n]*[\\/])?[^\r\n]*?(?=\s\(|\)|[\r\n]|$)/g;
 
 export function randomizerTrace(details = {}) {
   const lines = String(details.stderr || '').split(/\r?\n/);
   const msg = (String(details.error || '').trim() || lines.find((l) => /(?:Exception|Error)\b/.test(l)) || '')
-    .replace(PATH_IN_TEXT, '…/') // a file the randomizer named: its name only, not where it lies
+    .replace(PATH_IN_TEXT, '…') // a file the randomizer named: neither where it lies nor its name (a user's folder can be both)
     .trim()
     .slice(0, 200);
   const frames = [];
