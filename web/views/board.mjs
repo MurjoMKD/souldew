@@ -8,13 +8,13 @@ import { play } from '../lib/sound.mjs';
 import {
   progression, pairState, setEncounter, markDead, revive, markExtraDead, party, live, counts, checks, feedList, feed, feedText, causeText, msg, areaName, joinNames,
   players as getPlayers, rules as getRules, levelCap, dupeOf, resumeRun, slotsOf, encounter, openAreas, runStats, isNuzlocke, logCheatRule,
-  logTypeHelpRule, allowedRulesPatch, isHost, HOST_SLOT,
+  logTypeHelpRule, allowedRulesPatch, isHost, HOST_SLOT, lastWildAt, genOfRun,
 } from '../lib/run.mjs';
 import { PartyPanel, PartyGrid, TeamColumns, unhatched } from './party.mjs';
 import { HostCode } from './invitecode.mjs';
 import { RestartModal } from './restart.mjs';
 import { useStreamer } from '../lib/streamer.mjs';
-import { NuzlockeRules, Choice, TypeHelpRule } from './nuzrules.mjs';
+import { NuzlockeRules, Choice, TypeHelpRule, MissedDupesRule } from './nuzrules.mjs';
 import { ShareButton, HallOfFame } from './liveshare.mjs';
 import { deathEvent } from '../lib/liveshare.mjs';
 
@@ -470,7 +470,7 @@ function Inbox() {
       return html`<div class="inbox-item">
         <${Sprite} id=${it.mon.species} shiny=${it.mon.shiny} gen=${runData.gen} />
         <div><b>${it.mon.nickname || speciesName(it.mon.species)}</b> <span class="small muted">${t('common.lv', 'Lv')} ${it.mon.level || it.mon.metLevel || '?'}${it.mon.shiny ? ` · ${t('common.shiny', 'shiny')}` : ''}</span>
-          <div class="small muted">${it.where ? t('inbox.caughtAt', 'Caught at {where}', { where: it.where }) : t('inbox.noLocation', 'This game doesn’t record where it was caught')}${it.reason === 'occupied' ? ` – ${t('inbox.occupied', 'you already have an encounter there')}` : ''}${it.reason === 'egg' ? ` – ${t('inbox.egg', 'hatched from an egg: pick the area it counts for')}` : ''}${it.reason === 'special' ? ` – ${t('inbox.special', 'a trade or gift, not a route encounter: pick the area it counts for')}` : ''}${it.reason === 'dupe' ? ` – ${t('inbox.dupe', 'dupes clause: this evolution line is already caught ({area})', { area: areaName(doc, manifest, it.dupeArea) })}` : ''}</div></div>
+          <div class="small muted">${it.where ? t('inbox.caughtAt', 'Caught at {where}', { where: it.where }) : t('inbox.noLocation', 'This game doesn’t record where it was caught')}${it.reason === 'occupied' ? ` – ${t('inbox.occupied', 'you already have an encounter there')}` : ''}${it.reason === 'egg' ? ` – ${t('inbox.egg', 'hatched from an egg: pick the area it counts for')}` : ''}${it.reason === 'special' ? ` – ${t('inbox.special', 'a trade or gift, not a route encounter: pick the area it counts for')}` : ''}${it.reason === 'dupe' ? ` – ${it.dupeMissed ? t('inbox.dupeMissed', 'dupes clause: this evolution line already got away once ({area})', { area: areaName(doc, manifest, it.dupeArea) }) : t('inbox.dupe', 'dupes clause: this evolution line is already caught ({area})', { area: areaName(doc, manifest, it.dupeArea) })}` : ''}</div></div>
         <div class="row" style="gap:6px">
           <select value=${sel} onChange=${(e) => setAssign({ ...assign, [it.mon.key]: e.target.value })} aria-label=${t('inbox.chooseArea', 'Choose area')}>
             <option value="">${t('inbox.chooseArea', 'Choose area')} …</option>
@@ -588,7 +588,7 @@ function RoutesTab() {
           <div class="area-name"><strong>${item.name}</strong><span>${stateText}${cause}</span></div>
           ${n === 2
             ? html`<${MonButton} enc=${st.encs.p1} slot="p1" onClick=${edit('p1')} /><${RouteThread} /><${MonButton} enc=${st.encs.p2} slot="p2" right onClick=${edit('p2')} />`
-            : slots.map((s) => html`<${MonButton} key=${s} enc=${st.encs[s]} slot=${s} onClick=${edit(s)} label=${`${names[s].name}: ${st.encs[s]?.species ? speciesName(st.encs[s].species) : t('routes.add', '+ add encounter')}`} />`)}
+            : slots.map((s) => html`<${MonButton} key=${s} enc=${st.encs[s]} slot=${s} onClick=${edit(s)} label=${`${names[s].name}: ${st.encs[s]?.outcome === 'missed' ? t('routes.missed', 'missed') : st.encs[s]?.species ? speciesName(st.encs[s].species) : t('routes.add', '+ add encounter')}`} />`)}
           ${actions}
         </div>`;
       })}
@@ -618,11 +618,25 @@ function EncounterModal({ area, slot, onClose }) {
   const [shiny, setShiny] = useState(!!existing?.shiny);
   const names = getPlayers(doc, manifest);
   const solo = isNuzlocke(manifest);
-  const dupe = outcome === 'caught' && species ? dupeOf(doc, manifest, runData, species, slot, area) : null;
+  const r = getRules(doc, manifest);
+  // "Missed": the wild Pokémon this player last fought here, as the battle reader saw it – filled in, never required
+  const seen = existing ? null : lastWildAt(doc, manifest, genOfRun(manifest, runData), area, slot);
+  const pick = (o) => {
+    setOutcome(o);
+    if (o === 'missed' && !species && seen) setSpecies(seen.species);
+  };
+  const dupe = species ? dupeOf(doc, manifest, runData, species, slot, area) : null;
   const save = () => {
-    setEncounter(doc, manifest, area, slot, { outcome, species: outcome === 'caught' ? species : null, nickname: nickname.trim(), level: Number(level) || null, shiny, key: existing?.key || null }, { by: me });
+    setEncounter(doc, manifest, area, slot, { outcome, species, nickname: outcome === 'caught' ? nickname.trim() : '', level: outcome === 'caught' ? Number(level) || null : null, shiny: outcome === 'caught' && shiny, key: (outcome === 'caught' && existing?.key) || null }, { by: me });
     onClose();
   };
+  const dupeText = dupe && (dupe.missed
+    ? solo ? t('enc.dupeMissedSolo', 'Dupes clause: this one already got away from you ({area}) – keep looking.', { area: areaName(doc, manifest, dupe.area) })
+      : t('enc.dupeMissed', 'Dupes clause: this evolution line already got away from {name} ({area}).', { name: names[dupe.slot].name, area: areaName(doc, manifest, dupe.area) })
+    : solo ? t('enc.dupeSolo', 'Dupes clause: you already caught this one ({area}) – keep looking.', { area: areaName(doc, manifest, dupe.area) })
+      : t('enc.dupe', 'Dupes clause: {name} already owns this evolution line ({area}).', { name: names[dupe.slot].name, area: areaName(doc, manifest, dupe.area) }));
+  const shown = species && html`<div class="row"><${Sprite} id=${species} shiny=${outcome === 'caught' && shiny} size=${64} gen=${runData.gen} /><div><h3>${speciesName(species)}</h3><${Types} types=${runData.types(species, slot)} />
+    ${outcome === 'missed' && seen && species === seen.species && html`<p class="tiny faint">${t('enc.missedSeen', 'From the last battle here – souldew saw it live.')}</p>`}</div></div>`;
   return html`<${Modal} open=${true} onClose=${onClose} title=${solo ? areaName(doc, manifest, area) : `${areaName(doc, manifest, area)} · ${names[slot].name}`}
     footer=${html`${existing && html`<button class="btn danger" onClick=${() => { setEncounter(doc, manifest, area, slot, null, { by: me }); onClose(); }}>${t('common.delete', 'Delete')}</button>`}<span class="spacer"></span>
       <button class="btn ghost" onClick=${onClose}>${t('common.cancel', 'Cancel')}</button>
@@ -631,15 +645,21 @@ function EncounterModal({ area, slot, onClose }) {
       ? t('enc.otherHint', 'This is {name}’s slot – usually their game fills it in automatically.', { name: names[slot].name })
       : t('enc.partnerHint', 'This is your partner’s slot – usually their game fills it in automatically.')}</p>`}
     <div class="seg">
-      <button class=${outcome === 'caught' ? 'on' : ''} aria-pressed=${outcome === 'caught'} onClick=${() => setOutcome('caught')}>${t('enc.caught', 'Caught')}</button>
-      <button class=${outcome === 'missed' ? 'on' : ''} aria-pressed=${outcome === 'missed'} onClick=${() => setOutcome('missed')}>${t('enc.missed', 'Missed (fled / fainted)')}</button>
+      <button class=${outcome === 'caught' ? 'on' : ''} aria-pressed=${outcome === 'caught'} onClick=${() => pick('caught')}>${t('enc.caught', 'Caught')}</button>
+      <button class=${outcome === 'missed' ? 'on' : ''} aria-pressed=${outcome === 'missed'} onClick=${() => pick('missed')}>${t('enc.missed', 'Missed (fled / fainted)')}</button>
     </div>
+    ${outcome === 'missed' && html`<div class="stack">
+      <p class="small muted">${r.missedDupes && r.dupes !== 'off'
+        ? t('enc.missedWhichDupes', 'Which Pokémon got away? Optional – with it, its evolution line counts as a dupe.')
+        : t('enc.missedWhich', 'Which Pokémon got away? Optional.')}</p>
+      <${SpeciesPicker} value=${species} onChange=${setSpecies} clearable maxId=${runData.maxSpecies()} extra=${runData.ownSpecies()} typesOf=${(id) => runData.types(id, slot)} />
+      ${shown}
+      ${dupeText && html`<div class="warning">${dupeText}</div>`}
+    </div>`}
     ${outcome === 'caught' && html`<div class="stack">
       <${SpeciesPicker} value=${species} onChange=${setSpecies} autoFocus=${!existing} maxId=${runData.maxSpecies()} extra=${runData.ownSpecies()} typesOf=${(id) => runData.types(id, slot)} />
-      ${species && html`<div class="row"><${Sprite} id=${species} shiny=${shiny} size=${64} gen=${runData.gen} /><div><h3>${speciesName(species)}</h3><${Types} types=${runData.types(species, slot)} /></div></div>`}
-      ${dupe && html`<div class="warning">${solo
-        ? t('enc.dupeSolo', 'Dupes clause: you already caught this one ({area}) – keep looking.', { area: areaName(doc, manifest, dupe.area) })
-        : t('enc.dupe', 'Dupes clause: {name} already owns this evolution line ({area}).', { name: names[dupe.slot].name, area: areaName(doc, manifest, dupe.area) })}</div>`}
+      ${shown}
+      ${dupeText && html`<div class="warning">${dupeText}</div>`}
       <div class="grid-3">
         <label class="field"><span>${t('enc.nickname', 'Nickname')}</span><input type="text" maxLength="12" value=${nickname} onInput=${(e) => setNickname(e.target.value)} /></label>
         <label class="field"><span>${t('enc.level', 'Level')}</span><input type="number" min="1" max="100" value=${level} onInput=${(e) => setLevel(e.target.value)} /></label>
@@ -655,7 +675,7 @@ function DeathModal({ area, onClose }) {
   const slots = slotsOf(manifest);
   const st = pairState(doc, area, slots);
   const n = slots.length;
-  const mons = slots.map((s) => st.encs[s]).filter((e) => e?.species);
+  const mons = slots.map((s) => st.encs[s]).filter((e) => e?.outcome === 'caught' && e.species);
   const an = areaName(doc, manifest, area);
   return html`<${Modal} open=${true} onClose=${onClose}
     title=${n === 1 ? t('death.titleSolo', '{area}: the Pokémon dies', { area: an }) : n > 2 ? t('death.titleGroup', '{area}: the group dies', { area: an }) : t('death.title', '{area}: the pair dies', { area: an })}
@@ -719,7 +739,7 @@ function GravesTab() {
       ? html`<div class="panel empty-state"><${Icon} name="grave" size=${56} /><h2>${t('graves.empty', 'Nobody here yet')}</h2><p class="muted">${t('graves.emptyText', 'May it stay that way.')}</p></div>`
       : html`<div class=${`graves ${slots.length > 2 ? 'wide' : ''}`}>${dead.map((a) => {
         const st = pairState(doc, a.key, slots);
-        const mons = slots.map((s) => [s, st.encs[s]]).filter(([, e]) => e?.species);
+        const mons = slots.map((s) => [s, st.encs[s]]).filter(([, e]) => e?.outcome === 'caught' && e.species);
         const p = st.pair || {};
         const cause = causeText(doc, manifest, p.cause);
         const lv = p.level ?? (solo ? mons[0]?.[1]?.level : null);
@@ -884,8 +904,11 @@ export function RulesTab() {
           player: t('rules.dupesPlayerHint', 'Per player: a line you caught yourself doesn’t count again for you – the others’ catches don’t matter for you.'),
           both: n > 2 ? t('rules.dupesAllHint', 'For everyone: a line one of you caught doesn’t count again for any of you.') : t('rules.dupesBothHint', 'For both: a line one of you caught doesn’t count again for either of you.'),
         }[r.dupes] || ''}
-        ${r.dupes !== 'off' ? ` ${n > 2 ? t('rules.dupesWhichGroup', 'Every catch counts, also one whose group failed or died – a Pokémon that fled or was knocked out doesn’t.') : t('rules.dupesWhich', 'Every catch counts, also one whose pair failed or died – a Pokémon that fled or was knocked out doesn’t.')}` : ''}</p>
-        <${Choice} label=${t('rules.dupes', 'Dupes clause')} value=${r.dupes} onChange=${(v) => set({ dupes: v })} options=${[['off', t('rules.off', 'Off')], ['player', t('rules.perPlayer', 'Per player')], ['both', n > 2 ? t('rules.forAll', 'For everyone') : t('rules.forBoth', 'For both')]]} /></div>
+        ${r.dupes === 'off' ? '' : r.missedDupes
+          ? ` ${n > 2 ? t('rules.dupesWhichGroupMissed', 'Every catch counts, also one whose group failed or died.') : t('rules.dupesWhichMissed', 'Every catch counts, also one whose pair failed or died.')}`
+          : ` ${n > 2 ? t('rules.dupesWhichGroup', 'Every catch counts, also one whose group failed or died – a Pokémon that fled or was knocked out doesn’t.') : t('rules.dupesWhich', 'Every catch counts, also one whose pair failed or died – a Pokémon that fled or was knocked out doesn’t.')}`}</p>
+        <${Choice} label=${t('rules.dupes', 'Dupes clause')} value=${r.dupes} onChange=${(v) => set({ dupes: v })} options=${[['off', t('rules.off', 'Off')], ['player', t('rules.perPlayer', 'Per player')], ['both', n > 2 ? t('rules.forAll', 'For everyone') : t('rules.forBoth', 'For both')]]} />
+        ${r.dupes !== 'off' && html`<${MissedDupesRule} value=${r.missedDupes} onChange=${(v) => set({ missedDupes: v })} />`}</div>
       <label class="check"><input type="checkbox" checked=${r.failKillsPair} onChange=${(e) => set({ failKillsPair: e.target.checked })} /><span>${n > 2 ? t('rules.failGroup', 'A missed encounter costs the whole group') : t('rules.fail', 'A missed encounter costs the whole pair')}</span></label>
       <label class="check"><input type="checkbox" checked=${r.shinyClause} onChange=${(e) => set({ shinyClause: e.target.checked })} /><span>${t('rules.shiny', 'Shiny clause: shinies may always be caught and stay unlinked')}</span></label>
       <label class="check"><input type="checkbox" checked=${!!r.levelCaps} onChange=${(e) => set({ levelCaps: e.target.checked })} /><span>${t('rules.caps', 'Check level caps')}</span></label>

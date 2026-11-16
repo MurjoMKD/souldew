@@ -119,8 +119,11 @@ function CenterCounter({ limit }) {
   </span>`;
 }
 
+// (a missed encounter may know the Pokémon that got away – it is no team member: shown as "missed")
+const caughtSpecies = (enc) => (enc?.outcome === 'caught' ? enc.species : null);
+
 function PairMon({ mon, enc, dead, gen, side }) {
-  const species = mon?.species || enc?.species;
+  const species = mon?.species || caughtSpecies(enc);
   if (!species) return html`<div class=${`pm empty ${side}`}><span>${enc?.outcome === 'missed' ? t('routes.failed', 'missed') : t('pairs.open', 'open')}</span></div>`;
   const boxed = !mon;
   const lv = shownLevel(mon?.level) || shownLevel(enc?.level);
@@ -201,7 +204,7 @@ export function LinkedPairs({ mine, gen, compact }) {
 
 /** One player's mon in a 3–4 player group row: sprite, level and HP – the name is in the tooltip (the column is narrow). */
 function GroupMon({ slot, name, mon, enc, dead, gen }) {
-  const species = mon?.species || enc?.species;
+  const species = mon?.species || caughtSpecies(enc);
   const nick = species ? mon?.nick || enc?.nickname || speciesName(species) : '';
   const label = `${name}: ${species ? nick : enc?.outcome === 'missed' ? t('routes.failed', 'missed') : t('pairs.open', 'open')}`;
   if (!species) return html`<div class="gm empty" style=${`--acc:var(--${slot})`} title=${label}><span>${enc?.outcome === 'missed' ? '✕' : '·'}</span></div>`;
@@ -335,7 +338,9 @@ export function BattlePanel({ battle, mine, gen, isRun, side = 'left', collapsed
     else if (clash) rule = { ok: false, clash: true, text: clash.now
       ? t('battle.typePairNow', 'Type rule: {name} is fighting {mon} here right now – also {type}. Only one of you may catch theirs, or {type} is taken twice.', { name: names[clash.slot]?.name || '', mon: speciesName(clash.species), type: typeLabel(clash.type) })
       : t('battle.typePair', 'Type rule: {name} caught {mon} here – also {type}. You may not catch this one as well, or {type} is taken twice.', { name: names[clash.slot]?.name || '', mon: speciesName(clash.species), type: typeLabel(clash.type) }) };
-    else if (dupe && statics !== 'free') rule = { ok: false, text: solo ? t('battle.dupeSolo', 'Dupe – keep looking. It doesn’t count, flee freely ({area}).', { area: areaName(doc, manifest, dupe.area) }) : t('battle.dupe', 'Dupes clause: this evolution line is already caught ({area}).', { area: areaName(doc, manifest, dupe.area) }) };
+    else if (dupe && statics !== 'free') rule = { ok: false, text: solo ? t('battle.dupeSolo', 'Dupe – keep looking. It doesn’t count, flee freely ({area}).', { area: areaName(doc, manifest, dupe.area) })
+      : dupe.missed ? t('battle.dupeMissed', 'Dupes clause: this evolution line already got away once ({area}).', { area: areaName(doc, manifest, dupe.area) })
+        : t('battle.dupe', 'Dupes clause: this evolution line is already caught ({area}).', { area: areaName(doc, manifest, dupe.area) }) };
     else if (statics === 'free') rule = { ok: true, text: t('battle.staticFree', 'Legendary/static – a free catch, it doesn’t use up the area.') };
     else if (statics === 'area') rule = { ok: true, text: t('battle.staticArea', 'Legendary/static – counts as this area’s encounter.') };
     else if (solo) rule = { ok: true, text: t('battle.firstSolo', 'First encounter – catch it. (If this area is already used, it doesn’t count.)') };
@@ -526,8 +531,9 @@ export function DeathAlert({ alert, onClose }) {
   const st = pairState(doc, alert.area, slots);
   const gen = runData?.gen || 4;
   const byMe = alert.by === me;
-  const mineEnc = st.encs[me];
-  const by = st.encs[alert.by];
+  const caught = (e) => (caughtSpecies(e) ? e : null); // (a missed one that knows its species didn't die)
+  const mineEnc = caught(st.encs[me]);
+  const by = caught(st.encs[alert.by]);
   const cause = causeText(doc, manifest, st.pair?.cause);
   const n = slots.length;
   const sp = (e) => speciesName(e?.species);
@@ -535,7 +541,7 @@ export function DeathAlert({ alert, onClose }) {
   if (n === 1) text = t('death.alertSolo', 'Your {mon} fell. Rest in peace.', { mon: mineEnc?.nickname || sp(mineEnc) });
   else if (n === 2) {
     const partner = names[othersOf(me, manifest)[0]].name;
-    const theirs = st.encs[othersOf(me, manifest)[0]];
+    const theirs = caught(st.encs[othersOf(me, manifest)[0]]);
     text = byMe
       ? theirs?.species
         ? t('death.alertMine', 'Your {mon} fell – {partner}’s {pmon} goes with it.', { mon: sp(mineEnc), partner, pmon: sp(theirs) })
@@ -553,7 +559,7 @@ export function DeathAlert({ alert, onClose }) {
     footer=${html`<${ShareButton} event=${deathEvent(doc, manifest, alert.area)} /><button class="btn danger" onClick=${onClose}>${t('death.alertOk', 'Rest in peace')}</button>`}>
     <div class="death-alert">
       <div class=${`death-mons n${slots.length}`}>
-        ${slots.map((s) => st.encs[s]?.species && html`<div class="death-mon" style=${`--acc:var(--${s})`}><${Sprite} id=${st.encs[s].species} size=${72} gen=${gen} /><span>${st.encs[s].nickname || sp(st.encs[s])}</span></div>`)}
+        ${slots.map((s) => caught(st.encs[s]) && html`<div class="death-mon" style=${`--acc:var(--${s})`}><${Sprite} id=${st.encs[s].species} size=${72} gen=${gen} /><span>${st.encs[s].nickname || sp(st.encs[s])}</span></div>`)}
       </div>
       <p class="death-text">${text}</p>
       <p class="small muted">${areaName(doc, manifest, alert.area)}${cause ? ` · ${cause}` : ''}</p>

@@ -113,9 +113,10 @@ export function Modal({ open, onClose, title, children, footer, wide }) {
 
 /**
  * Species autocomplete over all species the run's game holds (names in the UI language): National Dex 1…maxId plus
- * `extra` – a ROM hack's own Pokémon (FAKEMON ids, named as the game names them).
+ * `extra` – a ROM hack's own Pokémon (FAKEMON ids, named as the game names them). `clearable`: emptying the box
+ * clears the choice (onChange(null)) – for a species that is optional.
  */
-export function SpeciesPicker({ value, onChange, autoFocus, maxId = 649, extra = [], typesOf }) {
+export function SpeciesPicker({ value, onChange, autoFocus, maxId = 649, extra = [], typesOf, clearable = false }) {
   const [q, setQ] = useState(value ? speciesName(value) : '');
   const [open, setOpen] = useState(false);
   const [hl, setHl] = useState(0);
@@ -140,7 +141,10 @@ export function SpeciesPicker({ value, onChange, autoFocus, maxId = 649, extra =
   };
   return html`<div class="suggest">
     <input type="search" placeholder=${t('picker.placeholder', 'Search Pokémon (name or number)')} value=${q} autoFocus=${autoFocus} style="width:100%"
-      onInput=${(e) => { setQ(e.target.value); setOpen(true); setHl(0); }}
+      onInput=${(e) => {
+        setQ(e.target.value); setOpen(true); setHl(0);
+        if (clearable && !e.target.value.trim() && value) onChange(null);
+      }}
       onFocus=${() => setOpen(true)} onBlur=${() => setTimeout(() => setOpen(false), 150)}
       onKeyDown=${(e) => {
         if (e.key === 'ArrowDown') { setHl((h) => Math.min(h + 1, results.length - 1)); e.preventDefault(); }

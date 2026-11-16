@@ -260,7 +260,7 @@ export function alertsBetween(prev, S, seen, now = Date.now()) {
     if (f.type === 'death') {
       a.members = (S.slots || []).map((s) => {
         const e = S.doc[`enc:${f.area}:${s}`];
-        return e?.species ? { slot: s, species: e.species, nick: e.nickname || '' } : null;
+        return e?.outcome === 'caught' && e.species ? { slot: s, species: e.species, nick: e.nickname || '' } : null;
       }).filter(Boolean);
       a.killer = S.doc[`pair:${f.area}`]?.killer || null;
     } else if (f.type === 'catch') {

@@ -4,6 +4,9 @@
 export const DEFAULT_RULES = {
   typeClause: 'global',
   dupes: 'player',
+  // a missed encounter (fled, knocked out) with a known species counts for the dupes clause like a catch – off: only
+  // catches count (runs from before it have no `missedDupes`)
+  missedDupes: false,
   shinyClause: true,
   gifts: 'area', // 'area' (a gift is that area's encounter) | 'free' | 'banned' – older docs say giftsCount: true/false
   giftsCount: true,

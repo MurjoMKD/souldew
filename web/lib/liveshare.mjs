@@ -208,13 +208,14 @@ function lastDeath(doc, manifest, status) {
 /** The cause panel and the post's sentence for one death. */
 function deathCause(doc, manifest, area, pair, label) {
   const slots = slotsOf(manifest);
-  const by = pair.by && slots.includes(pair.by) ? pair.by : slots.find((s) => encounter(doc, area, s)?.species) || slots[0];
+  const caught = (s) => (encounter(doc, area, s)?.outcome === 'caught' ? encounter(doc, area, s) : null);
+  const by = pair.by && slots.includes(pair.by) ? pair.by : slots.find((s) => caught(s)?.species) || slots[0];
   const enc = encounter(doc, area, by);
   const k = pair.killer?.species ? pair.killer : null;
   const place = placeOf(doc, pair);
   const typed = typeof pair.cause === 'string' ? pair.cause.trim() : '';
   const n = slots.length;
-  const others = slots.filter((s) => s !== by).map((s) => [s, encounter(doc, area, s)]).filter(([, e]) => e?.species);
+  const others = slots.filter((s) => s !== by).map((s) => [s, caught(s)]).filter(([, e]) => e?.species);
   const names = getPlayers(doc, manifest);
   const went = others.length ? t('live.dWent', '{list} went with it', {
     list: joinNames(others.map(([s, e]) => t('live.whose', '{name}’s {mon}', { name: names[s]?.name || s.toUpperCase(), mon: monLabel(e.nickname, e.species) }))),
