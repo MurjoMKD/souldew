@@ -8,7 +8,9 @@
 //          (shared/live/location.mjs finds it through the NitroSDK module params, like the party reader).
 //   Gen 5  the zone headers (a/0/1/2, 48 bytes per zone, name index at +0x1A) and the location-name text file of
 //          a/0/0/2 (#89 Black/White, #109 Black 2/White 2) – checked against the US/EU ROMs of all four games: the
-//          names equal PKHeX's Gen 5 met locations.
+//          names equal PKHeX's Gen 5 met locations. Black/White also hand over the zone headers themselves
+//          (`zoneHeaders`, hex): the game keeps a copy of the current zone's header in RAM, and that copy is how the
+//          live reader finds the zone in every language.
 // The location name index is the same number the game stores as a catch's met location, so a place read this way
 // pairs with catches exactly like the table-based one (shared/live/location.mjs). Tables are found by their
 // structure (signature scans), not by fixed offsets; anything that doesn't validate gives null, never a guess.
@@ -507,14 +509,18 @@ function gen5(rom, h, files) {
   const zoneNarc = ndsFile(rom, 'a/0/1/2', files);
   const msgNarc = ndsFile(rom, 'a/0/0/2', files);
   if (!zoneNarc || !msgNarc) return null;
-  const map = gen5ZoneLocations(parseNarc(zoneNarc)[0]);
+  const zones = parseNarc(zoneNarc)[0];
+  const map = gen5ZoneLocations(zones);
   const msg = parseNarc(msgNarc)[GEN5[family].msgFile];
   if (!map || !msg) return null;
   const names = gen5PlaceNames(msg);
   // fail closed: nearly every zone must name an existing place, and most places must have a name
   const inRange = map.filter((v) => v < names.length).length;
   if (names.length < 50 || inRange < map.length * 0.95 || names.filter(Boolean).length < names.length * 0.6) return null;
-  return { gen: 5, family, mapLoc: map.map((v) => (v < names.length ? v : 0)), names, source: { zones: 'a/0/1/2#0', msg: `a/0/0/2#${GEN5[family].msgFile}` } };
+  const out = { gen: 5, family, mapLoc: map.map((v) => (v < names.length ? v : 0)), names, source: { zones: 'a/0/1/2#0', msg: `a/0/0/2#${GEN5[family].msgFile}` } };
+  // Black/White keep a copy of the current zone's header in RAM (shared/live/location.mjs finds it by these bytes)
+  if (family === 'bw') out.zoneHeaders = Array.from(zones, (v) => v.toString(16).padStart(2, '0')).join('');
+  return out;
 }
 
 // ---------------------------------------------------------------- entry point

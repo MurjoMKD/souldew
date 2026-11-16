@@ -7,7 +7,7 @@
 // With the ROM's own location data (shared/live/romloc.mjs: `ctx.rom`) the map → location step and the names come
 // from the game itself instead – randomized games, other languages and ROM hacks with their own maps included – and
 // games without a maps.json entry work too where the engine says where the current map id lives (Gen 4: the save
-// data, found through the NitroSDK module params; Gen 5: community addresses, unverified).
+// data, found through the NitroSDK module params; Gen 5: behind the game's main pointer, see GEN5_ZONE).
 // Garbage in RAM (title screen, a game that is still booting, a hack with another layout) gives null, never throws.
 
 import { shiftEntry } from './romwram.mjs';
@@ -110,34 +110,112 @@ function readGen4(m, read, maps, entry, ctx = {}) {
   return Number.isInteger(id) && id > 0 ? { id, map: u16le(b, 0) } : null;
 }
 
-// Gen 5: the current zone id (u16) – NDS-Ironmon-Tracker constants/MemoryAddresses.lua childMapHeader /
-// parentMapHeader (community values, not verified by souldew yet). Black 2/White 2 behind the main pointer at
-// 0x02000024 (masked like the party pointer, addresses.json black2_us), Black/White static (White = Black + 0x20).
-const GEN5_ZONE = {
-  IRB: { addrs: [0x022592b2, 0x022592b4] },
-  IRA: { addrs: [0x022592d2, 0x022592d4] },
-  IRE: { ptr: 0x02000024, offsets: [0x41b5c, 0x41b44] },
-  IRD: { ptr: 0x02000024, offsets: [0x41b5c, 0x41b44] },
+// Gen 5: the zone the player is in (a u16 zone id) and its parent zone (a building's town).
+//  - Black 2/White 2: behind the main pointer the game keeps at 0x02000024, masked like the party pointer
+//    (addresses.json black2_us) – NDS-Ironmon-Tracker constants/MemoryAddresses.lua MAIN_POINTER 0x24, childMapHeader
+//    0x41B5C, parentMapHeader 0x41B44 (community values; checked by souldew in Black 2 / White 2 US). Before the game
+//    wrote the pointer (power-on) there is no zone: zeroed RAM would read as zone 0, Black City.
+//  - Black/White: the game keeps a copy of the current zone's header – the 48 bytes of the ROM's zone table a/0/1/2
+//    (romloc.mjs `zoneHeaders`), the zone's own id at +0x16, its parent zone at +0x18 – and the zone id again right
+//    after it (+0x30). Verified by souldew in Black US (IRBO) and White US (IRAO), in the fast player (melonDS) and the
+//    browser player (DeSmuME), 2026-11-16: byte for byte the ROM's header of the zone the player is in (391 the room,
+//    390 downstairs, 389 Nuvema Town, 396 Juniper's lab with parent 389, 317 Route 1, during battles too) at
+//    0x0225929C in Black and 0x022592BC in White – the copy NDS-Ironmon-Tracker reads as childMapHeader 0x022592B2 /
+//    parentMapHeader 0x022592B4 (+0x20 in White). Those static addresses are the English games' only: another
+//    language's static data sits elsewhere, and what souldew read there before was no zone (zeroes: zone 0, Black
+//    City – also on the title screen of the English games – and then nothing at all, a player's report on Discord).
+//    So the copy is taken where it matches the ROM's own header: at the English address, else wherever the copy is in
+//    RAM (searched for at most every few seconds, then remembered for the session in the live reader's state). Black
+//    2/White 2's pointer doesn't apply: in Black/White *(0x02000024) moves with the emulator (0x0221B2F0 in melonDS,
+//    0x0221B5F0 in DeSmuME, the zone at the same address in both).
+const GEN5_MAIN_PTR = 0x02000024;
+const B2W2_ZONE = { child: 0x41b5c, parent: 0x41b44 };
+const BW_HEADER = 48;
+const BW_HEADER_AT = [0x0225929c, 0x022592bc]; // Black US, White US
+const BW_SCAN_MS = 3000;
+
+/** 'bw' | 'b2w2' when the ROM's data lets the place be read (Black/White: with its zone headers), else null. */
+const gen5Family = (rom) => {
+  const c = String(rom?.code || '').slice(0, 3).toUpperCase();
+  const fam = rom?.family || (c === 'IRB' || c === 'IRA' ? 'bw' : c === 'IRE' || c === 'IRD' ? 'b2w2' : null);
+  return (fam === 'bw' && rom.zoneHeaders) || fam === 'b2w2' ? fam : null;
 };
-const gen5Zone = (code) => GEN5_ZONE[String(code || '').slice(0, 3).toUpperCase()] || null;
+
+const zoneTables = new WeakMap(); // ROM data → its zone headers as bytes
+function bwZoneHeaders(rom) {
+  if (zoneTables.has(rom)) return zoneTables.get(rom);
+  const hex = typeof rom.zoneHeaders === 'string' ? rom.zoneHeaders : '';
+  let t = null;
+  if (hex.length && hex.length % (BW_HEADER * 2) === 0) {
+    t = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < t.length; i++) t[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  zoneTables.set(rom, t);
+  return t;
+}
+
+/** The zone whose header `b` (at `o`) is a copy of, or -1. */
+function bwZoneOf(b, o, t) {
+  const zone = u16le(b, o + 0x16);
+  if ((zone + 1) * BW_HEADER > t.length) return -1;
+  for (let i = 0; i < BW_HEADER; i++) if (b[o + i] !== t[zone * BW_HEADER + i]) return -1;
+  return zone;
+}
+
+/**
+ * Where Black/White keep the current zone's header: where it was found before, else the English address, else searched
+ * for in main RAM (only with the live reader's state `st`, which keeps the time of the last search). 0: not found.
+ */
+function bwHeaderAt(read, t, st) {
+  for (const a of st?.bwZoneAt ? [st.bwZoneAt] : BW_HEADER_AT) {
+    const b = read(a, BW_HEADER);
+    if (ok(b, BW_HEADER) && bwZoneOf(b, 0, t) >= 0) return a;
+  }
+  if (!st || (st.bwZoneScan && Date.now() - st.bwZoneScan < BW_SCAN_MS)) return 0;
+  st.bwZoneScan = Date.now();
+  const ram = read(0x02000000, 0x400000);
+  if (!ok(ram, 0x400000)) return 0;
+  // the copy is followed by the zone id again; a few headers of the table loaded side by side (the zones next to a
+  // town) are not – and only one copy counts
+  const hits = [];
+  for (let o = 0; o + 0x32 <= ram.length; o += 4) {
+    const zone = bwZoneOf(ram, o, t);
+    if (zone >= 0 && u16le(ram, o + 0x30) === zone) hits.push(0x02000000 + o);
+  }
+  return hits.length === 1 ? hits[0] : 0;
+}
+
+/** Black/White: [zone, parent zone] from the copy of the current zone's header, or null. */
+function bwZones(read, rom, ctx) {
+  const t = bwZoneHeaders(rom);
+  if (!t) return null;
+  const st = ctx.state || null;
+  const a = bwHeaderAt(read, t, st);
+  if (st) st.bwZoneAt = a || null;
+  const b = a ? read(a, BW_HEADER) : null;
+  return ok(b, BW_HEADER) ? [u16le(b, 0x16), u16le(b, 0x18)] : null;
+}
+
+/** Black 2/White 2: [zone, parent zone] behind the main pointer, or null. */
+function b2w2Zones(read) {
+  const p = read(GEN5_MAIN_PTR, 4);
+  const off = ok(p, 4) ? u32le(p, 0) & 0xffffff : 0;
+  if (!off) return null;
+  const at = (o) => {
+    const b = inRam(0x02000000 + off + o) ? read(0x02000000 + off + o, 2) : null;
+    return ok(b, 2) ? u16le(b, 0) : null;
+  };
+  return [at(B2W2_ZONE.child), at(B2W2_ZONE.parent)];
+}
 
 function readGen5(m, read, maps, entry, ctx = {}) {
   const rom = ctx.rom;
-  const z = rom?.gen === 5 && gen5Zone(rom.code);
-  if (!z) return null;
-  let addrs = z.addrs;
-  if (z.ptr) {
-    const p = read(z.ptr, 4);
-    if (!ok(p, 4)) return null;
-    const base = 0x02000000 + (u32le(p, 0) & 0xffffff);
-    addrs = z.offsets.map((o) => base + o);
-  }
+  const fam = rom?.gen === 5 && gen5Family(rom);
+  if (!fam) return null;
+  const zones = fam === 'bw' ? bwZones(read, rom, ctx) : b2w2Zones(read);
   // the zone itself first, else its parent zone (a building without a name of its own)
-  for (const a of addrs) {
-    const b = read(a, 2);
-    if (!ok(b, 2)) continue;
-    const zone = u16le(b, 0);
-    const id = zone < rom.mapLoc.length ? rom.mapLoc[zone] : null;
+  for (const zone of zones || []) {
+    const id = Number.isInteger(zone) && zone < rom.mapLoc.length ? rom.mapLoc[zone] : null;
     if (Number.isInteger(id) && id > 0 && rom.names[id]) return { id, map: zone };
   }
   return null;
@@ -210,7 +288,7 @@ function readerFor(maps, entry, rom) {
   const m = mapEntryFor(maps, entry);
   if (m && READERS[m.kind]) return { m, kind: m.kind, gen: m.gen };
   if (rom?.gen === 4 && gen4Family(entry, rom)) return { m: null, kind: 'gen4', gen: 4 };
-  if (rom?.gen === 5 && gen5Zone(rom.code)) return { m: null, kind: 'gen5', gen: 5 };
+  if (rom?.gen === 5 && gen5Family(rom)) return { m: null, kind: 'gen5', gen: 5 };
   return null;
 }
 

@@ -214,6 +214,93 @@ test('readLocation with ROM data: Gen 5 zone id behind the main pointer (Black 2
   assert.equal(canReadLocation(maps, { id: 'black2_us', gen: 5 }, null), false, 'Gen 5 needs the ROM data');
 });
 
+/** A DS main-RAM image (4 MiB, zeroed like at power-on) and its bus read. */
+function mainRam() {
+  const ram = new Uint8Array(0x400000);
+  const at = (a) => a - 0x02000000;
+  return {
+    ram,
+    put16: (a, v) => put16(ram, at(a), v),
+    put32: (a, v) => put32(ram, at(a), v),
+    read: (a, n) => (a >= 0x02000000 && a + n <= 0x02400000 ? ram.subarray(at(a), at(a) + n) : null),
+  };
+}
+
+test('readLocation with ROM data: Black/White read the copy of the zone header, in every language (Discord: Black City, then nothing)', () => {
+  // Black's zone table as the ROM has it (romloc gen5 `zoneHeaders`, 48 bytes a zone: its own id at +0x16, the parent
+  // zone at +0x18, the name at +0x1A): 0 Black City, 150 a zone without a name, 317 Route 1, 389 Nuvema Town, 396
+  // Juniper's lab (in Nuvema Town), 397 Accumula Town – the headers of 389 and 396 as captured from Black US
+  const zones = new Uint8Array(427 * 48);
+  for (let z = 0; z < 427; z++) {
+    zones[z * 48] = 0x10;
+    put16(zones, z * 48 + 0x08, 0x300 + z);
+    put16(zones, z * 48 + 0x16, z);
+    put16(zones, z * 48 + 0x18, z);
+    zones[z * 48 + 0x1a] = 1;
+  }
+  const hex = (s) => Uint8Array.from(s.split(' '), (v) => parseInt(v, 16));
+  zones.set(hex('00 00 02 00 00 00 0a 03 0b 03 ac 01 fa 03 fa 03 fa 03 fa 03 ff ff 85 01 85 01 04 04 40 00 40 ec 00 00 00 00 0e 03 00 00 00 00 00 00 ee 02 00 00'), 389 * 48);
+  zones.set(hex('10 10 d5 00 2a 00 18 03 19 03 b3 01 28 04 28 04 28 04 28 04 ff ff 8c 01 85 01 04 00 00 00 21 49 2a 00 00 00 05 00 00 00 00 00 00 00 04 00 00 00'), 396 * 48);
+  put16(zones, 150 * 48 + 0x18, 397);
+  const name = { 0: 50, 150: 0, 317: 14, 389: 4, 396: 4, 397: 5 };
+  for (const [z, n] of Object.entries(name)) zones[z * 48 + 0x1a] = n;
+  const mapLoc = Array.from({ length: 427 }, (_, z) => zones[z * 48 + 0x1a]);
+  const names = Object.assign(new Array(117).fill('Somewhere'), { 0: '', 4: 'Nuvema Town', 5: 'Accumula Town', 14: 'Route 1', 50: 'Black City' });
+  const black = { gen: 5, family: 'bw', code: 'IRBO', lang: 'en', mapLoc, names, zoneHeaders: Array.from(zones, (v) => v.toString(16).padStart(2, '0')).join('') };
+  const entry = { id: 'black_us', gen: 5 };
+  // the game's copy of the current zone's header, followed by the zone id
+  const inZone = (ram, a, z) => {
+    ram.ram.set(zones.subarray(z * 48, z * 48 + 48), a - 0x02000000);
+    ram.put16(a + 0x30, z);
+  };
+
+  // Black US as captured in souldew's players: Juniper's lab at 0x0225929C (the zone itself at 0x022592B2, the static
+  // address NDS-Ironmon-Tracker has) – the lab's own name is Nuvema Town's
+  const us = mainRam();
+  inZone(us, 0x0225929c, 396);
+  assert.deepEqual(readLocation(maps, entry, us.read, { rom: black }), { gen: 5, id: 4, map: 396, romName: 'Nuvema Town' });
+  // White US: 0x20 further on
+  const white = mainRam();
+  inZone(white, 0x022592bc, 397);
+  assert.equal(readLocation(maps, { id: 'white_us', gen: 5 }, white.read, { rom: { ...black, code: 'IRAO' } })?.id, 5);
+
+  // another language (German Black, IRBD: found through the family): its static data sits elsewhere, the English
+  // address holds no zone – read as zone 0, Black City, and nothing after it. The copy is searched for in RAM (with the
+  // live reader's state), remembered, and followed from zone to zone.
+  const de = mainRam();
+  inZone(de, 0x0225a1c0, 317);
+  const german = { ...black, code: 'IRBD', lang: 'de' };
+  const deEntry = { id: 'black_us~IRBD', gen: 5 };
+  const state = {};
+  assert.equal(canReadLocation(maps, deEntry, german), true);
+  assert.equal(readLocation(maps, deEntry, de.read, { rom: german }), null, 'without the reader\'s state: no search');
+  assert.deepEqual(readLocation(maps, deEntry, de.read, { rom: german, state }), { gen: 5, id: 14, map: 317, romName: 'Route 1' });
+  assert.equal(state.bwZoneAt, 0x0225a1c0);
+  inZone(de, 0x0225a1c0, 389);
+  assert.equal(readLocation(maps, deEntry, de.read, { rom: { ...german, family: undefined }, state })?.id, 4, 'the family from the game code too');
+  // a few headers of the table side by side (the zones around a town) are no copy of the current one
+  const town = mainRam();
+  town.ram.set(zones.subarray(388 * 48, 392 * 48), 0x00150a00);
+  inZone(town, 0x0225a1c0, 389);
+  assert.equal(readLocation(maps, deEntry, town.read, { rom: german, state: {} })?.map, 389);
+  // the copy gone (back on the title screen): no place, and searched for again later (not every read)
+  de.ram.fill(0, 0x0025a1c0, 0x0025a1c0 + 0x40);
+  assert.equal(readLocation(maps, deEntry, de.read, { rom: german, state }), null);
+  assert.equal(state.bwZoneAt, null);
+
+  // a zone without a name of its own: its parent zone's
+  const room = mainRam();
+  inZone(room, 0x0225929c, 150);
+  assert.deepEqual(readLocation(maps, entry, room.read, { rom: black }), { gen: 5, id: 5, map: 397, romName: 'Accumula Town' });
+
+  // power-on / title screen: zeroed RAM is no zone – not zone 0, Black City; the same for Black 2's pointer
+  assert.equal(readLocation(maps, entry, mainRam().read, { rom: black, state: {} }), null);
+  const b2 = { gen: 5, family: 'b2w2', code: 'IREO', lang: 'en', mapLoc, names };
+  assert.equal(readLocation(maps, { id: 'black2_us', gen: 5 }, mainRam().read, { rom: b2 }), null);
+  // ROM data without the zone headers (an older cache): Black/White can't be read
+  assert.equal(canReadLocation(maps, entry, { ...black, zoneHeaders: undefined }), false);
+});
+
 // ---------------------------------------------------------------- real ROMs (optional)
 
 const DIR = process.env.SOULDEW_TEST_ROMS;
