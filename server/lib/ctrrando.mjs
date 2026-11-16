@@ -71,7 +71,7 @@ export function checkCtrSpace(dir, ncchSize, count = 1, { free = freeBytes(dir) 
   const need = ncchSize * count + CTR_WORK_MARGIN;
   if (free < need) {
     const gb = (n) => (n / 1024 ** 3).toFixed(1);
-    throw httpError(507, `Zu wenig Speicherplatz: die randomisierten 3DS-Spieldateien brauchen etwa ${gb(need)} GB, frei sind ${gb(free)} GB`, 'ctrNoSpace', { need: gb(need), free: gb(free) });
+    throw httpError(507, `Not enough disk space: the randomized 3DS games need about ${gb(need)} GB, ${gb(free)} GB are free`, 'ctrNoSpace', { need: gb(need), free: gb(free) });
   }
 }
 
@@ -79,10 +79,10 @@ export function checkCtrSpace(dir, ncchSize, count = 1, { free = freeBytes(dir) 
 export function ctrRandoError(e) {
   if (e?.status) return e;
   if (e?.code === 'encrypted') {
-    return httpError(422, 'Dieses 3DS-Spiel ist verschlüsselt. Der Randomizer braucht eine entschlüsselte Kopie (decrypted .3ds/.cci/.cxi) – souldew entschlüsselt keine Spiele.', 'ctrEncrypted');
+    return httpError(422, 'This 3DS game is encrypted. The randomizer needs a decrypted copy (.3ds/.cci/.cxi) – souldew doesn’t decrypt games.', 'ctrEncrypted');
   }
-  if (e?.code === 'memory') return httpError(507, 'Zu wenig Arbeitsspeicher für den 3DS-Randomizer (er braucht bis zu 4,5 GB)', 'ctrMemory');
-  if (e?.code === 'timeout') return httpError(504, 'Der 3DS-Randomizer hat zu lange gebraucht und wurde abgebrochen', 'ctrTimeout');
+  if (e?.code === 'memory') return httpError(507, 'Not enough memory for the 3DS randomizer (it needs up to 4.5 GB)', 'ctrMemory');
+  if (e?.code === 'timeout') return httpError(504, 'The 3DS randomizer took too long and was stopped', 'ctrTimeout');
   return randomizerError(e);
 }
 

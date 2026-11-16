@@ -1,5 +1,6 @@
 import { html, render, useState, useEffect, useRef, useCallback, useMemo, useErrorBoundary } from '/vendor/htm-preact.mjs';
 import { api, events } from './lib/api.mjs';
+import { serverErrorText } from './lib/errors.mjs';
 import { RunDoc } from './lib/doc.mjs';
 import { loadData, RunData, speciesName } from './lib/data.mjs';
 import { SyncLink, PARTNER_TTL } from './lib/sync.mjs';
@@ -536,7 +537,7 @@ function App() {
     save: (p) => p.runId === runId && applySnapRef.current(snapshotFromSave(p.save)),
     live: (frame) => setLiveInfo({ ...frame, at: Date.now() }),
     'live-status': (s) => setLiveInfo((x) => ({ ...(x || {}), status: s })),
-    'save-error': (p) => p.runId === runId && toast({ kind: 'death', title: t('toast.saveError', 'Save file unreadable'), text: p.error }),
+    'save-error': (p) => p.runId === runId && toast({ kind: 'death', title: t('toast.saveError', 'Save file unreadable'), text: serverErrorText(p) }),
     // a zipped 3DS game being unpacked into the library (server/lib/library.mjs unpackZipGames) – what came of it is
     // told by the page that added it (web/lib/libadded.mjs addedMessage, or the error)
     unpack: (p) => toast(unpackToast(p)),
@@ -553,7 +554,8 @@ function App() {
       onStatus: (s) => linkRef.current === link && setLinkStatus({ ...s }),
       onMessage: (msg) => {
         if (msg.payload?.type === 'ping') {
-          toast({ kind: 'soul', title: t('toast.ping', '{name} pings you', { name: names[msg.from]?.name || t('common.partner', 'Partner') }), text: msg.payload.text || '' });
+          // (the ping's text in our language – the partner's own `text` is in theirs)
+          toast({ kind: 'soul', title: t('toast.ping', '{name} pings you', { name: names[msg.from]?.name || t('common.partner', 'Partner') }), text: t('log.pingText', 'Hey, take a look!') });
           sfx('ping');
         }
       },

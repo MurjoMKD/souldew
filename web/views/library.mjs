@@ -256,7 +256,7 @@ async function uploadFile(file) {
     const body = await res.text().catch(() => '');
     let msg = body;
     try {
-      msg = JSON.parse(body).error || body;
+      msg = serverErrorText(JSON.parse(body), res.status);
     } catch {}
     throw new Error(msg || `HTTP ${res.status}`);
   }

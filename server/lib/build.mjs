@@ -10,7 +10,7 @@ import { checkCtrSpace, ctrProgress, ctrRandoError, hashFile, ncchSizeOf } from 
 import { toProperties } from '../../shared/randomizer-options.mjs';
 import { diffRoms } from '../../shared/nds.mjs';
 import { catalog } from './library.mjs';
-import { writeFileAtomic, httpError } from './fsutil.mjs';
+import { writeFileAtomic, httpError, logLine } from './fsutil.mjs';
 import { ALL_SLOTS, MODES, slotsOf, defaultRunName } from '../../shared/slots.mjs';
 import { needsIdenticalRom } from '../../shared/restart.mjs';
 import { pairMate } from '../../shared/pair-titles.mjs';
@@ -19,21 +19,21 @@ import { pairMate } from '../../shared/pair-titles.mjs';
 const PAIR = ['p1', 'p2'];
 
 // Player names become part of file names ("<name> - <game>.nds"): nothing Windows forbids, no control characters.
-const safeName = (s) => String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f\u007f]+/g, '').trim().slice(0, 40) || 'Spieler';
-const defaultName = (slot) => `Spieler ${slot.slice(1)}`;
+const safeName = (s) => String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f\u007f]+/g, '').trim().slice(0, 40) || 'Player';
+const defaultName = (slot) => `Player ${slot.slice(1)}`;
 
 /**
  * Mode and players of a build request: a Nuzlocke is p1 alone, a SoulLink p1..pN (2–4, contiguous; a missing p2
- * becomes "Spieler 2" as it always did). `existing` (a rebuild) fills in what the request leaves out.
+ * becomes "Player 2"). `existing` (a rebuild) fills in what the request leaves out.
  */
 export function runPlayers(opts = {}, existing = null) {
   const mode = opts.mode ?? existing?.mode ?? 'soullink';
-  if (!MODES.includes(mode)) throw httpError(400, `Unbekannter Modus: ${String(mode).slice(0, 20)}`, 'badMode', { mode: String(mode).slice(0, 20) });
+  if (!MODES.includes(mode)) throw httpError(400, `Unknown mode: ${String(mode).slice(0, 20)}`, 'badMode', { mode: String(mode).slice(0, 20) });
   const given = opts.players && typeof opts.players === 'object' && !Array.isArray(opts.players) ? opts.players : existing?.players || {};
   const present = ALL_SLOTS.filter((s) => given[s]);
   const count = mode === 'nuzlocke' ? 1 : Math.max(2, present.length);
   const slots = ALL_SLOTS.slice(0, count);
-  if (mode !== 'nuzlocke' && present.some((s) => !slots.includes(s))) throw httpError(400, 'Spieler müssen lückenlos p1 bis p4 sein', 'playersGap');
+  if (mode !== 'nuzlocke' && present.some((s) => !slots.includes(s))) throw httpError(400, 'Players must be p1 to p4 without gaps', 'playersGap');
   const players = Object.fromEntries(slots.map((s) => [s, { name: safeName(given[s]?.name || defaultName(s)) }]));
   return { mode, slots, players };
 }
@@ -95,7 +95,7 @@ export function newRunIdentity() {
 }
 
 export function runDir(id) {
-  if (!/^[a-f0-9]{8}$/.test(id)) throw httpError(400, 'Ungültige Run-ID', 'badRunId');
+  if (!/^[a-f0-9]{8}$/.test(id)) throw httpError(400, 'Invalid run ID', 'badRunId');
   return join(RUNS_DIR, id);
 }
 
@@ -104,7 +104,7 @@ export function readManifest(id) {
   if (!existsSync(p)) return null;
   const m = JSON.parse(readFileSync(p, 'utf8'));
   // `null`, an array or a number would throw further down (or reach runDir() with a bad id and fail every run list).
-  if (!m || typeof m !== 'object' || Array.isArray(m)) throw new Error('run.json ist kein Objekt');
+  if (!m || typeof m !== 'object' || Array.isArray(m)) throw new Error('run.json is not an object');
   // The folder name is the run id – a copied folder or a hand-edited file must not point at another run.
   if (m.id !== id) m.id = id;
   return migrate(m);
@@ -140,7 +140,7 @@ export function listRuns() {
       try {
         return readManifest(d);
       } catch (e) {
-        console.warn(`run ${d}: run.json unlesbar –`, e.message);
+        console.warn(`run ${d}: run.json unreadable –`, e.message);
         return null;
       }
     })
@@ -247,7 +247,7 @@ export function mergeDocEntries(stored, incoming) {
 /** Deleting a run only moves its folder to runs/.trash/<id>-<stamp> (same volume → a cheap rename). */
 export function trashRun(id) {
   const dir = runDir(id);
-  if (!existsSync(join(dir, 'run.json'))) throw httpError(404, 'Run nicht gefunden', 'runNotFound');
+  if (!existsSync(join(dir, 'run.json'))) throw httpError(404, 'Run not found', 'runNotFound');
   const trash = join(RUNS_DIR, '.trash');
   mkdirSync(trash, { recursive: true });
   const target = join(trash, `${id}-${new Date().toISOString().replace(/[:.]/g, '-')}`);
@@ -286,7 +286,7 @@ export function isDiscordWebhook(url) {
 const hackNameOf = (s) => (typeof s === 'string' ? s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) : '');
 
 export function checkPack(pack) {
-  const bad = (what) => httpError(400, `Run-Paket ist beschädigt (${what})`, 'packBroken', { what });
+  const bad = (what) => httpError(400, `The run pack is damaged (${what})`, 'packBroken', { what });
   const text = (v, min, max) => typeof v === 'string' && v.length >= min && v.length <= max && !/[\x00-\x1f\x7f]/.test(v);
   if (!text(pack.room, 3, 128)) throw bad('room');
   if (!text(pack.secret, 8, 256)) throw bad('secret');
@@ -356,7 +356,7 @@ async function placeLargeRom(src, dest, onLog) {
   } catch {
     // another drive, or a file system without hard links
   }
-  onLog('Kopiere das 3DS-Spiel in den Run-Ordner …');
+  onLog(logLine('ctrCopy', 'Copying the 3DS game into the run folder …'));
   await copyFile(src, dest, fsConstants.COPYFILE_FICLONE);
 }
 
@@ -375,7 +375,7 @@ async function reuseCtrBuild(prev, romOut, logOut, dataOut) {
 }
 
 /**
- * `onLog(line)`: the build's log; `onProgress({ phase, slot, index, count, done?, total? })`: where it stands – phase
+ * `onLog(line)`: the build's log (fsutil.mjs logLine); `onProgress({ phase, slot, index, count, done?, total? })`: where it stands – phase
  * 'randomize' per player, and for a 3DS game also 'load', 'write' (romfs files `done` of `total`), 'finish', 'hash' and
  * 'reuse'.
  * `deps.bridge`: how the randomizer runs (runBridge; tests pass a stand-in).
@@ -397,7 +397,7 @@ async function buildInto(opts, onLog, onProgress, bridge) {
   const existing = readManifest(identity.id);
   const { mode, slots, players } = runPlayers(opts, existing);
   const buildFor = [].concat(opts.buildFor || slots).filter((s) => slots.includes(s));
-  if (!buildFor.length) throw httpError(400, 'Kein gültiger Spieler zum Bauen angegeben', 'noBuildPlayer');
+  if (!buildFor.length) throw httpError(400, 'No valid player to build', 'noBuildPlayer');
   const dir = runDir(identity.id);
   mkdirSync(dir, { recursive: true });
   const now = new Date().toISOString();
@@ -457,7 +457,7 @@ async function buildInto(opts, onLog, onProgress, bridge) {
     const step = (p) => onProgress({ slot, index, count: buildFor.length, ...p });
     if (ctrRando) {
       const seed = String(manifest.randomizer.seeds[slot] || '');
-      if (!/^-?\d{1,19}$/.test(seed)) throw new Error(`Ungültiger Seed für ${player.name}`);
+      if (!/^-?\d{1,19}$/.test(seed)) throw httpError(400, `Invalid seed for ${player.name}`, 'badSeed', { name: player.name });
       // UPR writes into an existing file without truncating it – and the old file may be a hard link to the
       // library's game (a run built without the randomizer): always a new file. A previous build's game under
       // another name (other player name, the plain .3ds) would only take up gigabytes.
@@ -467,13 +467,13 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       const prev = ctrBuilt.get(seed);
       if (prev) {
         step({ phase: 'reuse' });
-        onLog(`Gleicher Seed wie ${prev.player} – übernehme dessen Spiel für ${player.name}`);
+        onLog(logLine('ctrReuse', `Same seed as ${prev.player} – using their game for ${player.name}`, { from: prev.player, name: player.name }));
         await reuseCtrBuild(prev, romOut, logOut, dataOut);
         ctrSha1 = prev.sha1;
       } else {
         const propsFile = join(dir, `${slot}.settings.properties`);
         writeFileSync(propsFile, toProperties(manifest.randomizer.values));
-        onLog(`Randomisiere das 3DS-Spiel für ${player.name} (Seed ${seed}) – das dauert ein paar Minuten …`);
+        onLog(logLine('ctrRandomize', `Randomizing the 3DS game for ${player.name} (seed ${seed}) – this takes a few minutes …`, { name: player.name, seed }));
         step({ phase: 'randomize' });
         const t = Date.now();
         let res;
@@ -485,17 +485,18 @@ async function buildInto(opts, onLog, onProgress, bridge) {
         }
         for (const w of res.warnings) if (!manifest.warnings.includes(w)) manifest.warnings.push(w);
         manifest.randomizer.settingsString = res.settingsString;
-        onLog(`Fertig in ${((Date.now() - t) / 1000).toFixed(1)} s – berechne die Prüfsumme …`);
+        const s = ((Date.now() - t) / 1000).toFixed(1);
+        onLog(logLine('ctrHash', `Done in ${s} s – computing the checksum …`, { s }));
         step({ phase: 'hash' });
         ctrSha1 = await hashFile(romOut);
         ctrBuilt.set(seed, { rom: romOut, log: logOut, data: dataOut, sha1: ctrSha1, player: player.name });
       }
     } else if (manifest.randomizer.enabled) {
       const seed = String(manifest.randomizer.seeds[slot] || '');
-      if (!/^-?\d{1,19}$/.test(seed)) throw new Error(`Ungültiger Seed für ${player.name}`);
+      if (!/^-?\d{1,19}$/.test(seed)) throw httpError(400, `Invalid seed for ${player.name}`, 'badSeed', { name: player.name });
       const propsFile = join(dir, `${slot}.settings.properties`);
       writeFileSync(propsFile, toProperties(manifest.randomizer.values));
-      onLog(`Randomisiere ROM für ${player.name} (Seed ${seed}) …`);
+      onLog(logLine('randomize', `Randomizing the ROM for ${player.name} (seed ${seed}) …`, { name: player.name, seed }));
       step({ phase: 'randomize' });
       const t = Date.now();
       let res;
@@ -506,7 +507,8 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       }
       for (const w of res.warnings) if (!manifest.warnings.includes(w)) manifest.warnings.push(w);
       manifest.randomizer.settingsString = res.settingsString;
-      onLog(`Fertig in ${((Date.now() - t) / 1000).toFixed(1)} s`);
+      const s = ((Date.now() - t) / 1000).toFixed(1);
+      onLog(logLine('randomized', `Done in ${s} s`, { s }));
     } else if (ctr) {
       await placeLargeRom(patched.path, romOut, onLog);
       rmSync(dataOut, { force: true });
@@ -532,11 +534,12 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       // Only randomized or patched runs need byte-identical ROMs – a plain run may use another release of the game,
       // or the other title of its pair (SoulSilver in a HeartGold run).
       const mustMatch = needsIdenticalRom(manifest);
+      const name = { name: player.name };
       onLog(manifest.outputs[slot].matchesFriend
-        ? `✔ ROM für ${player.name} ist byte-identisch mit dem deines Freundes`
-        : mustMatch ? `⚠ ROM für ${player.name} weicht vom Run-Paket ab (anderes Basis-ROM/Version?)`
-          : pairedWithHost ? `ℹ ${player.name} spielt die andere Edition des Spielepaars als der Host – passt, jeder spielt seine eigene Kopie`
-            : `ℹ ROM für ${player.name} ist eine andere Fassung des Spiels als beim Host – passt, jeder spielt seine eigene Kopie`);
+        ? logLine('romMatches', `✔ The ROM for ${player.name} is byte-identical to your friend’s`, name)
+        : mustMatch ? logLine('romDiffers', `⚠ The ROM for ${player.name} differs from the run pack (another base ROM or version?)`, name)
+          : pairedWithHost ? logLine('romPairMate', `ℹ ${player.name} plays the other edition of the pair than the host – that’s fine, everyone plays their own copy`, name)
+            : logLine('romOtherRelease', `ℹ The ROM for ${player.name} is another release of the game than the host’s – that’s fine, everyone plays their own copy`, name));
     }
   }
 

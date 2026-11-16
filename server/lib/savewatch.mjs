@@ -73,7 +73,7 @@ export class SaveWatcher {
         w.timer = setTimeout(() => this.read(runId), 1500);
       } else {
         w.error = e.message;
-        this.emit('save-error', { runId, error: e.message });
+        this.emit('save-error', { runId, error: e.message, code: e.code, vars: e.vars }); // (shared/gen4save.mjs saveError: the page words it)
       }
       return null;
     }

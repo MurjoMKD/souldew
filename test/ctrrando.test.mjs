@@ -223,11 +223,11 @@ test('joining a randomized 3DS run compares the game with the host\'s like a Gen
   const log = [];
   const ok = await join2(pack.outputs, log);
   assert.equal(ok.outputs.p2.matchesFriend, true);
-  assert.ok(log.some((l) => /byte-identisch/.test(l)), log.join('\n'));
+  assert.ok(log.some((l) => l.code === 'romMatches' && l.vars.name === pack.players.p2.name), JSON.stringify(log));
   const log2 = [];
   const bad = await join2({ p2: { sha1: '0'.repeat(40) } }, log2);
   assert.equal(bad.outputs.p2.matchesFriend, false);
-  assert.ok(log2.some((l) => /weicht/.test(l)));
+  assert.ok(log2.some((l) => l.code === 'romDiffers'), JSON.stringify(log2));
 });
 
 test('an encrypted dump: the build fails with ctrEncrypted, a new run leaves no folder and no half-written game', async () => {

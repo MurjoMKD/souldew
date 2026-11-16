@@ -147,16 +147,16 @@ export function uprStatus() {
 
 export async function installUpr() {
   const res = await fetch(UPR_URL);
-  if (!res.ok) throw new Error(`Download fehlgeschlagen (${res.status})`);
+  if (!res.ok) throw httpError(502, `Downloading the randomizer failed (HTTP ${res.status})`, 'uprDownload', { detail: `HTTP ${res.status}` });
   const buf = Buffer.from(await res.arrayBuffer());
   const sha = createHash('sha256').update(buf).digest('hex');
-  if (sha !== UPR_ZIP_SHA256) throw new Error('Prüfsumme des Randomizer-Downloads stimmt nicht – abgebrochen');
+  if (sha !== UPR_ZIP_SHA256) throw httpError(502, 'The randomizer download is damaged (its checksum doesn’t match) – nothing was installed', 'uprChecksum');
   mkdirSync(join(TOOLS_DIR, 'upr'), { recursive: true });
   const tmp = join(TOOLS_DIR, 'upr', 'download.zip');
   writeFileSync(tmp, buf);
   try {
     const entry = listZip(tmp).find((e) => e.name.endsWith('PokeRandoZX.jar'));
-    if (!entry) throw new Error('PokeRandoZX.jar nicht im Download gefunden');
+    if (!entry) throw httpError(502, 'PokeRandoZX.jar is missing from the randomizer download', 'uprChecksum');
     writeFileSync(UPR_JAR + '.part', readZipEntry(tmp, entry));
     renameSync(UPR_JAR + '.part', UPR_JAR);
   } finally {
@@ -207,9 +207,9 @@ export async function inspectRom(path, { gen = null, run = runBridge, dir = CACH
  */
 export function randomizerError(e) {
   if (!e || e.status || !e.details) return e;
-  if (e.code === 'timeout') return Object.assign(httpError(504, 'Der Randomizer hat zu lange gebraucht und wurde abgebrochen', 'randoTimeout'), { details: e.details });
+  if (e.code === 'timeout') return Object.assign(httpError(504, 'The randomizer took too long and was stopped', 'randoTimeout'), { details: e.details });
   const cls = String(e.details.error || e.details.stderr || '').match(/\b(?:[a-z]\w*\.)+([A-Z]\w*(?:Exception|Error))\b/)?.[1] || null;
-  return Object.assign(httpError(422, `Der Randomizer kommt mit diesem Spiel nicht zurecht${cls ? ` (${cls})` : ''} – spiel es ohne Randomizer`, 'randoFailed', {
+  return Object.assign(httpError(422, `The randomizer can’t build this game${cls ? ` (${cls})` : ''} – play it without the randomizer`, 'randoFailed', {
     what: cls || `exit ${e.details.exitCode}`,
     trace: randomizerTrace(e.details),
   }), { details: e.details });
@@ -245,8 +245,8 @@ export function randomizerTrace(details = {}) {
  */
 export function runBridge(args, { timeoutMs, ctr = false, onLine = null } = {}) {
   const java = detectJava();
-  if (!java.ok) return Promise.reject(new Error('Java 8+ wurde nicht gefunden. Bitte Java installieren (z. B. Temurin 21 von adoptium.net).'));
-  if (!existsSync(UPR_JAR)) return Promise.reject(new Error('Universal Pokemon Randomizer ZX fehlt – bitte im Setup installieren.'));
+  if (!java.ok) return Promise.reject(httpError(409, 'Java 8+ wasn’t found. Install Java (e.g. Temurin 21 from adoptium.net).', 'javaMissing'));
+  if (!existsSync(UPR_JAR)) return Promise.reject(httpError(409, 'Universal Pokemon Randomizer ZX is missing – reinstall souldew, or play without the randomizer.', 'uprMissing'));
   const limit = timeoutMs ?? (ctr ? CTR_TIMEOUT_MS : 180000);
   // every run's own folder for the game files UPR unpacks (a 3DS game: hundreds of MB) – never inside the app, never
   // shared: two runs on the same game (the wizard's check while a build runs) took each other's files away
@@ -296,8 +296,8 @@ export function runBridge(args, { timeoutMs, ctr = false, onLine = null } = {}) 
       // `code`: the code the bridge named (@@CODE), `exitCode`: the process' exit code
       const result = { ...parseBridgeOutput(out), exitCode: code, stdout: out, stderr: err };
       if (code !== 0 || result.error) {
-        const detail = timedOut ? `Zeitüberschreitung nach ${Math.round(limit / 1000)} s` : result.error || err.split(/\r?\n/).find((l) => l.trim())?.trim() || `Exit-Code ${code}`;
-        const e = new Error(`Randomizer-Fehler: ${detail}`);
+        const detail = timedOut ? `timed out after ${Math.round(limit / 1000)} s` : result.error || err.split(/\r?\n/).find((l) => l.trim())?.trim() || `exit code ${code}`;
+        const e = new Error(`Randomizer error: ${detail}`);
         e.details = result;
         e.code = timedOut ? 'timeout' : result.code || (/OutOfMemoryError/.test(err) ? 'memory' : null);
         reject(e);

@@ -127,3 +127,11 @@ export function realInside(path, base, { realpath = realpathSync.native, platfor
 export function httpError(status, message, code, vars) {
   return Object.assign(new Error(message), { status, ...(code ? { code } : {}), ...(vars ? { vars } : {}) });
 }
+
+/**
+ * A line of a build's log (server/lib/build.mjs, roms.mjs): `code` (+ `vars`) is what the page shows in the player's
+ * language (web/lib/errors.mjs buildLogText), `text` the English line for clients without that code.
+ */
+export function logLine(code, text, vars) {
+  return { code, text, ...(vars ? { vars } : {}) };
+}

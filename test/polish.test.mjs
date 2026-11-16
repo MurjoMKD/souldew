@@ -237,7 +237,7 @@ test('run packs: players must be contiguous; old packs and a missing p2 still im
   assert.throws(() => checkPack({ ...pack, players: { p2: { name: 'B' } } }), /players/);
   assert.deepEqual(Object.keys(checkPack({ ...pack, players: { p1: { name: 'A' } } }).players), ['p1']);
   assert.deepEqual(Object.keys(checkPack({ ...pack, players: { p1: {}, p2: {}, p3: {}, p4: {}, p5: {} } }).players), ['p1', 'p2', 'p3', 'p4']);
-  assert.equal(checkPack({ ...pack, players: { p1: {}, p2: { name: '' } } }).players.p2.name, 'Spieler 2');
+  assert.equal(checkPack({ ...pack, players: { p1: {}, p2: { name: '' } } }).players.p2.name, 'Player 2');
   assert.deepEqual(checkPack({ ...pack, mode: 'nuzlocke', players: { p1: { name: 'A' }, p3: { name: 'C' } } }).players, { p1: { name: 'A' } }, 'solo: only p1 counts');
 });
 

@@ -550,7 +550,7 @@ function RoutesTab() {
           const beaten = !!bosses[item.key];
           return html`<div class=${`boss ${beaten ? 'beaten' : ''} ${cap.boss?.key === item.key ? 'next' : ''}`}>
             <strong>${item.name}</strong><span>${t('routes.cap', 'Level cap {n}', { n: item.cap })}</span><span class="spacer"></span>
-            <button class="btn small ghost" onClick=${() => { doc.set(`boss:${item.key}`, beaten ? null : { at: Date.now(), by: me }); if (!beaten) feed(doc, { type: 'boss', slot: me, msg: msg('feed.boss', '{boss} defeated!', { boss: item.name }), text: t('feed.boss', '{boss} defeated!', { boss: item.name }) }); }}>
+            <button class="btn small ghost" onClick=${() => { doc.set(`boss:${item.key}`, beaten ? null : { at: Date.now(), by: me }); if (!beaten) feed(doc, { type: 'boss', slot: me, msg: msg('feed.boss', '{boss} defeated!', { boss: { area: item.key } }), text: t('feed.boss', '{boss} defeated!', { boss: item.name }) }); }}>
               ${beaten ? t('routes.beaten', 'defeated') : t('routes.markBeaten', 'mark as defeated')}</button>
           </div>`;
         }

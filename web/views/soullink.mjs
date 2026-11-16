@@ -3,6 +3,7 @@ import { useApp, Modal, Led } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, ago } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
+import { buildLogText, serverErrorText } from '../lib/errors.mjs';
 import { diag } from '../lib/diag.mjs';
 import { catalog, gameById, hackById, gameTitle, patchLabel, patchFits, genFromSystem } from '../lib/data.mjs';
 import { PRESETS, DEFAULT_VALUES, localizeRandomizer, randomSeed, sameSettings, withDefaults, fieldActive, fieldEnabled, forGen, buildValues } from '/shared/randomizer-options.mjs';
@@ -151,7 +152,7 @@ export function DeleteRunModal({ r, onClose }) {
     setBusy(true);
     try {
       const res = await fetch(`/api/runs/${r.id}`, { method: 'DELETE', headers: { 'x-soullink': '1' } });
-      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(serverErrorText((await res.json().catch(() => null)) || {}, res.status));
       try { localStorage.removeItem(`sl-doc-${r.id}`); } catch { /* private mode */ }
       if (r.id === runId) setRunId(null);
       await reloadStatus();
@@ -749,7 +750,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
           : solo ? t('new.createSolo', 'Start Nuzlocke') : t('new.create', 'Create SoulLink')}</button>
       </div>
       ${busy && html`<${BuildProgress} state=${progress} name=${(s) => names[s]?.trim() || s?.toUpperCase() || ''} />`}
-      ${(busy ? progress?.log || [] : log).length > 0 && html`<div class="log">${(busy ? progress.log : log).join('\n')}</div>`}
+      ${(busy ? progress?.log || [] : log).length > 0 && html`<div class="log">${(busy ? progress.log : log).map(buildLogText).join('\n')}</div>`}
     </section>
   </div>`;
 }
@@ -913,7 +914,7 @@ function JoinRun() {
       ${pack.game?.system === '3ds' && pack.randomizer?.enabled && html`<p class="small muted">${t('join.ctrNote', 'A randomized 3DS run: your game is rebuilt from your own decrypted copy – a few GB and a few minutes. Afterwards souldew checks that it matches the host’s byte for byte.')}</p>`}
       <div><button class="btn primary big" disabled=${busy || !rom || (pack.patch && !patch)} onClick=${build}>${busy ? t('new.building', 'Building …') : t('join.build', 'Build my game & join')}</button></div>
       ${busy && html`<${BuildProgress} state=${progress} name=${(s) => pack.players?.[s]?.name || s?.toUpperCase() || ''} />`}
-      ${(busy ? progress?.log || [] : log).length > 0 && html`<div class="log">${(busy ? progress.log : log).join('\n')}</div>`}
+      ${(busy ? progress?.log || [] : log).length > 0 && html`<div class="log">${(busy ? progress.log : log).map(buildLogText).join('\n')}</div>`}
     </section>`}
   </div>`;
 }
