@@ -9,7 +9,10 @@
 // gift) costs a life like any other.
 // Pools: 'shared' – one for the whole run; 'player' – one per player, the life comes off the player whose Pokémon
 // fell (`pair.by`). When any pool is empty the run is over, just as when one player's team is wiped. A solo
-// Nuzlocke has one pool.
+// Nuzlocke has one pool. A death that doesn't say who fell (from an app before `by`, or a player the run no longer
+// has) goes to the one player who had caught a Pokémon there – as the board's death dialog only asks when several
+// had –; when that can't be told either it costs no player's own life (it still costs a shared one): charging the
+// host for it would end their part of the run for someone else's loss.
 
 export const LIVES_DEFAULT = 20;
 export const LIVES_MIN = 1;
@@ -30,19 +33,26 @@ export function livesRule(rules, slots) {
 /**
  * The deaths that stand in a run document, oldest first: [{ slot, at, area } | { slot, at, extra }]. `pairs` is
  * `pair:<area>` without the prefix ({ area: pair }), `extras` likewise `extra:<slot>:<key>` ({ 'slot:key': extra }).
- * `slot` is who fell – the group's `by`, a bonus Pokémon's owner.
+ * `slot` is who fell – the group's `by`, a bonus Pokémon's owner. With the run's `slots` and its encounters `encs`
+ * (`enc:<area>:<slot>` without the prefix), a group whose `by` isn't one of the players goes to the one player who
+ * had caught a Pokémon there (else it stays unknown – see the top of this file).
  */
-export function deathsIn(pairs, extras) {
+export function deathsIn(pairs, extras, { slots = null, encs = null } = {}) {
   const out = [];
-  for (const [area, p] of Object.entries(pairs || {})) if (p?.state === 'dead') out.push({ slot: p.by ?? null, at: p.diedAt || 0, area });
+  const fell = (area, by) => {
+    if (!slots || slots.includes(by) || !encs) return by ?? null;
+    const holders = slots.filter((s) => encs[`${area}:${s}`]?.outcome === 'caught');
+    return holders.length === 1 ? holders[0] : by ?? null;
+  };
+  for (const [area, p] of Object.entries(pairs || {})) if (p?.state === 'dead') out.push({ slot: fell(area, p.by), at: p.diedAt || 0, area });
   for (const [extra, x] of Object.entries(extras || {})) if (x?.dead) out.push({ slot: extra.split(':')[0], at: x.diedAt || 0, extra });
   return out.sort((a, b) => a.at - b.at);
 }
 
-/** Which pool `slot` spends from: 'all' (shared) or the slot itself. A slot outside the run (unknown) counts for the host. */
+/** Which pool `slot` spends from: 'all' (shared) or the slot itself – null for a slot outside the run (nobody's own). */
 export function poolOf(lives, slot, slots) {
   if (lives.pool !== 'player') return 'all';
-  return slots.includes(slot) ? slot : slots[0];
+  return slots.includes(slot) ? slot : null;
 }
 
 /**
@@ -58,6 +68,7 @@ export function livesLeft(rules, slots, deaths) {
   for (const id of rule.pool === 'player' ? slots : ['all']) pools[id] = { slots: id === 'all' ? [...slots] : [id], used: 0, left: rule.total, out: false, low: false, lastAt: 0 };
   for (const d of deaths || []) {
     const p = pools[poolOf(rule, d.slot, slots)];
+    if (!p) continue; // (who fell can't be told: no player's own life)
     p.used++;
     p.lastAt = Math.max(p.lastAt, d.at || 0);
   }

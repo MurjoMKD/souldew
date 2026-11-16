@@ -132,7 +132,15 @@ const GEN5_MAIN_PTR = 0x02000024;
 const B2W2_ZONE = { child: 0x41b5c, parent: 0x41b44 };
 const BW_HEADER = 48;
 const BW_HEADER_AT = [0x0225929c, 0x022592bc]; // Black US, White US
+// The search for the copy: every BW_SCAN_MS, after BW_SCAN_SLOW_AFTER searches without a hit only every BW_SCAN_SLOW_MS
+// (a 4 MiB scan; on the title screen or in a ROM whose copy never matches it would otherwise run every 3 s for good) –
+// back to the fast pace once the copy is found or another game runs. A remembered copy that doesn't match for a poll
+// (the game rewriting it on a zone change) keeps its address and the last place for up to BW_KEEP polls.
 const BW_SCAN_MS = 3000;
+const BW_SCAN_SLOW_MS = 30000;
+const BW_SCAN_SLOW_AFTER = 4;
+const BW_KEEP = 3;
+const BW_READ = 0x32; // the header and the zone id after it
 
 /** 'bw' | 'b2w2' when the ROM's data lets the place be read (Black/White: with its zone headers), else null. */
 const gen5Family = (rom) => {
@@ -163,37 +171,80 @@ function bwZoneOf(b, o, t) {
 }
 
 /**
- * Where Black/White keep the current zone's header: where it was found before, else the English address, else searched
- * for in main RAM (only with the live reader's state `st`, which keeps the time of the last search). 0: not found.
+ * An English game's copy at its static address whose bytes differ from the ROM's header (a zone whose header the game
+ * changes while it runs): taken when its id fields agree – the zone at +0x16 again at +0x30, in the table, mapping to
+ * a place with a name (its own or its parent's) – and most of the header is the ROM's. Never zone 0 (Black City): that
+ * is what zeroed RAM reads as, and Black City's copy matches the ROM's anyway. The zone, or -1.
  */
-function bwHeaderAt(read, t, st) {
-  for (const a of st?.bwZoneAt ? [st.bwZoneAt] : BW_HEADER_AT) {
-    const b = read(a, BW_HEADER);
-    if (ok(b, BW_HEADER) && bwZoneOf(b, 0, t) >= 0) return a;
-  }
-  if (!st || (st.bwZoneScan && Date.now() - st.bwZoneScan < BW_SCAN_MS)) return 0;
-  st.bwZoneScan = Date.now();
+function bwLooseZone(b, t, rom) {
+  const zone = u16le(b, 0x16);
+  if (!zone || u16le(b, 0x30) !== zone || (zone + 1) * BW_HEADER > t.length) return -1;
+  const named = (z) => {
+    const id = Number.isInteger(z) && z < (rom.mapLoc?.length || 0) ? rom.mapLoc[z] : null;
+    return Number.isInteger(id) && id > 0 && !!rom.names?.[id];
+  };
+  if (!named(zone) && !named(u16le(b, 0x18))) return -1;
+  let same = 0;
+  for (let i = 0; i < BW_HEADER; i++) if (b[i] === t[zone * BW_HEADER + i]) same++;
+  return same >= BW_HEADER / 2 ? zone : -1;
+}
+
+const bwEnglish = (rom) => String(rom?.code || '').toUpperCase().endsWith('O');
+
+/** [zone, parent zone] from a copy of the header at `a` (exact; at an English game's own address also bwLooseZone), or null. */
+function bwZonesAt(read, a, t, rom) {
+  const b = read(a, BW_READ);
+  if (!ok(b, BW_READ)) return null;
+  if (bwZoneOf(b, 0, t) >= 0 || (bwEnglish(rom) && BW_HEADER_AT.includes(a) && bwLooseZone(b, t, rom) >= 0)) return [u16le(b, 0x16), u16le(b, 0x18)];
+  return null;
+}
+
+/** The one copy of the current zone's header in main RAM (followed by the zone id again), or 0. */
+function bwSearch(read, t) {
   const ram = read(0x02000000, 0x400000);
   if (!ok(ram, 0x400000)) return 0;
   // the copy is followed by the zone id again; a few headers of the table loaded side by side (the zones next to a
   // town) are not – and only one copy counts
   const hits = [];
-  for (let o = 0; o + 0x32 <= ram.length; o += 4) {
+  for (let o = 0; o + BW_READ <= ram.length; o += 4) {
     const zone = bwZoneOf(ram, o, t);
     if (zone >= 0 && u16le(ram, o + 0x30) === zone) hits.push(0x02000000 + o);
   }
   return hits.length === 1 ? hits[0] : 0;
 }
 
-/** Black/White: [zone, parent zone] from the copy of the current zone's header, or null. */
+/**
+ * Black/White: [zone, parent zone] from the copy of the current zone's header, or null. Where the copy is: where it
+ * was found before, else the English address, else searched for in main RAM – only with the live reader's state `st`
+ * (it keeps the address, the last zones, the misses and the time of the last search; see BW_SCAN_MS).
+ */
 function bwZones(read, rom, ctx) {
   const t = bwZoneHeaders(rom);
   if (!t) return null;
   const st = ctx.state || null;
-  const a = bwHeaderAt(read, t, st);
-  if (st) st.bwZoneAt = a || null;
-  const b = a ? read(a, BW_HEADER) : null;
-  return ok(b, BW_HEADER) ? [u16le(b, 0x16), u16le(b, 0x18)] : null;
+  const game = `${rom.code}|${t.length}`;
+  if (st && st.bwGame !== game) Object.assign(st, { bwGame: game, bwZoneAt: null, bwLast: null, bwMiss: 0, bwZoneScan: 0, bwScanMiss: 0 }); // another game
+  const found = (a, z) => {
+    if (st) Object.assign(st, { bwZoneAt: a, bwLast: z, bwMiss: 0, bwScanMiss: 0 });
+    return z;
+  };
+  if (st?.bwZoneAt) {
+    const z = bwZonesAt(read, st.bwZoneAt, t, rom);
+    if (z) return found(st.bwZoneAt, z);
+    if (++st.bwMiss < BW_KEEP) return st.bwLast; // (one poll mid-rewrite: the place stays)
+    Object.assign(st, { bwZoneAt: null, bwLast: null, bwMiss: 0 });
+  }
+  for (const a of BW_HEADER_AT) {
+    const z = bwZonesAt(read, a, t, rom);
+    if (z) return found(a, z);
+  }
+  if (!st || (st.bwZoneScan && Date.now() - st.bwZoneScan < (st.bwScanMiss >= BW_SCAN_SLOW_AFTER ? BW_SCAN_SLOW_MS : BW_SCAN_MS))) return null;
+  st.bwZoneScan = Date.now();
+  const a = bwSearch(read, t);
+  const z = a ? bwZonesAt(read, a, t, rom) : null;
+  if (z) return found(a, z);
+  st.bwScanMiss++;
+  return null;
 }
 
 /** Black 2/White 2: [zone, parent zone] behind the main pointer, or null. */

@@ -180,7 +180,7 @@ export function buildState(manifest, doc, opts = {}) {
   const cleanRules = Object.fromEntries(Object.entries(rules).filter(([, v]) => ['string', 'number', 'boolean'].includes(typeof v)));
   // the lives rule (shared/lives.mjs), counted from the deaths that stand – as the app counts them
   const scan = (prefix) => Object.fromEntries(Object.keys(raw).filter((k) => k.startsWith(prefix)).map((k) => [k.slice(prefix.length), obj(val(k))]));
-  const lives = livesLeft(rules, slots, deathsIn(scan('pair:'), scan('extra:')));
+  const lives = livesLeft(rules, slots, deathsIn(scan('pair:'), scan('extra:'), { slots, encs: scan('enc:') }));
   const livesFor = (slot) => {
     const p = livesOf(lives, slot, slots);
     return p ? { left: p.left, used: p.used } : null;

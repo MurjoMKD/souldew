@@ -200,9 +200,11 @@ function LivesControl({ value, pool, players, onChange }) {
  * one, the death that takes the last ends the run; with 2–4 players one pool for everyone or each player's own.
  * value / pool: the rules' `lives` / `livesPool`; onChange(patch). `players`: how many play. Variant 'wizard': compact,
  * with its title; 'board': the hint over the control (the panel carries the title) and `left` – how many are left
- * (run.mjs lives()) with the players' `names`.
+ * (run.mjs lives()) with the players' `names`, and `ended` (the run has an end): while it hasn't, a pool the deaths so
+ * far already use up says that the run goes on until the next death – changing the rule never ends a run by itself
+ * (run.mjs settleLives).
  */
-export function LivesRule({ value, pool, players = 1, onChange, variant = 'board', left = null, names = {} }) {
+export function LivesRule({ value, pool, players = 1, onChange, variant = 'board', left = null, names = {}, ended = false }) {
   const control = html`<${LivesControl} value=${value} pool=${pool} players=${players} onChange=${onChange} />`;
   const hint = livesHint(players, pool);
   if (variant === 'wizard') {
@@ -215,5 +217,8 @@ export function LivesRule({ value, pool, players = 1, onChange, variant = 'board
     ${pools.length > 0 && html`<p class="small lives-left">${pools.map(([id, p], i) => html`${i ? ' · ' : ''}<span class=${`fact ${p.low || p.out ? 'low' : ''}`}>${id === 'all'
       ? t('lives.leftOf', '{left} of {total} left', { left: p.left, total: left.total })
       : t('lives.leftOfNamed', '{name}: {left} of {total} left', { name: names[id] || id.toUpperCase(), left: p.left, total: left.total })}</span>`)}</p>`}
+    ${!ended && pools.filter(([, p]) => p.out).map(([id]) => html`<p class="warning">${id === 'all'
+      ? t('lives.usedUp', 'The deaths so far already use up these lives. The run goes on – the next death ends it.')
+      : t('lives.usedUpNamed', '{name}: the deaths so far already use up these lives. The run goes on – the next Pokémon {name} loses ends it.', { name: names[id] || id.toUpperCase() })}</p>`)}
   </div>`;
 }

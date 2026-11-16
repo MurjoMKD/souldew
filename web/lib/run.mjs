@@ -7,7 +7,7 @@ import { t, currentLang } from './i18n.mjs';
 import { ALL_SLOTS, slotsOf, runMode, isNuzlocke, othersOf } from '/shared/slots.mjs';
 import { DEFAULT_RULES, RULE_PRESETS, NUZLOCKE_RULES, rulesWithDefaults } from '/shared/rules.mjs';
 import { placeName } from '/shared/live/location.mjs';
-import { livesLeft, livesOf, deathsIn } from '/shared/lives.mjs';
+import { livesLeft, livesOf, deathsIn, poolOf } from '/shared/lives.mjs';
 
 export { ALL_SLOTS, slotsOf, runMode, isNuzlocke, othersOf, DEFAULT_RULES, RULE_PRESETS, NUZLOCKE_RULES };
 // Runs from before 1–4 players were always a pair – the default where no slots/manifest are passed.
@@ -233,8 +233,7 @@ export function pairState(doc, area, slots = PAIR) {
   return { state: 'empty', ...base };
 }
 
-export function feed(doc, entry) {
-  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+export function feed(doc, entry, id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`) {
   doc.set(`feed:${id}`, { at: Date.now(), ...entry });
 }
 
@@ -263,8 +262,8 @@ export function feedText(doc, manifest, f) {
   return renderMsg(doc, manifest, f.msg) + (cause ? ` – ${cause}` : '') + (f.note ? ` – ${f.note}` : '');
 }
 
-function feedMsg(doc, manifest, entry) {
-  feed(doc, { ...entry, text: feedText(doc, manifest, entry) });
+function feedMsg(doc, manifest, entry, id) {
+  feed(doc, { ...entry, text: feedText(doc, manifest, entry) }, id);
 }
 
 export function feedList(doc, limit = 80) {
@@ -327,16 +326,83 @@ export function markDead(doc, manifest, area, { slot, cause = '', level = null, 
  * back. null while the rule is off, else { total, pool, pools: { all | p1…: { slots, used, left, out, lastAt } } }.
  */
 export function lives(doc, manifest) {
-  return livesLeft(rules(doc, manifest), slotsOf(manifest), deathsIn(doc.scan('pair:'), doc.scan('extra:')));
+  return livesLeft(rules(doc, manifest), slotsOf(manifest), standingDeathsOf(doc, manifest));
 }
+
+/** The deaths that stand, as shared/lives.mjs counts them (a death without a known player: see deathsIn). */
+const standingDeathsOf = (doc, manifest) => deathsIn(doc.scan('pair:'), doc.scan('extra:'), { slots: slotsOf(manifest), encs: doc.scan('enc:') });
 
 /** The lives of the pool `slot` spends from (the shared one, or the player's own) – null while the rule is off. */
 export const livesFor = (doc, manifest, slot) => livesOf(lives(doc, manifest), slot, slotsOf(manifest));
 
-/** `slot`'s Pokémon just died (`cause` { area } | { extra }): when that took the last life of its pool, the run is over. */
+/** `slot`'s Pokémon just died here (`cause` { area } | { extra }): when that took the last life of its pool, the run is over. */
 function spendLife(doc, manifest, slot, cause) {
-  const s = slotsOf(manifest).includes(slot) ? slot : slotsOf(manifest)[0];
-  if (livesFor(doc, manifest, s)?.out) failRun(doc, manifest, s, 'lives', cause);
+  const l = lives(doc, manifest);
+  if (!l) return;
+  const slots = slotsOf(manifest);
+  if (!slots.includes(slot)) {
+    settleLives(doc, manifest); // (who fell isn't known: as the count tells it – shared/lives.mjs deathsIn)
+    return;
+  }
+  const pool = poolOf(l, slot, slots);
+  if (l.pools[pool]?.out) endByLives(doc, manifest, l, pool, slot, cause);
+}
+
+/** The doc's own time of an entry: its logical clock, later than every change its writer had seen (0: unknown). */
+const stampOf = (doc, key) => doc.entries?.[key]?.t || 0;
+const deathKey = (d) => (d.area !== undefined ? `pair:${d.area}` : `extra:${d.extra}`);
+
+/**
+ * From when a pool that is out ends the run: the last change of the lives rule (`rules.livesAt`, written by the board
+ * with the doc's clock) and the last "play on" (`run:resumed`, by its entry's clock). The deaths from before still
+ * count – they used up the lives –, but they don't end the run on their own: the next death does. That is what
+ * spendLife always did (switching the rule on, or lowering it, below the deaths that stand never ends a run by
+ * itself), and settleLives below keeps to it.
+ */
+function livesSince(doc, manifest) {
+  return Math.max(Number(rules(doc, manifest).livesAt) || 0, doc.get('run:resumed') ? stampOf(doc, 'run:resumed') : 0);
+}
+
+/**
+ * The run ran out of lives in `pool`: end it ('lives'), with the death `cause` ({ area } | { extra }) as what took the
+ * last life. The log line has a fixed id – the pool, the "since" above and the death that took its last life –, so
+ * two computers ending the run at the same time (each answering a death that came in by sync) write one line, not two.
+ */
+function endByLives(doc, manifest, l, pool, slot, cause) {
+  const slots = slotsOf(manifest);
+  const since = livesSince(doc, manifest);
+  const inPool = standingDeathsOf(doc, manifest).filter((d) => poolOf(l, d.slot, slots) === pool)
+    .sort((a, b) => a.at - b.at || (deathKey(a) < deathKey(b) ? -1 : 1));
+  const last = inPool[l.total - 1] || inPool.at(-1);
+  const id = `lives-${pool}-${since.toString(36)}-${last ? deathKey(last).replace(/[^\w:-]/g, '_') : 'x'}`;
+  return failRun(doc, manifest, slot, 'lives', cause, id);
+}
+
+/**
+ * The lives rule, checked from what stands in the run document (idempotent – call it as often as you like). A death
+ * that came in by sync never went through spendLife here: a 2.7.4 partner doesn't know the rule, and two deaths made
+ * offline on two computers only use up the pool once they meet. When a pool is out and its newest death came after
+ * livesSince, and the run has no end yet, the run ends like spendLife ends it (failRun – once; the same log line on
+ * every computer). A pool used up only by deaths from before the rule changed or before "play on" doesn't end the run
+ * (the board's lives panel says so). true when it ended the run now.
+ */
+export function settleLives(doc, manifest) {
+  if (doc.get('run:status')) return false;
+  const l = lives(doc, manifest);
+  if (!l) return false;
+  const slots = slotsOf(manifest);
+  const since = livesSince(doc, manifest);
+  const deaths = standingDeathsOf(doc, manifest);
+  const stamp = (d) => stampOf(doc, deathKey(d)) || d.at || 0;
+  for (const [pool, p] of Object.entries(l.pools)) {
+    if (!p.out) continue;
+    const newest = deaths.filter((d) => poolOf(l, d.slot, slots) === pool)
+      .reduce((a, d) => (!a || stamp(d) > stamp(a) || (stamp(d) === stamp(a) && deathKey(d) > deathKey(a)) ? d : a), null);
+    if (!newest || stamp(newest) <= since) continue;
+    const slot = pool !== 'all' ? pool : slots.includes(newest.slot) ? newest.slot : slots[0];
+    return endByLives(doc, manifest, l, pool, slot, newest.area !== undefined ? { area: newest.area } : { extra: newest.extra });
+  }
+  return false;
 }
 
 /**
@@ -395,6 +461,17 @@ export function logTypeHelpRule(doc, manifest, by, on) {
     : solo ? msg('feed.typeHelpOffSolo', 'Type matchup help turned off for this run') : msg('feed.typeHelpOff', 'turned the type matchup help off for everyone') });
 }
 
+/**
+ * The stored rules `next` after a change on the board: when the lives (how many, or whose) change, `livesAt` – the
+ * doc's clock – marks when (settleLives: deaths from before still count, but don't end the run by themselves).
+ */
+export function stampLivesChange(doc, prev, next) {
+  const was = rulesWithDefaults(prev);
+  const now = rulesWithDefaults(next);
+  const changed = (now.lives || 0) !== (was.lives || 0) || (now.lives > 0 && now.livesPool !== was.livesPool);
+  return changed ? { ...next, livesAt: Math.max(Date.now(), (doc.clock || 0) + 1) } : next;
+}
+
 /** The lives rule was switched or changed (`by` = slot; `r`: the rules now) – logged for everyone, like the cheats rule. */
 export function logLivesRule(doc, manifest, by, r) {
   const solo = slotsOf(manifest).length === 1;
@@ -426,7 +503,9 @@ export function openAreas(doc, manifest, slot = 'p1') {
  * (clause) or a dupe, when the run is over, when the place sign's area (`here`, where the battle ended) already has
  * this player's encounter – no first encounter then –, when a curated route list has no open area left, or when a
  * catch could have gone unseen: a full party sends it to the PC, and the PC is only read live in some games (`boxes`
- * false).
+ * false). In a SoulLink only where the place sign resolves to an area (one without this player's encounter, or a
+ * known place nobody caught at yet): a "yes" there fails the pair for everyone, so no question after every wild battle
+ * in a place the app can't tell – a solo Nuzlocke still asks there and offers the open areas.
  * o: { foe: {species, shiny}, wild, from, newMonAt, boxes, partySize, here: {gen, id, name} }
  */
 export function missedQuestion(doc, manifest, rd, slot, { foe, wild, from = 0, newMonAt = 0, boxes = true, partySize = 0, here = null } = {}) {
@@ -436,6 +515,7 @@ export function missedQuestion(doc, manifest, rd, slot, { foe, wild, from = 0, n
   if (dupeOf(doc, manifest, rd, foe.species, slot)) return false;
   const at = here ? areaForPlace(doc, manifest, genOfRun(manifest, rd), here) : null;
   if (at && encounter(doc, at, slot)) return false;
+  if (!at && slotsOf(manifest).length > 1) return false; // (SoulLink: the place is unknown)
   return !profileOf(manifest).curated || openAreas(doc, manifest, slot).some((a) => a.key !== 'starter');
 }
 
@@ -515,9 +595,9 @@ export function wipedSlot(doc, slots = ALL_SLOTS, manifest = Array.isArray(slots
  * or 'deathless' (Nuzlocke rules), 'lives' (the lives rule: `slot`'s pool is empty); it is kept in
  * `run:status.reason`. `area` (or `extra`, a bonus Pokémon's `slot:key`): the death that ended a deathless run or
  * took the last life; a blackout keeps which rule it went by (`rule`) – revive()
- * and markExtraDead() reopen a run whose cause they undo.
+ * and markExtraDead() reopen a run whose cause they undo. `feedId`: a fixed id for the log line (endByLives).
  */
-export function failRun(doc, manifest, slot, reason = 'wipe', { area = null, extra = null } = {}) {
+export function failRun(doc, manifest, slot, reason = 'wipe', { area = null, extra = null } = {}, feedId = undefined) {
   if (doc.get('run:status')) return false;
   const rule = reason === 'blackout' && runMode(manifest) === 'nuzlocke' ? rules(doc, manifest).blackout : null;
   doc.set('run:status', { state: 'failed', at: Date.now(), by: slot, auto: true, note: null, reason, ...(area ? { area } : extra ? { extra } : {}), ...(rule ? { rule } : {}) });
@@ -528,7 +608,7 @@ export function failRun(doc, manifest, slot, reason = 'wipe', { area = null, ext
     : reason === 'blackout' ? msg('feed.runBlackout', '{name} blacked out – the Nuzlocke has failed', { name })
       : reason === 'lives' ? livesOutMsg(doc, manifest, name)
         : solo ? msg('feed.runWipedSolo', '{name}’s team was wiped – the Nuzlocke has failed', { name })
-          : msg('feed.runWiped', '{name}’s team was wiped – the run has failed', { name }) });
+          : msg('feed.runWiped', '{name}’s team was wiped – the run has failed', { name }) }, feedId);
   return true;
 }
 
@@ -863,12 +943,21 @@ function dupeInPass(doc, manifest, rd, species, slot, exceptArea, writes) {
 /**
  * Hatched from an egg – not a catch at the place it hatched. Gen 4 on keep where the egg came from; the level a hatched
  * Pokémon was "met" at is 0 in Gen 3/4 and 1 in Crystal (Gold/Silver keep no met data) and from Gen 5 on (PKHeX
- * EggStateLegality, pokecrystal CAUGHT_EGG_LEVEL) – and no wild Pokémon is met at it.
+ * EggStateLegality, pokecrystal CAUGHT_EGG_LEVEL). Level 0 is no wild level; level 1 is none in the original Crystal –
+ * but a randomizer's level modifier or a ROM hack can put level-1 Pokémon in the grass, and Crystal marks a hatched
+ * Pokémon by nothing else (SetEggMonCaughtData: level 1, the time of day and the place it hatched, as any catch). So
+ * there (`levelOneWild`) Crystal's level 1 counts as hatched only when the app saw that Pokémon as an egg (`wasEgg`: the
+ * keys of the eggs in the last live team – a Gen 2 key is its trainer id and DVs, the egg's own); else it is filed as a
+ * catch where it was met rather than kept out as an egg.
  */
-export function hatchedMon(gen, m) {
+export function hatchedMon(gen, m, { wasEgg = null, levelOneWild = false } = {}) {
   if (m?.eggLocation > 0) return true;
-  return gen === 2 ? m?.metLevel === 1 : gen >= 3 && gen <= 4 && m?.metLevel === 0;
+  if (gen === 2) return m?.metLevel === 1 && (!levelOneWild || !!wasEgg?.has(m.key));
+  return gen >= 3 && gen <= 4 && m?.metLevel === 0;
 }
+
+/** Can a wild Pokémon be level 1 in this run's game? A randomized run or a ROM hack (Crystal: see hatchedMon). */
+export const levelOneWild = (manifest) => !!(manifest?.randomizer?.enabled || manifest?.patch || manifest?.game?.hackId || manifest?.game?.hackName);
 
 function liveMon(m, area) {
   return {
@@ -958,6 +1047,9 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
   const party = trustLevels(doc, slot, (snap.party || []).map((m) => ({ ...m, inParty: true })), known, snap.source);
   const all = [...party, ...(snap.boxes || [])];
   const seen = new Set();
+  // the eggs of the last live team (a hatched Pokémon keeps the egg's key – Crystal: hatchedMon)
+  const wasEgg = new Set((was?.party || []).filter((x) => x?.egg && x.key).map((x) => x.key));
+  const oneWild = levelOneWild(manifest);
   let starterOffered = false;
   const battles = lastBattle.get(doc) || new Map();
   lastBattle.set(doc, battles);
@@ -1017,7 +1109,7 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
     // A hatched egg carries the place it hatched, an in-game trade or event a special location (Gen 4/5: 2000+) –
     // neither is an encounter of that route, and filing it there would pair it with the partner's real catch. Those
     // go to the inbox.
-    const hatched = hatchedMon(gen, m);
+    const hatched = hatchedMon(gen, m, { wasEgg, levelOneWild: oneWild });
     const special = gen >= 4 && m.metLocation >= 2000;
     if (!guess && !hatched && !special && m.metLocation !== null && m.metLocation !== undefined) guess = areaForCatch(doc, manifest, gen, m.metLocation);
     // Gen 1 and Gold/Silver keep no catch location: a Pokémon that joins within a minute of a wild battle was caught

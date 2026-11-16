@@ -2719,5 +2719,12 @@
   "hof.title": "Hall of Fame",
   "live.explain2": "Partage les grands moments – une mort, un wipe – sous forme de carte avec vos équipes dans #live-runs sur le Discord de souldew, et un run gagné avec votre équipe finale dans #hall-of-fame. Rien n’est publié tant que tu n’appuies pas sur le bouton.",
   "buildLog.shinyRate": "Taux de chromatiques 1/{rate} intégré",
-  "buildLog.shinyTrainers": "Taux de chromatiques 1/{rate} intégré (Pokémon des Dresseurs aussi)"
+  "buildLog.shinyTrainers": "Taux de chromatiques 1/{rate} intégré (Pokémon des Dresseurs aussi)",
+  "code.errNewer": "Ce run demande une version plus récente de souldew. Mets souldew à jour, puis demande un nouveau code.",
+  "err.packNewer": "Ce run demande souldew {version} ou plus récent – mets souldew à jour pour le rejoindre",
+  "err.packNewerAny": "Ce run demande une version plus récente de souldew – mets souldew à jour pour le rejoindre",
+  "invite.needsVersion": "Pour rejoindre ce run, chacun a besoin de souldew {version} ou plus récent. Les versions plus anciennes ne peuvent pas ouvrir l’invitation.",
+  "invite.needsVersionShiny": "Ce run change le taux de chromatiques : pour le rejoindre, chacun a besoin de souldew {version} ou plus récent. Les versions plus anciennes ne peuvent pas ouvrir l’invitation.",
+  "lives.usedUp": "Les morts jusqu’ici épuisent déjà ces vies. Le run continue – la prochaine mort y met fin.",
+  "lives.usedUpNamed": "{name} : les morts jusqu’ici épuisent déjà ces vies. Le run continue – le prochain Pokémon que {name} perd y met fin."
 }

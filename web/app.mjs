@@ -7,7 +7,7 @@ import { SyncLink, PARTNER_TTL } from './lib/sync.mjs';
 import { setLang, guessLang, t, onLangChange } from './lib/i18n.mjs';
 import { applyTheme, applyStoredTheme } from './lib/theme.mjs';
 import { detectLayout } from './lib/controls.mjs';
-import { applySnapshot, snapshotFromSave, players as getPlayers, areaName, feedText, othersOf, slotsOf, runMode, checks, loadLocationTables, genOfRun, wipedSlot, failRun, lives as getLives, livesFor } from './lib/run.mjs';
+import { applySnapshot, snapshotFromSave, players as getPlayers, areaName, feedText, othersOf, slotsOf, runMode, checks, loadLocationTables, genOfRun, wipedSlot, failRun, lives as getLives, livesFor, settleLives } from './lib/run.mjs';
 import { play } from './lib/sound.mjs';
 import { Ctx, Toasts, Led, Modal, openExternal } from './lib/ui.mjs';
 import { LINKS } from './lib/links.mjs';
@@ -415,10 +415,16 @@ function App() {
   useEffect(() => {
     if (!runDoc) return;
     const doc = runDoc;
+    // deaths that came in while the run wasn't open (see below) – once the notice below is listening
+    queueMicrotask(() => settleLives(doc, manifest));
     return doc.subscribe((keys, remote, info) => {
       const names = getPlayers(doc, manifest);
       // The partner's timestamps come from their clock, which may be minutes off: shift them by the measured offset.
       const age = (at) => Date.now() - at - (remote ? info?.offset || 0 : 0);
+      // The lives rule for deaths that didn't go through this app's spendLife: a 2.7.4 partner doesn't know the rule,
+      // and two deaths made offline only use up a pool once they meet. Settled from the doc – once, and with the same
+      // log line on every computer (lib/run.mjs settleLives); after this change has gone to every subscriber.
+      if (keys.some((k) => k.startsWith('pair:') || k.startsWith('extra:'))) queueMicrotask(() => settleLives(doc, manifest));
       for (const k of keys) {
         // The run just ended (a wipe here or at the partner's, or marked failed / won): the notice for both.
         if (k === 'run:status') {

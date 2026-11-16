@@ -127,3 +127,79 @@ test('the wizard says why the randomizer is off; the new messages are translated
     }
   }
 });
+
+test('a randomizer message names no folder – not even one with spaces in it (Windows and POSIX)', async () => {
+  const { randomizerTrace } = await import('../server/lib/toolchain.mjs');
+  const first = (error) => randomizerTrace({ error })[0];
+  const cases = [
+    ['java.io.FileNotFoundException: C:\\Users\\Max Mustermann\\AppData\\Local\\souldew\\Cache\\upr-work\\ab12\\6 (Das System kann die angegebene Datei nicht finden)', 'java.io.FileNotFoundException: …/6 (Das System kann die angegebene Datei nicht finden)'],
+    ['java.io.FileNotFoundException: C:/Users/Max Mustermann/Spiele/White.nds (Access is denied)', 'java.io.FileNotFoundException: …/White.nds (Access is denied)'],
+    ['java.io.IOException: \\\\nas\\Spiele von Max\\White.nds', 'java.io.IOException: …/White.nds'],
+    ['java.io.FileNotFoundException: /Users/anna maria/Library/Application Support/SoulLink Studio/cache/a/0/1/6 (No such file or directory)', 'java.io.FileNotFoundException: …/6 (No such file or directory)'],
+    ['java.io.FileNotFoundException: /home/jan de vries/.cache/souldew/a002 (Permission denied)', 'java.io.FileNotFoundException: …/a002 (Permission denied)'],
+    ['java.io.IOException: file:/Users/anna maria/x.nds', 'java.io.IOException: file:…/x.nds'],
+  ];
+  for (const [error, want] of cases) {
+    const got = first(error);
+    assert.equal(got, want);
+    for (const name of ['Max', 'Mustermann', 'anna', 'maria', 'jan de vries', 'Users', 'home']) assert.ok(!got.includes(name), `${name} in ${got}`);
+  }
+  // what isn't a path stays as it is: a class name's slashes, a message without a path
+  assert.equal(first('java.lang.NoClassDefFoundError: com/dabomstew/pkrandom/Foo'), 'java.lang.NoClassDefFoundError: com/dabomstew/pkrandom/Foo');
+  assert.equal(first(AIOOBE), AIOOBE);
+  // the stack trace's first exception line, when no @@ERROR line came, is stripped the same way
+  const fromStderr = randomizerTrace({ stderr: 'java.io.FileNotFoundException: C:\\Users\\Max Mustermann\\a\\6 (x)\n\tat com.dabomstew.pkrandom.romhandlers.Gen5RomHandler.loadRom(Gen5RomHandler.java:12)' });
+  assert.deepEqual(fromStderr, ['java.io.FileNotFoundException: …/6 (x)', 'Gen5RomHandler.loadRom:12']);
+});
+
+test('the randomizer\'s answer never waits for its working folder to go (Windows: a scanner holding a file)', async (t) => {
+  const { runBridge, detectJava, UPR_JAR } = await import('../server/lib/toolchain.mjs');
+  const { removeQuietly } = await import('../server/lib/fsutil.mjs');
+  const { EventEmitter } = await import('node:events');
+  const busy = () => Object.assign(new Error('EBUSY: resource busy or locked, rmdir \'C:\\Users\\Max Mustermann\\x\''), { code: 'EBUSY' });
+  const warn = console.warn;
+  const warned = [];
+  console.warn = (...a) => warned.push(a.join(' '));
+  try {
+    // the helper: retried by fs.rm itself, then logged (the code, never the path) and swallowed – also a synchronous throw
+    let opts = null;
+    assert.equal(await removeQuietly('C:\\Users\\Max Mustermann\\x', { rm: async (p, o) => { opts = o; throw busy(); } }), false);
+    assert.equal(await removeQuietly('/x', { rm: () => { throw busy(); } }), false);
+    assert.equal(await removeQuietly('/x', { rm: async () => {} }), true);
+    assert.ok(opts.maxRetries > 0 && opts.retryDelay > 0 && opts.recursive && opts.force);
+    assert.ok(warned.length === 2 && warned.every((w) => w.includes('EBUSY') && !w.includes('Max')), warned.join('\n'));
+
+    if (!detectJava().ok || !existsSync(UPR_JAR)) return t.skip('Java or the randomizer missing');
+    const child = () => Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill() {} });
+    let removed = 0;
+    const removeDir = async () => {
+      removed++;
+      throw busy();
+    };
+    // a run that ends: its answer, although the folder can't be removed
+    let c;
+    const ok = runBridge(['info', '/g.nds'], { spawnFn: () => (c = child()), removeDir });
+    c.stdout.emit('data', '@@JSON {"generation":5}\n');
+    c.emit('close', 0);
+    const res = await Promise.race([ok, new Promise((r) => setTimeout(() => r('hung'), 2000))]);
+    assert.notEqual(res, 'hung');
+    assert.equal(res.exitCode, 0);
+    // a run that fails, and one Java couldn't start: their errors, the same way
+    const failing = runBridge(['info', '/g.nds'], { spawnFn: () => (c = child()), removeDir });
+    c.stdout.emit('data', '@@ERROR "java.lang.RuntimeException: x"\n');
+    c.emit('close', 1);
+    await assert.rejects(failing, /Randomizer error/);
+    const broken = runBridge(['info', '/g.nds'], { spawnFn: () => (c = child()), removeDir });
+    c.emit('error', Object.assign(new Error('spawn java ENOENT'), { code: 'ENOENT' }));
+    c.emit('close', -2); // (Node sends 'close' after 'error' too – the promise is settled already)
+    await assert.rejects(broken, /ENOENT/);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(removed >= 3, 'the folder is still removed, afterwards');
+  } finally {
+    console.warn = warn;
+  }
+  // nothing in the randomizer's paths removes a folder in a way that can throw into an event handler
+  const src = readFileSync(new URL('../server/lib/toolchain.mjs', import.meta.url), 'utf8');
+  const bridge = src.slice(src.indexOf('export function runBridge'), src.indexOf('\n}\n', src.indexOf('export function runBridge')));
+  assert.doesNotMatch(bridge, /rmSync\(/);
+});

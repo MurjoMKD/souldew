@@ -8,7 +8,7 @@ import { registerHooks } from 'node:module';
 
 const ROOT = new URL('../', import.meta.url).href;
 registerHooks({ resolve: (spec, ctx, next) => (spec.startsWith('/shared/') ? next(ROOT + spec.slice(1), ctx) : next(spec, ctx)) });
-const { patchFits } = await import('../web/lib/data.mjs');
+const { patchFits, patchDiag } = await import('../web/lib/data.mjs');
 
 const cat = {
   games: [{ id: 'pokemon-white' }, { id: 'pokemon-white-de', variantOf: 'pokemon-white' }, { id: 'pokemon-black' }, { id: 'pokemon-emerald' }],
@@ -18,11 +18,17 @@ const fits = (patch, r) => patchFits(patch, r, cat);
 const rom = (gameId, crc, more = {}) => ({ id: `${gameId}-${crc}`, gameId, crc, ...more });
 const volt = { id: 'vw', name: 'Volt White.xdelta', format: 'xdelta', hackId: 'volt-white', expectedCrc: 'B552501C' };
 
-test('#68: an xdelta patch of a catalog hack goes with any copy of its base game, not only the CRC32 it names', () => {
+test('#68: an xdelta patch of a catalog hack goes with any copy of its base game, not only the CRC32 it names (IPS doesn\'t)', () => {
   assert.ok(fits(volt, rom('pokemon-white', 'B552501C', { exact: true })), 'the named copy');
   assert.ok(fits(volt, rom('pokemon-white', '0BADC0DE')), 'another dump of White (the reporter\'s case)');
   assert.ok(fits(volt, rom('pokemon-white-de', '12345678')), 'a release that is a variant of White');
-  assert.ok(fits({ ...volt, format: 'ips' }, rom('pokemon-white', '0BADC0DE')), 'IPS carries no checksum either');
+  // IPS checks nothing it writes (another language's copy would give a broken game): it keeps the CRC32 it names
+  const ips = { ...volt, format: 'ips' };
+  assert.ok(!fits(ips, rom('pokemon-white', '0BADC0DE')), 'an IPS patch: not another dump');
+  assert.ok(!fits(ips, rom('pokemon-white-de', '12345678')), 'an IPS patch: not another language');
+  assert.ok(fits(ips, rom('pokemon-white', 'B552501C')), 'an IPS patch: the copy it names');
+  assert.ok(fits({ ...ips, expectedCrc: null }, rom('pokemon-white', '0BADC0DE')), 'an IPS patch that names no copy: as before');
+  assert.ok(!fits({ ...volt, format: null }, rom('pokemon-white', '0BADC0DE')), 'a patch of unknown format: only its copy');
   assert.ok(!fits(volt, rom('pokemon-black', '4F6E5580')), 'not another game');
   assert.ok(!fits(volt, rom(null, '0BADC0DE')), 'not a ROM of no known game');
   assert.ok(!fits(volt, rom('pokemon-white', '0BADC0DE', { hackId: 'volt-white' })), 'not a ROM that is a hack already');
@@ -65,4 +71,15 @@ test('the new message is translated (no placeholder lost)', () => {
       assert.deepEqual((d[k].match(/\{\w+\}/g) || []).sort(), (en[k].match(/\{\w+\}/g) || []).sort(), `${lang}: ${k}`);
     }
   }
+});
+
+test('the randomizer\'s diagnostics name a patch by its hack, format and checksum – never by its id (an absolute path)', () => {
+  const p = { id: '/Users/anna maria/Library/Hacks/Volt White.xdelta', file: '/Users/anna maria/Library/Hacks/Volt White.xdelta', name: 'Volt White', format: 'xdelta', hackId: 'volt-white', sha1: 'ab'.repeat(20) };
+  assert.deepEqual(patchDiag(p), { hack: 'volt-white', format: 'xdelta', sha1: 'ab'.repeat(20) });
+  assert.ok(!JSON.stringify(patchDiag(p)).includes('anna'));
+  assert.equal(patchDiag(undefined), null);
+  const wizard = readFileSync(new URL('../web/views/soullink.mjs', import.meta.url), 'utf8');
+  const call = wizard.match(/diag\('rando', \{[^\n]*\}\);/)?.[0] || '';
+  assert.match(call, /patch: patchDiag\(/);
+  assert.doesNotMatch(call, /patch: patchId/);
 });

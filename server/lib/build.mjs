@@ -16,6 +16,7 @@ import { needsIdenticalRom } from '../../shared/restart.mjs';
 import { pairMate } from '../../shared/pair-titles.mjs';
 import { cleanShiny } from '../../shared/shiny.mjs';
 import { applyShiny } from './shiny.mjs';
+import { packFormatOf } from '../../shared/runpack.mjs';
 
 /** Runs from before 1–4 players were always a pair – the default where no slots are passed (shared/slots.mjs). */
 const PAIR = ['p1', 'p2'];
@@ -323,10 +324,13 @@ export function checkPack(pack) {
   };
 }
 
-/** Everything the friend needs to build byte-identical ROMs — no copyrighted data inside. */
+/**
+ * Everything the friend needs to build byte-identical ROMs — no copyrighted data inside. A run with another shiny rate
+ * gets the pack format older apps refuse (shared/runpack.mjs): 2.7.4 would build its game with the normal odds.
+ */
 export function runPack(m) {
   return {
-    format: 'soullink-studio/run-pack@1',
+    ...packFormatOf(m),
     id: m.id,
     name: m.name,
     room: m.room,
@@ -530,7 +534,13 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       try {
         applyShiny(romOut, manifest.shiny); // (throws for a game that can't take it – a 3DS game too)
       } catch (e) {
-        rmSync(romOut, { force: true }); // a game without the run's shiny rate must not be played or compared
+        // a game without the run's shiny rate must not be played or compared – and a file a scanner holds must not
+        // replace the shiny error with its own
+        try {
+          rmSync(romOut, { force: true, maxRetries: 3, retryDelay: 100 });
+        } catch (rmErr) {
+          console.warn(`[shiny] the unpatched game couldn’t be removed (${rmErr.code || 'error'})`);
+        }
         throw e;
       }
       onLog(manifest.shiny.trainers

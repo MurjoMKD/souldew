@@ -120,3 +120,30 @@ test('an egg stays out of every team shown: board, play view, savestates (#11)',
   assert.match(src('board.mjs'), /if \(l\?\.party\?\.length\) return l\.party\.filter\(\(m\) => !unhatched\(m\)\);/, 'the board’s pairs');
   assert.match(src('savestates.mjs'), /filter\(\(m\) => m\?\.species && !unhatched\(m\)\)/, 'a savestate’s team');
 });
+
+test('Crystal\'s level 1: hatched in the original game; in a randomized run or a hack only when the app saw the egg', () => {
+  // the original Crystal has no level-1 wild Pokémon – level 1 is the hatch mark (pokecrystal CAUGHT_EGG_LEVEL)
+  assert.equal(R.hatchedMon(2, { key: 'k', metLevel: 1 }), true);
+  // a randomizer's level modifier or a hack can put level-1 Pokémon in the grass, and Crystal marks a hatch by nothing else
+  assert.equal(R.hatchedMon(2, { key: 'k', metLevel: 1 }, { levelOneWild: true }), false, 'not seen as an egg: a catch');
+  assert.equal(R.hatchedMon(2, { key: 'k', metLevel: 1 }, { levelOneWild: true, wasEgg: new Set(['k']) }), true, 'seen as an egg');
+  assert.equal(R.levelOneWild({ randomizer: { enabled: true } }), true);
+  assert.equal(R.levelOneWild({ game: { hackId: 'x' } }), true);
+  assert.equal(R.levelOneWild({ randomizer: { enabled: false } }), false);
+  // through the snapshot: a randomized Crystal run
+  const M = { ...SOLO('crystal', 'gbc'), randomizer: { enabled: true } };
+  const start = () => {
+    const d = mkDoc();
+    R.applySnapshot(d, M, 2, 'p1', { source: 'live', party: [mon({ metLocation: 1 })] });
+    return d;
+  };
+  // a level-1 wild catch on Route 31: filed there, not kept out as "hatched"
+  const wild = start();
+  const w = R.applySnapshot(wild, M, 2, 'p1', { source: 'live', party: [mon({ metLocation: 1 }), mon({ key: 'w', species: 16, level: 1, metLocation: 5, metLevel: 1 })] });
+  assert.deepEqual([w.inbox.length, w.newCatches.length], [0, 1]);
+  // the egg the app saw in the team hatches: the same key, level 1 → "hatched from an egg"
+  const egg = start();
+  R.applySnapshot(egg, M, 2, 'p1', { source: 'live', party: [mon({ metLocation: 1 }), mon({ key: 'h', species: 175, level: 5, isEgg: true })] });
+  const h = R.applySnapshot(egg, M, 2, 'p1', { source: 'live', party: [mon({ metLocation: 1 }), mon({ key: 'h', species: 175, level: 5, metLocation: 5, metLevel: 1 })] });
+  assert.deepEqual(h.inbox.map((i) => [i.mon.key, i.reason]), [['h', 'egg']]);
+});
