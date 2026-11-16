@@ -1332,6 +1332,7 @@
   "new.forMe": "Only me",
   "new.game": "Game from your library",
   "new.hack": "ROM hack (optional)",
+  "new.hackNoFit": "{hack} doesn’t fit this ROM – its patch needs another copy of the game (CRC32 {crc}). As it is, this run would be the original game.",
   "new.hostHint": "You host this run – at the end you get an invite for the others.",
   "new.hostHintGroup": "You host this run – at the end you get an invite code for the others.",
   "new.hostHintSolo": "Just you – no invite needed.",

@@ -917,6 +917,7 @@
   "new.forMe": "Nur mich",
   "new.game": "Spiel aus deiner Bibliothek",
   "new.hack": "ROM-Hack (optional)",
+  "new.hackNoFit": "{hack} passt nicht zu diesem ROM – sein Patch braucht eine andere Kopie des Spiels (CRC32 {crc}). So wäre dieser Run das Originalspiel.",
   "new.hostHint": "Du hostest diesen Run – am Ende bekommst du eine Einladung für die anderen.",
   "new.hostHintGroup": "Du hostest diesen Run – am Ende bekommst du einen Einladungscode für die anderen.",
   "new.hostHintSolo": "Nur du – keine Einladung nötig.",

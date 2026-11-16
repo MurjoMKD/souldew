@@ -3,7 +3,7 @@ import { useApp, Modal, Led } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, ago } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
-import { catalog, gameById, hackById, gameTitle, patchLabel, genFromSystem } from '../lib/data.mjs';
+import { catalog, gameById, hackById, gameTitle, patchLabel, patchFits, genFromSystem } from '../lib/data.mjs';
 import { PRESETS, DEFAULT_VALUES, localizeRandomizer, randomSeed, sameSettings, withDefaults, fieldActive, fieldEnabled, forGen, buildValues } from '/shared/randomizer-options.mjs';
 import { Cart, coverOf } from './library.mjs';
 import { RestartModal } from './restart.mjs';
@@ -442,9 +442,16 @@ function useGameChoices(gameId, hackId) {
   const rootOf = (id) => cat.games.find((g) => g.id === id)?.variantOf || id;
   const roms = (library?.roms || []).filter((r) => !gameId || rootOf(r.gameId) === gameId);
   const allRoms = library?.roms || [];
-  const patchesFor = (rom) => (library?.patches || []).filter((p) => rom && (!p.expectedCrc || p.expectedCrc === rom.crc));
+  const patchesFor = (rom) => (library?.patches || []).filter((p) => patchFits(p, rom, cat));
   return { roms: roms.length ? roms : allRoms, patchesFor, preferredPatch: (rom) => patchesFor(rom).find((p) => p.hackId === hackId),
-    patchById: (id) => (id && (library?.patches || []).find((p) => p.id === id)) || null };
+    patchById: (id) => (id && (library?.patches || []).find((p) => p.id === id)) || null,
+    // the hack the wizard was opened for (its library page), when none of its patches goes with this ROM: the run would
+    // be the original game – said instead of switched silently (#68)
+    hackMissing: (rom) => {
+      if (!hackId || !rom || rom.hackId === hackId || patchesFor(rom).some((p) => p.hackId === hackId)) return null;
+      const own = (library?.patches || []).find((p) => p.hackId === hackId);
+      return own && hackById(hackId) ? { hack: hackById(hackId), crc: own.expectedCrc } : null;
+    } };
 }
 
 /** First step of a new SoulLink: how many play – one card per head count, the player figures show it.
@@ -480,7 +487,7 @@ function namesFrom(from, fallback) {
  * A restart (`from`) always keeps the mode of the old run. */
 function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode }) {
   const { status, navigate, reloadStatus, setRunId, setMe } = useApp();
-  const { roms, patchesFor, preferredPatch, patchById } = useGameChoices(gameId || null, hackId);
+  const { roms, patchesFor, preferredPatch, patchById, hackMissing } = useGameChoices(gameId || null, hackId);
   // `patchPick`: started from a patch the catalog doesn't know (library) – its base ROM and that patch come first
   const picked = !from ? patchById(patchPick) : null;
   // `from`: restart of an old run – same game, hack, settings, mode and players; seeds stay fresh.
@@ -553,6 +560,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
   const hack = patch?.hackId ? hackById(patch.hackId) : !patch && rom?.hackId ? hackById(rom.hackId) : null;
   // a ROM the player marked as a hack the catalog doesn't know (library "This is a ROM hack…")
   const customHack = !patch && !hack && rom?.customHack ? rom.customHack : null;
+  const missing = !patchId ? hackMissing(rom) : null;
   // (a hack the catalog says the randomizer can't handle – also an already-patched ROM linked to it in the library)
   const hackNoUpr = hack?.uprCompatible === 'no';
   const canRandomize = inspect && !inspect.info?.unsupported && !hackNoUpr;
@@ -652,6 +660,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
             ${patchesFor(rom).map((p, i, all) => html`<option value=${p.id}>${patchLabel(p, all)}</option>`)}
           </select></label>
       </div>
+      ${missing && html`<p class="warning">${t('new.hackNoFit', '{hack} doesn’t fit this ROM – its patch needs another copy of the game (CRC32 {crc}). As it is, this run would be the original game.', { hack: missing.hack.name, crc: missing.crc })}</p>`}
       <p class="small muted">${!inspect ? t('new.checking', 'Checking the game …')
         : inspect.failed ? t('new.checkFailed', 'This combination of game and ROM hack doesn’t work – see the message above.')
         : inspect.info?.missingTool === 'java' ? (solo ? t('new.noJavaSolo', 'Java wasn’t found, so the randomizer can’t run. Install Java (e.g. Temurin 21 from adoptium.net) and restart the app – or play the Nuzlocke without the randomizer.')

@@ -116,6 +116,21 @@ export function patchLabel(p, all = [], nameOf = (id) => hackById(id)?.name) {
   if (!hack) return p.name;
   return all.some((x) => x !== p && x.hackId === p.hackId) ? `${hack} · ${p.name}` : hack;
 }
+/**
+ * Can `patch` be applied to the library ROM `rom`? A BPS/UPS patch carries the CRC32 of the one ROM it is made for and
+ * the patcher refuses any other. An xdelta or IPS patch carries none: its CRC32 comes from the catalog or the hack's
+ * readme and names one copy of the game, so a catalog hack's patch also goes with any other copy of the hack's base
+ * game (another dump or release) – like the hack's Play button, which patches whatever base ROM there is (#68). An
+ * xdelta patch still checks what it writes, so a copy it really doesn't fit fails when the game is checked.
+ */
+export function patchFits(patch, rom, cat = CATALOG) {
+  if (!patch || !rom) return false;
+  if (!patch.expectedCrc || patch.expectedCrc === rom.crc) return true;
+  if (patch.format === 'bps' || patch.format === 'ups' || !patch.hackId || !rom.gameId || rom.hackId || rom.customHack) return false;
+  const rootOf = (id) => cat.games?.find((g) => g.id === id)?.variantOf || id;
+  const base = cat.hacks?.find((h) => h.id === patch.hackId)?.baseGameId;
+  return !!base && rootOf(rom.gameId) === rootOf(base);
+}
 export function gameTitle(g) {
   if (!g) return '';
   return (currentLang() === 'de' && g.titleDe) || g.title;
