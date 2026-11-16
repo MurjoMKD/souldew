@@ -220,6 +220,52 @@ agree address for address – see [research/live_ram.md](../research/live_ram.md
 battle flag, place sign, catch, the bag (the test's Poké/Master Balls went in through the cheat's SaveBlock1 pointer
 0x03004F58) and the map music. French, Italian and Spanish ROMs share the table but weren't at hand.
 
+### The place sign in every language (2.8.0)
+
+The place sign used to read the current map from addresses that are only known to be right for the games they come
+from – mostly the English ones (pret's symbols, NDS-Ironmon-Tracker, souldew's own checks). In a game whose RAM is laid
+out differently (another language, a revision, a game still booting) it then showed whatever was there: Black City in
+Black/White in other languages (fixed in 2.7.5), and – found in this round – Pallet Town on Red's title screen and in
+Oak's intro, Black City at power-on in Black 2/White 2. Since 2.8.0 every reader takes the place only from RAM it can
+check against the ROM, and shows no place rather than a guessed one:
+
+| Games | Where the place comes from | Checked against | Not at the English address (another language) |
+|---|---|---|---|
+| Red/Blue/Yellow | the copy of the current map's header in WRAM (wCurMapHeader, 10 bytes) | the ROM's map headers (MapHeaderPointers/MapHeaderBanks, found by their structure) | searched for in WRAM (8 KB, at most every 2 s, one copy only) and remembered |
+| Gold/Silver/Crystal | the copy of the map's header and attributes (wMapPartial + wMapAttributes, 17 bytes) | the ROM's maps (MapGroupPointers, found by their structure; must be exactly the maps souldew's table has) | as Gen 1 |
+| Ruby/Sapphire/Emerald, FireRed/LeafGreen | gMapHeader (a copy of the ROM's MapHeader) | its events pointer and section must be one of the ROM's maps | no place (the trackers that run on the other languages agree on gMapHeader for D/F/I/S) |
+| Diamond/Pearl/Platinum, HeartGold/SoulSilver | the map id in the save data | the save data the party reader confirmed (English: pret's pointer; other languages: the trainer owns the team), or a pointer whose save data holds a trainer | no place until then – never the scanned party's address (it may be a battle's copy) |
+| Black/White | the copy of the zone header (2.7.5) | the ROM's zone headers | searched for (4 MB, at most every 3 s, one copy only) |
+| Black 2/White 2 | the copy of the zone header behind the main pointer (+0x41B2C) – found in this round | the ROM's zone headers, the zone id after the copy | as Black/White |
+| X/Y, ORAS, Sun/Moon, USUM | the zone id (unchanged) | read only once the team was found at one of the game's update addresses | – (one RAM layout for all languages of a cartridge) |
+
+**Checked in the running games** (US/EU ROMs, browser player and fast player, 2026-11-16 – the matrix plans with a
+check at power-on and the raw bytes recorded at every check): Red (power-on: no place – was Pallet Town; the bedroom
+via the new-game warp, Oak's lab, Route 1, battles, the catch), Silver and Crystal (power-on: no place; bedroom, New
+Bark Town, Elm's lab, Route 29, battles, the catch – the map the header copy names was the one wMapGroup/wMapNumber
+name at every check), Sapphire (Littleroot Town, Route 101 – gMapHeader checked against the ROM's 394 maps), Pearl and
+Platinum (Twinleaf/Route 201, Verity Lakefront, Lake Verity, Sandgem Town and its Mart; the trainer block of the save
+data read as a trainer at every check), Black 2 and White 2 (power-on: the old reader showed Black City, now no
+place; the copy of the zone header at main pointer + 0x41B2C byte for byte the ROM's header of the zone after it in
+the room, Aspertia City, the Pokémon Center, Aspertia Gate, Route 19, in battles too). Red, Silver, Crystal, Sapphire,
+Emerald, Black 2 and White 2 in both players, Pearl, Platinum in the browser player, Black (unchanged reader) in the
+fast player; Crystal Legacy 1.3.1 (its WRAM 11 bytes further on – the header copy moves with it) and Blaze Black 2 Redux
+1.4.1 (its own zone table) too. All plans passed, with one exception that isn't one: in a White 2 run the walk to Route
+19 hadn't left Aspertia Gate at that check – the sign said Aspertia Gate, as did the game's own copy.
+
+**Other languages, simulated:** the WRAM recorded at every check of Red (8 checks) and Crystal (17) was shifted the way
+another language could keep its variables (bank 1 moved by −0x40 … +0x55 bytes, 9 shifts each): the new readers found
+the same place in all 225 shifted images; reading the English addresses there would have shown a wrong place in 77 of
+them. The tests do the same with made-up ROM tables for every reader (test/location-languages.test.mjs).
+
+**Not checked in a running game (no ROMs at hand):** the German, French, Italian, Spanish and Japanese Game Boy games
+(their map tables are found by structure – in the English ROMs exactly where pret's symbols put them; German Yellow
+"POKEMON YELAPSD" and Japanese Green have no memory-table entry at all), German Ruby/Sapphire/Emerald/FireRed/LeafGreen
+in this round (the check against the ROM's maps is new), every non-English DS game (German HeartGold, Platinum,
+Black/White, Black 2/White 2 …: whether their main pointer and the module params pointer lead where the English ones
+do – if not, the copy is searched for, and Gen 4 waits for the party reader), Yellow, Gold, Blue, Diamond, HeartGold,
+SoulSilver, the 3DS games after an update other than the ones in the memory table.
+
 ## What the checks found and what changed
 
 - **Emerald place names** read from the ROM were shifted: the region-map table has an empty name in the middle, which

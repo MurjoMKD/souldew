@@ -84,7 +84,7 @@ function helper() {
   function place() {
     const { location, maps, entry, rom, state, tables } = ctx;
     if (ctx.hack) return null;
-    const r = location.readLocation(maps, entry, e.read, { rom, state });
+    const r = location.readLocation(maps, entry, e.read, { rom, state, gbMaps: ctx.romloc?.gbMaps || null });
     if (!r) return null;
     const table = location.locationLabel(r.gen, r.id, tables, 'en');
     const shown = location.placeName ? location.placeName(r, { rom, table, lang: 'en' }) : (rom?.lang === 'en' && r.romName) || table || r.romName;

@@ -1,14 +1,21 @@
-// Where the player is right now – read live from the game's RAM. Gen 1 `wCurMap`, Gen 2 `wMapGroup`/`wMapNumber`,
-// Gen 3 `gMapHeader.regionMapSectionId`, Gen 4 the current map id in the save data (LocalFieldData /
-// FieldOverworldState). Every result is turned into the same location ids the met-location tables use (gen 2:
-// Crystal landmark ids, gen 3: MAPSEC, gen 4: location names), so a place compares directly with a catch's
+// Where the player is right now – read live from the game's RAM. Gen 1/2 the copy of the current map's header in WRAM
+// (wCurMapHeader; wMapPartial + wMapAttributes), Gen 3 `gMapHeader` (the same, a copy of the ROM's MapHeader), Gen 4
+// the current map id in the save data (LocalFieldData / FieldOverworldState), Gen 5 the copy of the current zone's
+// header, the 3DS games the zone id. Every result is turned into the same location ids the met-location tables use
+// (gen 2: Crystal landmark ids, gen 3: MAPSEC, gen 4: location names), so a place compares directly with a catch's
 // `metLocation`. Gen 1 has no met location; its ids are `maps.gen1Locations` (the town-map names).
 // Addresses and tables: shared/data/maps.json (generated from the pret disassemblies, see its _generated).
-// With the ROM's own location data (shared/live/romloc.mjs: `ctx.rom`) the map → location step and the names come
-// from the game itself instead – randomized games, other languages and ROM hacks with their own maps included – and
-// games without a maps.json entry work too where the engine says where the current map id lives (Gen 4: the save
-// data, found through the NitroSDK module params; Gen 5: behind the game's main pointer, see GEN5_ZONE).
-// Garbage in RAM (title screen, a game that is still booting, a hack with another layout) gives null, never throws.
+// With the ROM's own location data (shared/live/romloc.mjs: `ctx.rom`, for Game Boy games `ctx.gbMaps`) the map →
+// location step and the names come from the game itself instead – randomized games, other languages and ROM hacks with
+// their own maps included – and games without a maps.json entry work too where the engine says where the current map
+// id lives (Gen 4: the save data, found through the NitroSDK module params; Gen 5: the zone header copy).
+// The rule for every reader: the right place or none, never a wrong one. A fixed address is only verified for the games
+// whose symbols or checks it comes from (mostly the English ones), so wherever the game keeps a copy of ROM data the
+// copy is matched against the ROM's own (Gen 1/2/3/5), and found elsewhere in RAM when it isn't at the fixed address
+// (another language) – rarely (a search every few seconds at most, a single hit only, then remembered); the Gen 4 save
+// data is taken only when the party reader confirmed it or it holds a trainer. Zeroed RAM (the title screen, a game
+// still booting) never reads as a place – it used to: Pallet Town in Red, Black City in Black/White and Black 2/White 2.
+// Garbage in RAM (a hack with another layout) gives null, never throws.
 
 import { shiftEntry } from './romwram.mjs';
 
@@ -27,26 +34,170 @@ export function mapEntryFor(maps, entry) {
   return m && entry?.wram ? shiftEntry(m, entry.wram) : m;
 }
 
-function readGen1(m, read, maps) {
-  const b = read(hex(m.curMapAddr), 1);
-  if (!ok(b, 1)) return null;
-  const id = maps.tables?.gen1?.[m.table]?.[String(b[0])];
+// Game Boy (Gen 1/2): the game keeps a copy of the current map's header in WRAM – Gen 1 the 10 bytes LoadMapHeader
+// copies to wCurMapHeader (tileset, size, blocks/text/script pointers, connections; pokered home/overworld.asm), Gen 2
+// the 17 bytes of wMapPartial + wMapAttributes (pokecrystal home/map.asm CopyMapPartial / CopyMapAttributes). Those
+// bytes are the ROM's own (server/lib/romloc.mjs `gbMaps`, shared/live/romloc.mjs gbMapHeaders) and name the map: the
+// place is read from the copy, at the address of pret's English symbols (maps.json `headerAddr`) – and where it isn't
+// there (another language's WRAM layout; pret has no symbols for the German, French … games), wherever it is in WRAM
+// (searched for at most every GB_SCAN_MS, a single hit only, then remembered in the live reader's state). The map
+// number the game keeps (wCurMap, wMapGroup/wMapNumber) alone proves nothing: zeroed WRAM (the title screen, Oak's
+// intro – Gen 1 map 0 is Pallet Town) or another language's variables read as a real map. Without the ROM's headers
+// (not loaded, or a hack with maps of its own) the fixed addresses are read as before, but an empty header copy
+// (zeroed WRAM) is no place.
+const GB_WRAM = 0xc000;
+const GB_WRAM_LEN = 0x2000; // WRAM0 + WRAMX bank 1: what the live readers can read (web/player.html toOff)
+const GB_SCAN_MS = 2000;
+const GEN1_CUR_MAP = 9; // wCurMapHeader − wCurMap (pokered.sym 0xD367 − 0xD35E, pokeyellow.sym 0xD366 − 0xD35D)
+const GEN1_SPAN = 10;
+const GEN2_SPAN = 17;
+
+const gbIndexes = new WeakMap(); // gbMaps → { gen, sigs: [{ bytes, maps }], byKey: Map }
+/** A key for the header copy at `o` (the bytes most different from map to map): Gen 1 size + blocks + text pointer, Gen 2 its first five bytes. */
+const gbKey = (gen, b, o) => (gen === 1 ? ((b[o + 1] * 256 + b[o + 2]) * 65536 + u16le(b, o + 3)) * 65536 + u16le(b, o + 5) : (b[o] * 65536 + b[o + 1] * 256 + b[o + 2]) * 65536 + u16le(b, o + 3));
+
+/** The ROM's headers of `gb` (gbMaps), indexed for the search: one entry per distinct header, with every map it is. */
+function gbIndex(gb) {
+  if (gbIndexes.has(gb)) return gbIndexes.get(gb);
+  let idx = null;
+  const span = gb?.gen === 1 ? GEN1_SPAN : GEN2_SPAN;
+  const list = gb?.gen === 1 && Array.isArray(gb.headers) ? gb.headers.map((h, i) => [i, h]) : gb?.gen === 2 && gb.maps ? Object.entries(gb.maps) : null;
+  if (list) {
+    const bySig = new Map();
+    for (const [map, h] of list) {
+      if (typeof h !== 'string' || h.length !== span * 2) continue;
+      if (!bySig.has(h)) bySig.set(h, { bytes: Uint8Array.from({ length: span }, (_, i) => parseInt(h.substr(i * 2, 2), 16)), maps: [] });
+      bySig.get(h).maps.push(map);
+    }
+    const byKey = new Map();
+    for (const s of bySig.values()) {
+      const k = gbKey(gb.gen, s.bytes, 0);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(s);
+    }
+    idx = byKey.size ? { gen: gb.gen, span, byKey } : null;
+  }
+  gbIndexes.set(gb, idx);
+  return idx;
+}
+
+/** The maps whose ROM header the bytes at `o` are a copy of (Gen 1: the tileset byte without its "reloaded" bit 7), or null. */
+function gbHeaderMaps(idx, b, o) {
+  if (o < 0 || o + idx.span > b.length) return null;
+  const cands = idx.byKey.get(gbKey(idx.gen, b, o));
+  if (!cands) return null;
+  const first = idx.gen === 1 ? b[o] & 0x7f : b[o];
+  for (const s of cands) {
+    if (first !== s.bytes[0]) continue;
+    let i = 1;
+    while (i < idx.span && b[o + i] === s.bytes[i]) i++;
+    if (i === idx.span) return s.maps;
+  }
+  return null;
+}
+
+/**
+ * The place of a header copy that names `maps` (one map, or maps sharing a header – Red's unused ids, the two halves of
+ * a building): its location when all of them are one place; else the map the game's own map number names (Gen 1:
+ * wCurMap, GEN1_CUR_MAP before the copy – `cur`, or null). { id, map } or null.
+ */
+function gbPlace(gen, maps, table, cur) {
+  const pick = maps.length === 1 ? maps[0] : maps.includes(cur) ? cur : null;
+  const ids = new Set(maps.map((k) => table?.[String(k)]));
+  const map = pick ?? (ids.size === 1 ? maps[0] : null);
+  if (map === null) return null;
+  const id = table?.[String(map)];
+  // (Gen 2 landmark 0 = LANDMARK_SPECIAL: Pokémon Center 2F, trade/colosseum rooms – no place to show)
+  return Number.isInteger(id) && (gen === 1 || id > 0) ? { id, map } : null;
+}
+
+/**
+ * Where the game keeps the copy of the current map's header: the address it was found at before, else pret's
+ * (`fixed`), else searched for in WRAM (with the live reader's state `st` only, at most every GB_SCAN_MS; exactly one
+ * copy counts). → { at, maps, cur } or null.
+ */
+function gbHeaderCopy(read, idx, fixed, st) {
+  const pre = idx.gen === 1 ? GEN1_CUR_MAP : 0;
+  if (st && st.gbHeaderFor !== idx) Object.assign(st, { gbHeaderFor: idx, gbHeaderAt: null, gbHeaderScan: 0 }); // another game
+  const tried = [];
+  for (const a of [st?.gbHeaderAt, fixed]) {
+    if (!a || tried.includes(a) || a - pre < GB_WRAM || a + idx.span > GB_WRAM + GB_WRAM_LEN) continue;
+    tried.push(a);
+    const b = read(a - pre, pre + idx.span);
+    const maps = ok(b, pre + idx.span) ? gbHeaderMaps(idx, b, pre) : null;
+    if (maps) {
+      if (st) st.gbHeaderAt = a;
+      return { at: a, maps, cur: pre ? b[0] : null };
+    }
+  }
+  if (!st || (st.gbHeaderScan && Date.now() - st.gbHeaderScan < GB_SCAN_MS)) return null;
+  st.gbHeaderScan = Date.now();
+  const ram = read(GB_WRAM, GB_WRAM_LEN);
+  if (!ok(ram, GB_WRAM_LEN)) return null;
+  let hit = null;
+  for (let o = pre; o + idx.span <= GB_WRAM_LEN; o++) {
+    const maps = gbHeaderMaps(idx, ram, o);
+    if (!maps) continue;
+    if (hit) return null; // two copies: neither is trusted
+    hit = { at: GB_WRAM + o, maps, cur: pre ? ram[o - pre] : null };
+  }
+  if (hit) st.gbHeaderAt = hit.at;
+  return hit;
+}
+
+function readGen1(m, read, maps, entry, ctx = {}) {
+  const table = maps.tables?.gen1?.[m.table];
+  const idx = ctx.gbMaps?.gen === 1 ? gbIndex(ctx.gbMaps) : null;
+  if (idx) {
+    const c = gbHeaderCopy(read, idx, m.headerAddr ? hex(m.headerAddr) : hex(m.curMapAddr) + GEN1_CUR_MAP, ctx.state || null);
+    return c ? gbPlace(1, c.maps, table, c.cur) : null;
+  }
+  // without the ROM's headers: wCurMap – once a map's header has been loaded (height and width are never 0)
+  const b = read(hex(m.curMapAddr), GEN1_CUR_MAP + 3);
+  if (!ok(b, GEN1_CUR_MAP + 3) || !b[GEN1_CUR_MAP + 1] || !b[GEN1_CUR_MAP + 2]) return null;
+  const id = table?.[String(b[0])];
   return Number.isInteger(id) ? { id, map: b[0] } : null;
 }
 
-function readGen2(m, read, maps) {
+function readGen2(m, read, maps, entry, ctx = {}) {
+  const table = maps.tables?.gen2?.[m.table];
+  const idx = ctx.gbMaps?.gen === 2 ? gbIndex(ctx.gbMaps) : null;
+  if (idx && m.headerAddr) {
+    const c = gbHeaderCopy(read, idx, hex(m.headerAddr), ctx.state || null);
+    return c ? gbPlace(2, c.maps, table, null) : null;
+  }
+  // without the ROM's headers: wMapGroup/wMapNumber (zeroed WRAM is map 0.0, which no table has)
   const g = read(hex(m.mapGroupAddr), 1);
   const n = read(hex(m.mapNumberAddr), 1);
   if (!ok(g, 1) || !ok(n, 1)) return null;
   const key = `${g[0]}.${n[0]}`;
-  const id = maps.tables?.gen2?.[m.table]?.[key];
+  const id = table?.[key];
   // landmark 0 = LANDMARK_SPECIAL (Pokémon Center 2F, trade/colosseum rooms): no place to show
   return Number.isInteger(id) && id > 0 ? { id, map: key } : null;
 }
 
-function readGen3(m, read) {
-  // struct MapHeader: +0x00 mapLayout (a ROM pointer), +0x14 regionMapSectionId. Before the overworld has
-  // loaded once the header is all zeroes – which would read as MAPSEC 0 (Littleroot Town).
+const gen3Indexes = new WeakMap(); // ROM data → Map(events pointer → section, -1: maps of different sections share it)
+/** The ROM's maps (romloc.mjs gen3MapHeaders `headers3`: events pointer and section per map) by events pointer, or null. */
+function gen3Index(rom) {
+  if (gen3Indexes.has(rom)) return gen3Indexes.get(rom);
+  const h = typeof rom.headers3 === 'string' ? rom.headers3 : '';
+  let idx = null;
+  if (h.length && h.length % 10 === 0) {
+    idx = new Map();
+    const byte = (i) => parseInt(h.substr(i, 2), 16);
+    for (let i = 0; i < h.length; i += 10) {
+      const events = (byte(i) | (byte(i + 2) << 8) | (byte(i + 4) << 16) | (byte(i + 6) << 24)) >>> 0;
+      const sec = byte(i + 8);
+      idx.set(events, idx.has(events) && idx.get(events) !== sec ? -1 : sec);
+    }
+  }
+  gen3Indexes.set(rom, idx);
+  return idx;
+}
+
+function readGen3(m, read, maps, entry, ctx = {}) {
+  // struct MapHeader: +0x00 mapLayout (a ROM pointer), +0x04 events (a ROM pointer), +0x14 regionMapSectionId. Before
+  // the overworld has loaded once the header is all zeroes – which would read as MAPSEC 0 (Littleroot Town).
   const b = read(hex(m.mapHeaderAddr), 0x18);
   if (!ok(b, 0x18)) return null;
   const layout = u32le(b, 0);
@@ -54,17 +205,23 @@ function readGen3(m, read) {
   const rom = (p) => p >= 0x08000000 && p < 0x0a000000;
   if (!rom(layout) || !rom(events)) return null;
   const sec = b[0x14];
+  // gMapHeader is a copy of the current map's header in the ROM (romloc.mjs gen3MapHeaders): with the ROM's headers
+  // at hand, a copy whose events and section aren't one of its maps' – another language's RAM, a hack's – is no place
+  const idx = ctx.rom?.gen === 3 ? gen3Index(ctx.rom) : null;
+  if (idx && idx.get(events) !== sec) return null;
   // 0xD5+ = MAPSEC_NONE / dynamic (Emerald), 0xC5+ in FireRed/LeafGreen are special sections
   return sec < 0xd5 ? { id: sec, map: sec } : null;
 }
 
 // Gen 4 engines: where LocalFieldData/FieldOverworldState keeps the current map id in the save data (see maps.json
 // sources), and where the NitroSDK module params word sits whose value + 0x20 holds the SaveData pointer (the party
-// reader uses the same: shared/live/parse.mjs readDS – Ironmon's *(0x02000BA8)+0x20, DP *(0x02000B70)+0x20)
+// reader uses the same: shared/live/parse.mjs readDS – Ironmon's *(0x02000BA8)+0x20, DP *(0x02000B70)+0x20). `trainer`:
+// PKHeX Trainer1 in the save data (the general block + its offset, as addresses.json `badges`): the name (8 u16, 0xFFFF
+// after it), TID/SID, money (u32 at +0x14), gender (+0x18).
 const GEN4_ENGINE = {
-  hgss: { mapIdOffset: 0x1244, params: 0x02000ba8 },
-  pt: { mapIdOffset: 0x1294, params: 0x02000ba8 },
-  dp: { mapIdOffset: 0x144c, params: 0x02000b70 },
+  hgss: { mapIdOffset: 0x1244, params: 0x02000ba8, trainer: 0x10 + 0x64 },
+  pt: { mapIdOffset: 0x1294, params: 0x02000ba8, trainer: 0x14 + 0x68 },
+  dp: { mapIdOffset: 0x144c, params: 0x02000b70, trainer: 0x214 + 0x64 },
 };
 const inRam = (a) => a >= 0x02000000 && a < 0x02400000;
 
@@ -75,7 +232,32 @@ function gen4Family(entry, rom) {
   return /^(heartgold|soulsilver)/.test(id) ? 'hgss' : /^platinum/.test(id) ? 'pt' : /^(diamond|pearl)/.test(id) ? 'dp' : null;
 }
 
-/** The SaveData address of a running Gen 4 game, or 0. */
+/**
+ * Does the save data at `base` hold a trainer? A named one (a Gen 4 name: 1–7 characters of the game's table, then
+ * 0xFFFF), money the game allows (≤ 999,999) and a gender (0/1). What another pointer, the save data before the
+ * player is named (the intro) or zeroed RAM never do.
+ */
+function gen4HasTrainer(read, base, fam) {
+  const t = read(base + GEN4_ENGINE[fam].trainer, 0x1a);
+  if (!ok(t, 0x1a) || t[0x18] > 1 || u32le(t, 0x14) > 999999) return false;
+  for (let i = 0; i < 8; i++) {
+    const c = u16le(t, i * 2);
+    if (c === 0xffff) return i > 0;
+    if (!c || c >= 0x200) return false;
+  }
+  return false;
+}
+
+/**
+ * The SaveData address of a running Gen 4 game, or 0. The party reader's when it has one (shared/live/parse.mjs
+ * readDS: an English game's through the pointer below; every other language's where the scan found the team, trusted
+ * once the save's trainer owns it – saveBaseFromScan). Else, before the team is read, the pointer: an English game's
+ * own (maps.json saveDataPtrAddr, from pret's linker maps), else the NitroSDK module params' word + 0x20 (close to the
+ * English pointer when there is one: a hack that moved its static data; another language's static data sits
+ * elsewhere, where the module params were never checked) – a save data that doesn't hold a trainer (gen4HasTrainer) is
+ * none. Never the scanned party's address minus its offset: that party may be a battle's copy (a wrong map id – a
+ * wrong place on the sign).
+ */
 function gen4SaveBase(m, entry, read, ctx, fam) {
   const st = ctx.state;
   if (st && inRam(st.saveBase)) return st.saveBase;
@@ -83,15 +265,13 @@ function gen4SaveBase(m, entry, read, ctx, fam) {
   const fixed = m?.saveDataPtrAddr ? hex(m.saveDataPtrAddr) : 0;
   const mp = read(GEN4_ENGINE[fam].params, 4);
   const viaParams = ok(mp, 4) && inRam(u32le(mp, 0)) ? u32le(mp, 0) + 0x20 : 0;
-  // a hack can move the static data: the module params follow it (sanity-checked against the known pointer, like readDS)
   if (viaParams && (!fixed || Math.abs(viaParams - fixed) < 0x40000)) ptrs.push(viaParams);
   if (fixed) ptrs.push(fixed);
   for (const a of ptrs) {
     const p = read(a, 4);
-    if (ok(p, 4) && inRam(u32le(p, 0))) return u32le(p, 0);
+    const base = ok(p, 4) ? u32le(p, 0) : 0;
+    if (inRam(base) && gen4HasTrainer(read, base, fam)) return base;
   }
-  // a party found by scanning (other languages): the save data sits a known distance before it
-  if (st && inRam(st.partyAddr) && entry?.partyCoreOffset) return st.partyAddr - hex(entry.partyCoreOffset);
   return 0;
 }
 
@@ -272,6 +452,118 @@ function readGen5(m, read, maps, entry, ctx = {}) {
   return null;
 }
 
+// Black 2/White 2 keep a copy of the current zone's header too: the 48 bytes of the ROM's zone table a/0/1/2
+// (romloc.mjs `zoneHeaders`) – its parent zone at +0x18, its place name at +0x1A – and the zone's id right after it
+// (+0x30). Unlike Black/White's, a Black 2/White 2 header doesn't hold the zone's own id (+0x16 is something else), so
+// the copy is matched by the id after it. NDS-Ironmon-Tracker's parentMapHeader (main pointer + 0x41B44) is its +0x18
+// and childMapHeader (+0x41B5C) the id after it, so the copy starts at main pointer + 0x41B2C – checked by souldew in
+// Black 2 and White 2 (US/EU) live, 2026-11-16: byte for byte the ROM's header of the zone named after it (428 the
+// player's room – parent 427 –, 427 Aspertia City, 435, 438 Aspertia Gate, 437 Route 19, in battles too). Read like
+// Black/White's: at the address behind the main pointer when the copy there is the ROM's header of the zone it names,
+// else wherever the copy is in RAM (searched for like Black/White's – BW_SCAN_MS –, a single hit only, remembered in
+// the live reader's state). The pointer alone was taken on trust before: in another language, or before the game has set up
+// the field, its zone id read as a place – zeroes, zone 0: "Black City" at power-on (Black 2 and White 2 US, live).
+const B2W2_HEADER = 0x41b2c;
+
+/** Is the copy at `o` (48 bytes + the zone id) the ROM's header of the zone it names? → that zone, or -1. */
+function b2w2ZoneOf(b, o, t) {
+  const zone = u16le(b, o + BW_HEADER);
+  if ((zone + 1) * BW_HEADER > t.length) return -1;
+  for (let i = 0; i < BW_HEADER; i++) if (b[o + i] !== t[zone * BW_HEADER + i]) return -1;
+  return zone;
+}
+
+/**
+ * An English game's copy behind its main pointer whose bytes differ from the ROM's header (a zone whose header the game
+ * changes while it runs – as bwLooseZone for Black/White): taken when the zone after it and the parent in it are the
+ * ROM's, the zone has a place, and most of the header is the ROM's. Never zone 0 (Black City: zeroed RAM). Zone or -1.
+ */
+function b2w2LooseZone(b, t, rom) {
+  const zone = u16le(b, BW_HEADER);
+  if (!zone || (zone + 1) * BW_HEADER > t.length || u16le(b, 0x18) !== u16le(t, zone * BW_HEADER + 0x18)) return -1;
+  const named = (z) => {
+    const id = z < (rom.mapLoc?.length || 0) ? rom.mapLoc[z] : null;
+    return Number.isInteger(id) && id > 0 && !!rom.names?.[id];
+  };
+  if (!named(zone) && !named(u16le(b, 0x18))) return -1;
+  let same = 0;
+  for (let i = 0; i < BW_HEADER; i++) if (b[i] === t[zone * BW_HEADER + i]) same++;
+  return same >= BW_HEADER / 2 ? zone : -1;
+}
+
+/** [zone, parent zone] from a copy at `a` (exact; behind an English game's own pointer also b2w2LooseZone), or null. */
+function b2w2ZonesAt(read, a, t, rom, viaPtr) {
+  if (!inRam(a) || !inRam(a + BW_READ - 1)) return null;
+  const b = read(a, BW_READ);
+  if (!ok(b, BW_READ)) return null;
+  if (b2w2ZoneOf(b, 0, t) >= 0 || (a === viaPtr && bwEnglish(rom) && b2w2LooseZone(b, t, rom) >= 0)) return [u16le(b, BW_HEADER), u16le(b, 0x18)];
+  return null;
+}
+
+/** The one copy of the current zone's header in main RAM, or 0. */
+function b2w2Search(read, t) {
+  const ram = read(0x02000000, 0x400000);
+  if (!ok(ram, 0x400000)) return 0;
+  let hit = 0;
+  for (let o = 0; o + BW_READ <= ram.length; o += 4) {
+    if (b2w2ZoneOf(ram, o, t) < 0) continue;
+    if (hit) return 0; // two copies: neither is trusted
+    hit = 0x02000000 + o;
+  }
+  return hit;
+}
+
+/**
+ * Black 2/White 2: [zone, parent zone] from the copy of the current zone's header, or null – where it was found
+ * before, else behind the main pointer, else searched for in main RAM (only with the live reader's state `st`; the
+ * same pace, misses and keeping of the last place as Black/White's, see BW_SCAN_MS).
+ */
+function b2w2CopyZones(read, rom, ctx) {
+  const t = bwZoneHeaders(rom);
+  if (!t) return null;
+  const st = ctx.state || null;
+  const game = `${rom.code}|${t.length}`;
+  if (st && st.b2w2Game !== game) Object.assign(st, { b2w2Game: game, b2w2ZoneAt: null, b2w2Last: null, b2w2Miss: 0, b2w2ZoneScan: 0, b2w2ScanMiss: 0 }); // another game
+  const found = (a, z) => {
+    if (st) Object.assign(st, { b2w2ZoneAt: a, b2w2Last: z, b2w2Miss: 0, b2w2ScanMiss: 0 });
+    return z;
+  };
+  const p = read(GEN5_MAIN_PTR, 4);
+  const off = ok(p, 4) ? u32le(p, 0) & 0xffffff : 0;
+  const viaPtr = off ? 0x02000000 + off + B2W2_HEADER : 0;
+  if (st?.b2w2ZoneAt) {
+    const z = b2w2ZonesAt(read, st.b2w2ZoneAt, t, rom, viaPtr);
+    if (z) return found(st.b2w2ZoneAt, z);
+    if (++st.b2w2Miss < BW_KEEP) return st.b2w2Last; // (one poll mid-rewrite: the place stays)
+    Object.assign(st, { b2w2ZoneAt: null, b2w2Last: null, b2w2Miss: 0 });
+  }
+  const z = viaPtr ? b2w2ZonesAt(read, viaPtr, t, rom, viaPtr) : null;
+  if (z) return found(viaPtr, z);
+  if (!st || (st.b2w2ZoneScan && Date.now() - st.b2w2ZoneScan < (st.b2w2ScanMiss >= BW_SCAN_SLOW_AFTER ? BW_SCAN_SLOW_MS : BW_SCAN_MS))) return null;
+  st.b2w2ZoneScan = Date.now();
+  const a = b2w2Search(read, t);
+  const zs = a ? b2w2ZonesAt(read, a, t, rom, viaPtr) : null;
+  if (zs) return found(a, zs);
+  st.b2w2ScanMiss++;
+  return null;
+}
+
+/** Black 2/White 2: the place from the copy of the current zone's header – the zone's, else its parent's. */
+function readB2W2(read, rom, ctx) {
+  for (const zone of b2w2CopyZones(read, rom, ctx) || []) {
+    const id = Number.isInteger(zone) && zone < rom.mapLoc.length ? rom.mapLoc[zone] : null;
+    if (Number.isInteger(id) && id > 0 && rom.names[id]) return { id, map: zone };
+  }
+  return null;
+}
+
+/** Gen 5: Black 2/White 2 by the copy of the zone header (readB2W2), Black/White by readGen5. */
+function readGen5Any(m, read, maps, entry, ctx = {}) {
+  const rom = ctx.rom;
+  if (rom?.gen === 5 && gen5Family(rom) === 'b2w2') return readB2W2(read, rom, ctx);
+  return readGen5(m, read, maps, entry, ctx);
+}
+
 /**
  * An expanded GBA engine (Run & Bun & co.): gMapHeader moved, so the place comes from SaveBlock1's map (group, number at
  * +4/+5) and the ROM's own map → section table (romloc.mjs gen3MapTable `maps3`). gSaveBlock1Ptr is one of the IWRAM
@@ -327,7 +619,7 @@ function readCtr(_m, read, _maps, entry, ctx) {
   return Number.isInteger(id) && id > 0 ? { id, map: zone } : null;
 }
 
-const READERS = { gen1: readGen1, gen2: readGen2, gen3: readGen3, gen3x: readGen3x, gen4: readGen4, gen5: readGen5, ctr: readCtr };
+const READERS = { gen1: readGen1, gen2: readGen2, gen3: readGen3, gen3x: readGen3x, gen4: readGen4, gen5: readGen5Any, ctr: readCtr };
 
 /**
  * Which reader serves this game: the maps.json entry's, else one the ROM's location data makes possible (a game or
@@ -351,8 +643,10 @@ export function canReadLocation(maps, entry, rom = null) {
 /**
  * Current location of the running game: { gen, id, map } (+ romName with ROM data) or null.
  * `entry` = addresses.json entry (or its id), `read(addr, len)` = bus read returning bytes or null,
- * `ctx` = { rom: romLocations() result (the game's own map → location step and names), state: the live party
- * reader's state (its SaveData address) } – both optional. `romName` = the game's own name for the place, or null.
+ * `ctx` = { rom: romLocations() result (the game's own map → location step and names), gbMaps: a Game Boy ROM's map
+ * headers (server/lib/romloc.mjs romData `gbMaps`), state: the live party reader's state (its SaveData address; the
+ * readers remember where they found a header copy in it) } – all optional; without `state` nothing is searched for.
+ * `romName` = the game's own name for the place, or null.
  */
 export function readLocation(maps, entry, read, ctx = {}) {
   try {

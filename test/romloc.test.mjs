@@ -1,12 +1,12 @@
 // Location data read from the ROM itself (shared/live/romloc.mjs) and its use by readLocation (ctx.rom).
 // Synthetic files check the formats; real ROMs – when present – check the result against the tables:
 //   SOULDEW_TEST_ROMS=/folder/with/roms node --test test/romloc.test.mjs
-// (any .nds/.gba in the folder; never commit ROMs). Without the variable those tests are skipped.
+// (any .gb/.gbc/.gba/.nds in the folder; never commit ROMs). Without the variable those tests are skipped.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { gen4Messages, gen5Messages, gen4MapLocations, gen5ZoneLocations, gen3Names, romLocations, prettyName, langOfCode } from '../shared/live/romloc.mjs';
+import { gen4Messages, gen5Messages, gen4MapLocations, gen5ZoneLocations, gen3Names, romLocations, prettyName, langOfCode, gen1MapHeaders, gen2MapHeaders, gbMapHeaders, gen3MapHeaders } from '../shared/live/romloc.mjs';
 import { readLocation, canReadLocation } from '../shared/live/location.mjs';
 import { blzDecompress } from '../shared/nds.mjs';
 import { romCrc } from '../server/lib/romloc.mjs';
@@ -180,37 +180,52 @@ test('BLZ: an uncompressed binary passes through', () => {
 test('readLocation with ROM data: Gen 4 map id → the ROM\'s location, through the module params pointer', () => {
   const save = 0x02230000;
   const rom = { gen: 4, family: 'hgss', code: 'IPKD', lang: 'de', mapLoc: [0, 0, 7, 9], names: ['Geheimort', 'A', 'B', 'C', 'D', 'E', 'F', 'Rosalia City', 'G', 'Route 29'] };
-  // German HeartGold: no maps.json entry, a scanned party – the module params still lead to the save data
+  // German HeartGold: no maps.json entry, a scanned party – the module params lead to the save data, taken once it
+  // holds a trainer (PKHeX Trainer1 at +0x74: a name, money, gender)
   const entry = { id: 'heartgold_us~IPKD', gen: 4, partyCoreOffset: '0xA0' };
-  const read = bus({ 0x02000ba8: le32(0x02111860), 0x02111880: le32(save), [save + 0x1244]: le32(3) });
+  const trainer = [0x2b, 0x01, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2, 0, ...le32(3000), 0, 5];
+  const read = bus({ 0x02000ba8: le32(0x02111860), 0x02111880: le32(save), [save + 0x1244]: le32(3), [save + 0x74]: trainer });
   assert.equal(canReadLocation(maps, entry, null), false, 'without ROM data the language has no location');
   assert.equal(canReadLocation(maps, entry, rom), true);
   assert.deepEqual(readLocation(maps, entry, read, { rom }), { gen: 4, id: 9, map: 3, romName: 'Route 29' });
+  assert.equal(readLocation(maps, entry, bus({ 0x02000ba8: le32(0x02111860), 0x02111880: le32(save), [save + 0x1244]: le32(3) }), { rom }), null, 'no trainer there: not the save data');
   // the party reader already knows the save data: that wins
   const read2 = bus({ [0x02240000 + 0x1244]: le32(2) });
   assert.deepEqual(readLocation(maps, entry, read2, { rom, state: { saveBase: 0x02240000 } }), { gen: 4, id: 7, map: 2, romName: 'Rosalia City' });
-  // only a scanned party: save data = party core − partyCoreOffset
+  // only a scanned party (maybe a battle's copy): no save data is guessed from it
   const read3 = bus({ [0x02250000 + 0x1244]: le32(3) });
-  assert.equal(readLocation(maps, entry, read3, { rom, state: { partyAddr: 0x02250000 + 0xa0 } }).id, 9);
+  assert.equal(readLocation(maps, entry, read3, { rom, state: { partyAddr: 0x02250000 + 0xa0 } }), null);
 });
 
 test('readLocation with ROM data: the vanilla table and the ROM agree; the ROM wins for a hack', () => {
   const save = 0x02230000;
-  const read = bus({ 0x02000ba8: le32(0x02111860), 0x02111880: le32(save), [save + 0x1244]: le32(6) });
+  const trainer = [0x2b, 0x01, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2, 0, ...le32(3000), 0, 5];
+  const read = bus({ 0x02000ba8: le32(0x02111860), 0x02111880: le32(save), [save + 0x1244]: le32(6), [save + 0x74]: trainer });
   const t = maps.tables.gen4.hgss;
   assert.equal(readLocation(maps, 'heartgold_us', read).id, t[6]);
   const hack = { gen: 4, family: 'hgss', code: 'IPKE', lang: 'en', mapLoc: t.map((v, i) => (i === 6 ? 200 : v)), names: Array.from({ length: 235 }, (_, i) => (i === 200 ? 'Hack Town' : `L${i}`)) };
   assert.deepEqual(readLocation(maps, 'heartgold_us', read, { rom: hack }), { gen: 4, id: 200, map: 6, romName: 'Hack Town' });
 });
 
-test('readLocation with ROM data: Gen 5 zone id behind the main pointer (Black 2), parent zone as fallback (#1)', () => {
+test('readLocation with ROM data: Gen 5 – Black 2\'s copy of the zone header behind the main pointer, parent zone as fallback (#1)', () => {
   const base = 0x02200000;
-  const rom = { gen: 5, family: 'b2w2', code: 'IREO', lang: 'en', mapLoc: [0, 0, 0, 117], names: Object.assign(new Array(118).fill(''), { 117: 'Aspertia City' }) };
-  const read = bus({ 0x02000024: le32(base), [base + 0x41b5c]: le16(3) });
+  // four zones of 48 bytes: zone 1 a room in zone 3 (parent at +0x18), zone 3 Aspertia City
+  const zones = new Uint8Array(4 * 48);
+  for (let z = 0; z < 4; z++) {
+    zones[z * 48] = 0x10 + z;
+    put16(zones, z * 48 + 0x18, z === 1 ? 3 : z);
+  }
+  const zoneHeaders = Array.from(zones, (v) => v.toString(16).padStart(2, '0')).join('');
+  const rom = { gen: 5, family: 'b2w2', code: 'IREO', lang: 'en', mapLoc: [0, 0, 0, 117], names: Object.assign(new Array(118).fill(''), { 117: 'Aspertia City' }), zoneHeaders };
+  // main pointer + 0x41B2C: the copy of the zone's header, the zone id after it (+0x30 = Ironmon's childMapHeader 0x41B5C)
+  const copy = (z) => [...zones.subarray(z * 48, z * 48 + 48), ...le16(z)];
+  const read = bus({ 0x02000024: le32(base), [base + 0x41b2c]: copy(3) });
   assert.equal(canReadLocation(maps, { id: 'black2_us', gen: 5 }, rom), true);
   assert.deepEqual(readLocation(maps, { id: 'black2_us', gen: 5 }, read, { rom }), { gen: 5, id: 117, map: 3, romName: 'Aspertia City' });
-  const read2 = bus({ 0x02000024: le32(base), [base + 0x41b5c]: le16(1), [base + 0x41b44]: le16(3) });
+  const read2 = bus({ 0x02000024: le32(base), [base + 0x41b2c]: copy(1) });
   assert.equal(readLocation(maps, { id: 'black2_us', gen: 5 }, read2, { rom }).id, 117, 'zone without a name → its parent');
+  // what Ironmon's addresses alone took on trust: a zone id there without its header – no place
+  assert.equal(readLocation(maps, { id: 'black2_us', gen: 5 }, bus({ 0x02000024: le32(base), [base + 0x41b5c]: le16(3) }), { rom }), null);
   assert.equal(canReadLocation(maps, { id: 'black2_us', gen: 5 }, null), false, 'Gen 5 needs the ROM data');
 });
 
@@ -369,10 +384,74 @@ test('readLocation with ROM data: Black/White read the copy of the zone header, 
   }
 });
 
+// ---------------------------------------------------------------- Game Boy map headers
+
+/** A made-up Gen 1 ROM (512 KB) with its map tables where no English game has them – as another language might. */
+function gen1Rom({ pointers = 0x2345, banks = 0x13579 } = {}) {
+  const rom = new Uint8Array(0x80000);
+  for (let i = 0; i < 248; i++) {
+    const bank = 5 + (i % 3);
+    const ptr = 0x4100 + i * 24;
+    put16(rom, pointers + i * 2, ptr);
+    rom[banks + i] = i === 11 ? 0 : bank; // (an unused map: no header)
+    const o = bank * 0x4000 + (ptr - 0x4000);
+    rom.set([i < 9 ? 0 : 1 + (i % 20), 9 + (i % 7), 10 + (i % 5), 0x00, 0x50, 0x10, 0x60, 0x20, 0x70, i % 16], o);
+  }
+  return rom;
+}
+
+test('Gen 1 map headers: the pointer and bank tables found by their structure, wherever they are', () => {
+  const g = gen1MapHeaders(gen1Rom());
+  assert.deepEqual(g.offset, { pointers: 0x2345, banks: 0x13579 });
+  assert.equal(g.headers.length, 248);
+  assert.equal(g.headers[11], null, 'an unused map has no header');
+  assert.equal(g.headers[0], '00090a005010602070' + '00');
+  const moved = gen1MapHeaders(gen1Rom({ pointers: 0x3001, banks: 0x2fff0 }));
+  assert.deepEqual(moved.offset, { pointers: 0x3001, banks: 0x2fff0 });
+  assert.deepEqual(moved.headers, g.headers, 'the same headers – another place in the ROM');
+  assert.equal(gbMapHeaders(gen1Rom(), 1, maps.tables.gen1.pokered).headers[12], g.headers[12]);
+  assert.equal(gen1MapHeaders(new Uint8Array(0x80000)), null, 'no tables: nothing');
+});
+
+/** A made-up Gen 2 ROM: the maps of `table` (group.number) in a group table at `at`, attributes in the next bank. */
+function gen2Rom(table, at = 0x40123) {
+  const rom = new Uint8Array(0x100000);
+  const keys = Object.keys(table).filter((k) => !k.startsWith('_'));
+  const groups = Math.max(...keys.map((k) => Number(k.split('.')[0])));
+  const bank = at >> 14;
+  let next = (at & 0x3fff) + 0x4000 + groups * 2;
+  let attr = 0x4000;
+  for (let gi = 1; gi <= groups; gi++) {
+    put16(rom, at + (gi - 1) * 2, next);
+    const n = keys.filter((k) => k.startsWith(`${gi}.`)).length;
+    for (let m = 0; m < n; m++, next += 9, attr += 12) {
+      const o = bank * 0x4000 + next - 0x4000;
+      rom.set([bank + 1, 1 + (m % 30), 1 + (gi % 7), attr & 0xff, attr >> 8, gi, 5, 0, 1], o);
+      rom.set([0, 5 + (m % 9), 5 + (gi % 11), 0x20, 0x00, 0x50, 0x21, 0x00, 0x60, 0x10, 0x70, m % 16], (bank + 1) * 0x4000 + attr - 0x4000);
+    }
+  }
+  return rom;
+}
+
+test('Gen 2 map headers: the group table found by its structure; its maps must be the table\'s', () => {
+  const t = maps.tables.gen2.pokecrystal;
+  const g = gen2MapHeaders(gen2Rom(t));
+  assert.equal(g.offset, 0x40123);
+  assert.deepEqual(Object.keys(g.maps).sort(), Object.keys(t).filter((k) => !k.startsWith('_')).sort());
+  assert.equal(g.maps['24.3'].length, 34, '5 + 12 bytes');
+  assert.ok(gbMapHeaders(gen2Rom(t), 2, t), 'the same maps as the table');
+  // a table with other maps (a hack with maps of its own): the reader keeps to the fixed addresses
+  const fewer = Object.fromEntries(Object.entries(t).filter(([k]) => k !== '24.3'));
+  assert.equal(gbMapHeaders(gen2Rom(fewer), 2, t), null);
+  assert.equal(gbMapHeaders(gen2Rom(t), 2, maps.tables.gen2.pokegold), null, 'Gold/Silver have fewer maps');
+  assert.equal(gen2MapHeaders(new Uint8Array(0x100000)), null);
+});
+
 // ---------------------------------------------------------------- real ROMs (optional)
 
 const DIR = process.env.SOULDEW_TEST_ROMS;
 const roms = DIR && existsSync(DIR) ? readdirSync(DIR).filter((f) => /\.(nds|gba)$/i.test(f)).map((f) => join(DIR, f)) : [];
+const gbRoms = DIR && existsSync(DIR) ? readdirSync(DIR).filter((f) => /\.gbc?$/i.test(f)).map((f) => join(DIR, f)) : [];
 // only retail dumps can be compared with the tables (a hack or a randomized game is checked in test/romdata.test.mjs)
 const RETAIL = new Set(json('catalog.json').games.flatMap((g) => g.crc32 || []).map((c) => String(c).toUpperCase()));
 const retail = (bytes) => RETAIL.has(romCrc(bytes));
@@ -414,6 +493,52 @@ test('real ROMs: the ROM-derived locations match the tables', { skip: roms.lengt
         if (r.family === 'b2w2') assert.equal(r.names[r.mapLoc[427]], 'Aspertia City', `${f}: the player's home zone`);
       }
       assert.ok(r.mapLoc.every((v) => v < r.names.length), f);
+    }
+  }
+});
+
+test('real Game Boy ROMs: the map headers are where pret\'s symbols put them, and are the tables\' maps', { skip: gbRoms.length ? false : 'set SOULDEW_TEST_ROMS to a folder with ROMs' }, () => {
+  // pret: pokered.sym 00:01AE MapHeaderPointers, 03:423D MapHeaderBanks; pokeyellow 3F:41F2 / 3F:43E4;
+  // pokecrystal.sym 25:4000 MapGroupPointers, pokegold/pokesilver.sym 25:40ED
+  const at = (bank, a) => bank * 0x4000 + (a - 0x4000);
+  const gen1 = { 'POKEMON RED': [0x1ae, at(3, 0x423d)], 'POKEMON BLUE': [0x1ae, at(3, 0x423d)], 'POKEMON YELLOW': [at(0x3f, 0x41f2), at(0x3f, 0x43e4)] };
+  const gen2 = { PM_CRYSTAL: [at(0x25, 0x4000), 'pokecrystal'], POKEMON_GLD: [at(0x25, 0x40ed), 'pokegold'], POKEMON_SLV: [at(0x25, 0x40ed), 'pokegold'] };
+  let checked = 0;
+  for (const f of gbRoms) {
+    const bytes = new Uint8Array(readFileSync(f));
+    if (!retail(bytes)) continue;
+    const title = String.fromCharCode(...bytes.subarray(0x134, 0x144)).replace(/\0.*$/, '').trim();
+    const g1 = Object.entries(gen1).find(([k]) => title.startsWith(k));
+    const g2 = Object.entries(gen2).find(([k]) => title.startsWith(k));
+    if (g1) {
+      const g = gen1MapHeaders(bytes);
+      assert.deepEqual(g.offset, { pointers: g1[1][0], banks: g1[1][1] }, f);
+      assert.ok(g.headers.filter(Boolean).length >= 220, f);
+      assert.ok(gbMapHeaders(bytes, 1, maps.tables.gen1.pokered), f);
+      checked++;
+    }
+    if (g2) {
+      const g = gen2MapHeaders(bytes);
+      assert.equal(g.offset, g2[1][0], f);
+      assert.ok(gbMapHeaders(bytes, 2, maps.tables.gen2[g2[1][1]]), `${f}: the same maps as maps.json ${g2[1][1]}`);
+      assert.equal(new Set(Object.values(g.maps)).size, Object.keys(g.maps).length, `${f}: every map's 17 bytes are its own`);
+      checked++;
+    }
+  }
+  assert.ok(checked > 0, 'a retail Game Boy ROM was checked');
+});
+
+test('real GBA ROMs: every map header’s events pointer names one section', { skip: roms.length ? false : 'set SOULDEW_TEST_ROMS to a folder with ROMs' }, () => {
+  for (const f of roms.filter((x) => /\.gba$/i.test(x))) {
+    const bytes = new Uint8Array(readFileSync(f));
+    if (!retail(bytes)) continue;
+    const h = gen3MapHeaders(bytes);
+    assert.ok(h && h.length / 10 >= 300, `${f}: map headers`);
+    const sec = new Map();
+    for (let i = 0; i < h.length; i += 10) {
+      const k = h.substr(i, 8);
+      assert.ok(!sec.has(k) || sec.get(k) === h.substr(i + 8, 2), `${f}: events ${k} in two sections`);
+      sec.set(k, h.substr(i + 8, 2));
     }
   }
 });
