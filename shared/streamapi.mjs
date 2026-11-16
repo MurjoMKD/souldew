@@ -183,7 +183,8 @@ export function buildState(manifest, doc, opts = {}) {
     const where = obj(val(`where:${slot}`));
     const meta = obj(val(`player:${slot}`)) || {};
     let party;
-    if (Array.isArray(live?.party) && live.party.length) party = live.party.slice(0, 6).filter((m) => obj(m) && Number.isInteger(m.species)).map((m) => mon(m, slot));
+    // (an egg stays out until it hatches: its species is what it hatches into – a randomizer's surprise)
+    if (Array.isArray(live?.party) && live.party.length) party = live.party.slice(0, 6).filter((m) => obj(m) && Number.isInteger(m.species) && !m.egg).map((m) => mon(m, slot));
     else {
       const list = Array.isArray(val(`party:${slot}`)) ? val(`party:${slot}`).slice(0, 6) : [];
       party = list.map((a) => {

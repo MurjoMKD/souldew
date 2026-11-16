@@ -687,11 +687,13 @@ function pkMon(raw, gen, T) {
   }
   const metExt = u16le(d, 0x46);
   const metLocation = gen === 5 ? u16le(d, 0x80) : metExt || u16le(d, 0x80);
+  // where the egg came from (0: not from an egg) – Platinum/HGSS's own places in the extended field, like the met place
+  const eggLocation = gen === 5 ? u16le(d, 0x7e) : u16le(d, 0x44) || u16le(d, 0x7e);
   return {
     key: `${pid.toString(16).padStart(8, '0')}-${tid}-${sid}`,
     pid, species, nickname, isEgg: !!(iv32 & 0x40000000), item: u16le(d, 0x0a),
     moves: [u16le(d, 0x28), u16le(d, 0x2a), u16le(d, 0x2c), u16le(d, 0x2e)].filter(Boolean),
-    metLocation, metLevel: d[0x84] & 0x7f, gender: ['M', 'F', '-'][(d[0x40] >> 1) & 3],
+    metLocation, eggLocation, metLevel: d[0x84] & 0x7f, gender: ['M', 'F', '-'][(d[0x40] >> 1) & 3],
     shiny: (((pid >>> 16) ^ (pid & 0xffff) ^ tid ^ sid) >>> 0) < 8,
     status: gen === 5 ? gen5Status(d[0x88]) : d[0x88], level: d[0x8c], hp: u16le(d, 0x8e), maxHp: u16le(d, 0x90),
   };

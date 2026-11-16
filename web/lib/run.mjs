@@ -667,7 +667,7 @@ export function checks(doc, manifest, rd) {
       const { cap } = levelCap(doc, manifest, slot);
       if (!l || !cap) continue;
       for (const m of l.party || []) {
-        if (m.level <= cap) continue;
+        if (m.egg || m.level <= cap) continue;
         const name = m.nick || speciesName(m.species);
         out.push({ level: capLevel, area: m.area, slot, text: solo
           ? t('check.cap', 'Level cap {cap} exceeded: {name} is level {lv}.', { cap, name, lv: m.level })
@@ -700,7 +700,7 @@ function nuzlockeChecks(doc, manifest, r, capLevel) {
     // An untracked team member met on an area that already has its encounter: a second catch there. Shinies
     // (clause on), hatched eggs, trades/gifts (special places) and bonus/ignored mons are fine.
     if (!m.area && !m.egg && m.met != null && !extras[m.key] && !ignored[m.key] && !(m.shiny && r.shinyClause)
-      && m.metLevel !== 0 && !(gen >= 4 && m.met >= 2000)) {
+      && !hatchedMon(gen, m) && !(gen >= 4 && m.met >= 2000)) {
       const area = areaForCatch(doc, manifest, gen, m.met, { create: false });
       const e = area && encounter(doc, area, slot);
       if (e && e.key !== m.key) out.push({ level: 'warn', area, text: t('check.spentArea', '{area}: {name} is a second catch there – the area was already used.', { area: an(area), name }) });
@@ -769,6 +769,16 @@ function dupeInPass(doc, manifest, rd, species, slot, exceptArea, writes) {
   return null;
 }
 
+/**
+ * Hatched from an egg – not a catch at the place it hatched. Gen 4 on keep where the egg came from; the level a hatched
+ * Pokémon was "met" at is 0 in Gen 3/4 and 1 in Crystal (Gold/Silver keep no met data) and from Gen 5 on (PKHeX
+ * EggStateLegality, pokecrystal CAUGHT_EGG_LEVEL) – and no wild Pokémon is met at it.
+ */
+export function hatchedMon(gen, m) {
+  if (m?.eggLocation > 0) return true;
+  return gen === 2 ? m?.metLevel === 1 : gen >= 3 && gen <= 4 && m?.metLevel === 0;
+}
+
 function liveMon(m, area) {
   return {
     key: m.key, area, species: m.species, nick: m.nickname, level: m.level, hp: m.hp, maxHp: m.maxHp, item: m.item ?? m.heldItem,
@@ -776,7 +786,7 @@ function liveMon(m, area) {
     // an expanded engine's own item numbers: no retail name for them – the game's own name where the ROM gave it
     ...(m.itemOwn ? { itemOwn: true, ...(m.itemName ? { itemName: String(m.itemName).slice(0, 24) } : {}) } : {}),
     // where an untracked mon was met – the Nuzlocke checks tell a second catch on a spent area by it
-    ...(!area && m.metLocation != null ? { met: m.metLocation, metLevel: m.metLevel ?? null } : {}),
+    ...(!area && m.metLocation != null ? { met: m.metLocation, metLevel: m.metLevel ?? null, ...(m.eggLocation > 0 ? { eggLocation: m.eggLocation } : {}) } : {}),
   };
 }
 
@@ -912,10 +922,10 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
     // starter goes to the inbox), the next one (a Route 29 catch) would be filed as the starter.
     if (!starterOffered && !has('starter') && !anyEnc) guess = 'starter';
     starterOffered = true;
-    // A hatched egg (met level 0) carries the place it hatched, an in-game trade or event a special location
-    // (Gen 4/5: 2000+) – neither is an encounter of that route, and filing it there would pair it with the
-    // partner's real catch. Those go to the inbox.
-    const hatched = gen >= 3 && m.metLevel === 0;
+    // A hatched egg carries the place it hatched, an in-game trade or event a special location (Gen 4/5: 2000+) –
+    // neither is an encounter of that route, and filing it there would pair it with the partner's real catch. Those
+    // go to the inbox.
+    const hatched = hatchedMon(gen, m);
     const special = gen >= 4 && m.metLocation >= 2000;
     if (!guess && !hatched && !special && m.metLocation !== null && m.metLocation !== undefined) guess = areaForCatch(doc, manifest, gen, m.metLocation);
     // Gen 1 and Gold/Silver keep no catch location: a Pokémon that joins within a minute of a wild battle was caught

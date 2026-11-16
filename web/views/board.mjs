@@ -10,7 +10,7 @@ import {
   players as getPlayers, rules as getRules, levelCap, dupeOf, resumeRun, slotsOf, encounter, openAreas, runStats, isNuzlocke, logCheatRule,
   logTypeHelpRule, allowedRulesPatch, isHost, HOST_SLOT,
 } from '../lib/run.mjs';
-import { PartyPanel, PartyGrid, TeamColumns } from './party.mjs';
+import { PartyPanel, PartyGrid, TeamColumns, unhatched } from './party.mjs';
 import { HostCode } from './invitecode.mjs';
 import { RestartModal } from './restart.mjs';
 import { useStreamer } from '../lib/streamer.mjs';
@@ -367,7 +367,8 @@ function LiveTab({ warnings }) {
   const solo = isNuzlocke(manifest);
   const fromLive = (slot) => {
     const l = live(doc, slot);
-    if (l?.party?.length) return l.party;
+    // (an egg stays out until it hatches – then it is a Pokémon of the team like any other)
+    if (l?.party?.length) return l.party.filter((m) => !unhatched(m));
     return party(doc, slot).map((area) => {
       const e = doc.get(`enc:${area}:${slot}`);
       return e ? { area, species: e.species, nick: e.nickname, level: e.level, shiny: e.shiny } : null;

@@ -125,7 +125,8 @@ Field notes:
   `hp`/`maxHp` `null` when unknown; `status`: `slp psn tox brn frz par` or `""`; `fainted`: 0 HP; `dead`: its link is
   in the graveyard; `alive`: neither. `item`: the held item (`name` from the Gen 3–5 tables, `null` in Gen 1/2) or
   `null`. `area` / `areaName`: the encounter area it counts for (`null` = not tracked). `legendary`:
-  `"legendary"`, `"mythical"` or `null`. `inParty: false` marks a link member that sits in the box.
+  `"legendary"`, `"mythical"` or `null`. `inParty: false` marks a link member that sits in the box. An egg isn't
+  listed until it hatches (its species would give away what hatches – in a randomized game a surprise).
 - `links[]`: every area where all players caught something (`alive`) or whose group died (`dead`), with each
   player's Pokémon (`null` if none). In a Nuzlocke a link has one member.
 - `encounters[]`: every area with any result, in the order they happened. `state`: `alive`, `dead`, `failed`
