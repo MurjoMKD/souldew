@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { findEntry, readLiveParty, LiveTables } from '../shared/live/parse.mjs';
+import { findEntry, readLiveParty, readLiveBattle, playerBattle, LiveTables } from '../shared/live/parse.mjs';
 import { encryptPK4 } from '../shared/gen4save.mjs';
 
 const L = (f) => JSON.parse(readFileSync(new URL(`../shared/data/${f}`, import.meta.url)));
@@ -26,7 +26,7 @@ function ram() {
   };
 }
 
-function pk4({ pid = 0x1234abcd, species = 152, level = 12, tid = TID, sid = SID, metLevel = 5 } = {}) {
+function pk4({ pid = 0x1234abcd, species = 152, level = 12, tid = TID, sid = SID, metLevel = 5, hp = 30, maxHp = 34, form = 0 } = {}) {
   const d = new Uint8Array(236);
   const dv = new DataView(d.buffer);
   dv.setUint32(0, pid, true);
@@ -36,8 +36,8 @@ function pk4({ pid = 0x1234abcd, species = 152, level = 12, tid = TID, sid = SID
   dv.setUint16(0x46, 126, true);
   d[0x84] = metLevel;
   d[0x8c] = level;
-  dv.setUint16(0x8e, 30, true);
-  dv.setUint16(0x90, 34, true);
+  dv.setUint16(0x8e, hp, true);
+  dv.setUint16(0x90, maxHp, true);
   return encryptPK4(d);
 }
 
@@ -129,3 +129,43 @@ test('scanned Gen 4: a copy of the party lower in RAM – the module-params poin
   assert.equal(res.badges, 1);
   assert.equal(state.partyAddr, base + 0xa0, 'the save’s party from now on');
 });
+
+/** Polls the party and the battle `n` times (the heap search takes a few polls) → the last battle. */
+function battlePolls(e, r, state, n = 8) {
+  let fight = null;
+  for (let i = 0; i < n; i++) fight = readLiveBattle(e, r.read, T, state, readLiveParty(e, r.read, T, state).party);
+  return fight;
+}
+
+test('Platinum, HeartGold: the catching demo (Dawn\'s starter vs. Bidoof, Lyra\'s Marill vs. Rattata) is no battle of the player\'s', () => {
+  // Platinum: FieldBattleDTO_NewCatchingTutorial – the counterpart's starter (Lv. 5) and a Bidoof (Lv. 2), both another trainer's
+  const pt = findEntry(TABLE, { platform: 'nds', code: 'CPUE' });
+  let r = ram();
+  const base = 0x02270000;
+  r.u32(0x02101d40, base);
+  saveImage(r, pt, base, { mons: [pk4({ pid: 0x0a0a0001, species: 390, level: 9 })] });
+  r.u16(0x0224a55a, 0x2100); // in battle (the demo is flagged like any battle)
+  partyAt(r, 0x02300000, [pk4({ pid: 0x5eed0001, species: 393, level: 5, tid: 1, sid: 2 })]);
+  partyAt(r, 0x02301000, [pk4({ pid: 0x5eed0002, species: 399, level: 2, tid: 3, sid: 4, hp: 12, maxHp: 12 })]);
+  let fight = battlePolls(pt, r, {});
+  assert.equal(fight.tutorial, true);
+  assert.equal(fight.enemy.species, 399);
+  assert.equal(playerBattle(fight), null, 'the tracker skips it');
+  // a real battle: the player's party copy is there – a trainer's lone Bidoof isn't the demo then
+  partyAt(r, 0x02302000, [pk4({ pid: 0x0a0a0001, species: 390, level: 9, hp: 20 })]);
+  fight = battlePolls(pt, r, {});
+  assert.equal(fight.tutorial, undefined);
+  // HeartGold: BattleSetup_New_Tutorial – Marill (Lv. 5) and Rattata (Lv. 2)
+  const hg = findEntry(TABLE, { platform: 'nds', code: 'IPKE' });
+  r = ram();
+  const hb = 0x0227c218;
+  r.u32(0x02111880, hb);
+  saveImage(r, hg, hb, { mons: [pk4({ pid: 0x0a0a0001, species: 155, level: 9 })] });
+  r.u16(0x02246f48, 0x2100);
+  partyAt(r, 0x02300000, [pk4({ pid: 0x5eed0003, species: 183, level: 5, tid: 1, sid: 2 })]);
+  partyAt(r, 0x02301000, [pk4({ pid: 0x5eed0004, species: 19, level: 2, tid: 3, sid: 4 })]);
+  fight = battlePolls(hg, r, {});
+  assert.equal(fight.tutorial, true);
+  assert.equal(fight.enemy.species, 19);
+});
+

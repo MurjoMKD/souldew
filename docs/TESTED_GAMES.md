@@ -363,8 +363,14 @@ German FireRed/LeafGreen (2.3.1, issue #16) – the memory table was right, two 
 
 ## Known gaps
 
-- White: Juniper's catching demo shows as a battle while it runs (the game sets the battle value for it); in the game's
-  other languages (memory unchecked) it may also stay on the panel afterwards, as before 2.3.1.
+- Catching demos (2.8.1): told by the battle type in Gen 1–3 (pret decomps) and, in the DS games, by the demo's two
+  one-Pokémon parties (Dawn/Lucas's starter and Bidoof, Lyra/Ethan's Marill and Rattata, Juniper's Minccino and a
+  Patrat, Bianca's Lillipup and a Purrloin) – checked against the decomps and synthetic RAM, not yet in a running game.
+  While only one of the demo's parties has been found (the first second or so) it can still flash up as a battle.
+  Wally's Zigzagoon and the Poké Dude's Teachy TV team are replaced by the team saved before them (SaveBlock1); German
+  Ruby/Sapphire (their RAM unchecked) don't get that. Gen 6/7 demos (Omega Ruby/Alpha Sapphire's Wally) aren't told
+  apart yet.
+- White: in the game's other languages (memory unchecked) a battle may stay on the panel after it ended, as before 2.3.1.
 - White: the address souldew had for "your Pokémon that is out" (battleActive, from NDS-Ironmon-Tracker) holds the wild
   opponent's PID instead (checked live) – it's only used when it is one of yours. Switching in a battle wasn't checked
   in White (one Pokémon in the test team).

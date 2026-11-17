@@ -480,7 +480,7 @@ function readGen3(entry, read, T, state = {}) {
   if (count > 6) return { invalid: true };
   const raw = read(hex(entry.partyAddr), entry.structSize * count);
   if (!raw) return null;
-  const party = [];
+  let party = [];
   for (let i = 0; i < count; i++) {
     const slot = raw.subarray(i * 100, i * 100 + 100);
     const m = parsePk3(slot, T);
@@ -502,9 +502,59 @@ function readGen3(entry, read, T, state = {}) {
     if (state.bad3) delete state.bad3[i]; // a good read: a Bad Egg there has to be seen three times anew
     party.push(m);
   }
+  const lent = entry.scan3 ? null : lentParty3(entry, read, T, party);
+  if (lent?.torn) return { torn: true };
+  if (lent) party = lent;
   const badges = party.length ? gen3Badges(entry, read, T, state, party) : undefined;
   const boxes = party.length ? readBoxesGen3(entry, read, T, state) : null;
   return { party, ...(boxes ? { boxes } : {}), ...(badges === undefined ? {} : { badges }) };
+}
+
+/** Wally's Zigzagoon as his catching tutorial creates it in the first party slot (pokeemerald LoadWallyZigzagoon). */
+const wallyZigzagoon = (m) => !!m && m.species === 263 && m.level === 7 && m.metLevel === 7 && m.metLocation === 7 && m.moves.length === 1 && m.moves[0] === 33;
+
+/**
+ * The player's own team while a script has lent the party out. Wally's catching tutorial puts his Zigzagoon (Lv. 7, met
+ * at Lv. 7 in Petalburg City – MAPSEC 7 –, Tackle only) into the first party slot from before the battle until after it
+ * (pokeemerald LoadWallyZigzagoon, pokeruby PutZigzagoonInPlayerParty), and FireRed/LeafGreen's Teachy TV replaces the
+ * whole party with the Poké Dude's for its battles (InitPokedudePartyAndOpponent, which sets gBattleTypeFlags to
+ * BATTLE_TYPE_POKEDUDE with it). Either way the script saved the real team to SaveBlock1 first (SavePlayerParty:
+ * playerPartyCount/playerParty – Emerald and Ruby/Sapphire +0x234/+0x238, FireRed/LeafGreen +0x34/+0x38) and loads it
+ * back afterwards: read it from there, so the borrowed Pokémon is never filed as a catch and the team doesn't seem to
+ * vanish. → the saved team, { torn } while it can't be read (the last team stays), or null (nothing lent).
+ */
+function lentParty3(entry, read, T, party) {
+  const id = String(entry.id || '');
+  const fam = /^(ruby|sapphire)_us/.test(id) ? 'rs' : /^emerald_/.test(id) ? 'e' : frlg3(entry) ? 'frlg' : null;
+  if (!fam || !party.length) return null;
+  let lent = false;
+  if (fam !== 'frlg') lent = wallyZigzagoon(party[0]);
+  else if (entry.battleTypeFlagsAddr) {
+    const f = read(hex(entry.battleTypeFlagsAddr), 4);
+    lent = !!f && !!(u32le(f, 0) & 0x10000);
+  }
+  if (!lent) return null;
+  const L = GBA_FLAGS[fam];
+  let sb1 = L.sb1;
+  if (!sb1) {
+    const p = read(entry.saveBlockPtrs?.sb1 ? hex(entry.saveBlockPtrs.sb1) : L.sb1Ptr, 4);
+    sb1 = p ? u32le(p, 0) : 0;
+  }
+  if (!(sb1 >= 0x02000000 && sb1 < 0x02040000)) return { torn: true };
+  const at = sb1 + (fam === 'frlg' ? 0x34 : 0x234);
+  const n = read(at, 1)?.[0];
+  if (!(n >= 1 && n <= 6)) return { torn: true };
+  const raw = read(at + 4, n * 100);
+  const saved = [];
+  for (let i = 0; raw && i < n; i++) {
+    const m = parsePk3(raw.subarray(i * 100, i * 100 + 100), T);
+    if (!m || m.bad || m.level < 1 || m.level > 100 || m.hp > m.maxHp || saved.some((x) => x.pid === m.pid)) return { torn: true };
+    saved.push(m);
+  }
+  if (!raw) return { torn: true };
+  if (fam !== 'frlg') return saved[0].pid !== party[0].pid ? saved : null;
+  // the Poké Dude's party has none of the player's Pokémon (the flag stays set after the battle, when the team is back)
+  return party.some((m) => saved.some((x) => x.pid === m.pid)) ? null : saved;
 }
 
 /**
@@ -1011,7 +1061,8 @@ function battleGB(entry, read, T, state = {}, party = null) {
   const stale = state.gbStale;
   if (stale && stale.enemy !== enemySig) stale.enemy = null; // loaded for this battle – trust it from now on
   if (stale && stale.active !== activeSig) stale.active = null;
-  if (stale?.enemy) return { kind: mode === 1 ? 'wild' : 'trainer', enemy: null, active: null };
+  const tutorial = gbTutorial(entry, read, mode) ? { tutorial: true } : {};
+  if (stale?.enemy) return { kind: mode === 1 ? 'wild' : 'trainer', enemy: null, active: null, ...tutorial };
   const enemyRaw = read(hex(e.speciesAddr), 1)?.[0];
   const species = entry.gen === 1 ? T.idx1?.[enemyRaw] || 0 : enemyRaw;
   const level = read(hex(e.levelAddr), 1)?.[0];
@@ -1023,7 +1074,20 @@ function battleGB(entry, read, T, state = {}, party = null) {
     : null;
   // half-loaded (the next trainer Pokémon being sent out): no opponent for a moment, still a battle
   const filled = enemy && enemy.maxHp > 0 && enemy.hp <= enemy.maxHp ? enemy : null;
-  return { kind: mode === 1 ? 'wild' : 'trainer', enemy: filled, active: activeGB(entry, read, T, state, party, stale), ...gbBalls(entry, read, mode) };
+  return { kind: mode === 1 ? 'wild' : 'trainer', enemy: filled, active: activeGB(entry, read, T, state, party, stale), ...gbBalls(entry, read, mode), ...tutorial };
+}
+
+/**
+ * A wild battle that isn't the player's: the old man's catching demo in Viridian City (pokered BATTLE_TYPE_OLD_MAN 1),
+ * Professor Oak catching Pikachu at the start of Yellow (pokeyellow BATTLE_TYPE_PIKACHU 4) and the Dude's catching demo
+ * on Route 29 (pokecrystal/pokegold BATTLETYPE_TUTORIAL 3). wBattleType says so (addresses.json battleEnemy.battleTypeAddr).
+ */
+function gbTutorial(entry, read, mode) {
+  const at = entry.battleEnemy?.battleTypeAddr;
+  const type = mode === 1 && at ? read(hex(at), 1)?.[0] : undefined;
+  if (type === undefined) return false;
+  if (entry.gen === 1) return type === 1 || (type === 4 && /^yellow/.test(String(entry.id || '')));
+  return type === 3;
 }
 
 /**
@@ -1288,8 +1352,17 @@ function battleGen3(entry, read, T, state = {}) {
     if (ft) enemy.types = ft;
     if (mt && active && mine[active.index]?.pid === me.p.pid) active.types = mt;
   }
-  return { kind: trainer ? 'trainer' : 'wild', enemy, active, ...(!trainer && noBalls3(flags) ? { balls: 'none' } : {}) };
+  return { kind: trainer ? 'trainer' : 'wild', enemy, active, ...(!trainer && noBalls3(flags) ? { balls: 'none' } : {}), ...(tutorial3(entry, flags) ? { tutorial: true } : {}) };
 }
+
+/**
+ * Gen 3 battles that aren't the player's own (gBattleTypeFlags, pokeemerald/pokeruby/pokefirered include/constants/
+ * battle.h): the catching tutorials – Wally's in Petalburg City (BATTLE_TYPE_WALLY_TUTORIAL) and the old man's in
+ * Viridian City (BATTLE_TYPE_OLD_MAN_TUTORIAL, the same bit 9) – and FireRed/LeafGreen's Poké Dude battles on the Teachy
+ * TV (BATTLE_TYPE_POKEDUDE, bit 16 – Emerald's Battle Dome there).
+ */
+const frlg3 = (entry) => /^(firered|leafgreen)_/.test(String(entry?.id || ''));
+const tutorial3 = (entry, f) => !!(f & 0x200) || (frlg3(entry) && !!(f & 0x10000));
 
 /**
  * Gen 3 wild battles where no ball can be thrown (pokeemerald/pokefirered include/constants/battle.h): the Safari
@@ -1462,6 +1535,7 @@ function battleDS(entry, read, T, state, party) {
   const held = state.heldCopies || new Map();
   const nextHeld = new Map();
   const copies = new Map(); // this battle's copies (address → how many Pokémon) – Gen 5's battle structs point into them
+  const foreign = []; // this battle's copies without any of the player's Pokémon
   for (const addr of state.candidates || []) {
     if (addr === state.partyAddr) continue;
     const fresh = readPartyCore(read, addr, size, entry.gen, T);
@@ -1483,6 +1557,7 @@ function battleDS(entry, read, T, state, party) {
       const rank = (changed ? 2 : 0) + (diff ? 1 : 0);
       if (!mine || rank >= mine.rank) mine = { addr, mons, diff, rank };
     } else if (mons.every((m) => !pids.has(m.pid))) {
+      foreign.push(mons);
       // wild mons carry the player's ID too. The opponent also has a frozen copy (the battle setup) next to
       // the live one – the live one is the one that has taken damage.
       const hp = mons.reduce((n, m) => n + m.hp, 0);
@@ -1491,6 +1566,12 @@ function battleDS(entry, read, T, state, party) {
   }
   state.heldCopies = nextHeld;
   const live = mine?.mons || null;
+  // a catching demo: someone else's battle, never the player's (no encounter, no death, no catch chance)
+  const demo = !mine && flag !== false ? catchingDemo(entry, foreign) : null;
+  if (demo) {
+    note(state, `demo ${demo.species}/${demo.level}`, flag);
+    return (state.battle = { kind: 'wild', tutorial: true, enemy: { species: demo.species, level: demo.level, hp: demo.hp, maxHp: demo.maxHp, shiny: demo.shiny, moves: demo.moves }, active: null });
+  }
   // The battle structs say who is out on both sides – the heap copies are only a guess (a trainer's whole party,
   // the battle's frozen setup copy, a freed block of an earlier battle). Once they have worked in this session the
   // guess is never used for the opponent again: a wrong Pokémon is worse than none for a moment.
@@ -1583,6 +1664,30 @@ function battleDS(entry, read, T, state, party) {
   // (Gen 5: the battle structs' HP wins over the party copy's starting HP – every team member has one)
   if (hps && state.battle.party) state.battle.party = state.battle.party.map((m) => (hps.has(m.pid) ? { ...m, hp: hps.get(m.pid) } : m));
   return state.battle;
+}
+
+/**
+ * The DS games' catching demos: an NPC catches a Pokémon in front of the player, with a party of their own on the
+ * player's side – the battle's copies hold two one-Pokémon parties, neither with any of the player's Pokémon.
+ * Diamond/Pearl/Platinum: Dawn's or Lucas's starter (Lv. 5) and a Bidoof (Lv. 2) on Route 202 (pokeplatinum
+ * FieldBattleDTO_NewCatchingTutorial: the counterpart's starter, SPECIES_BIDOOF level 2); HeartGold/SoulSilver: Lyra's or
+ * Ethan's Marill (Lv. 5) and a Rattata (Lv. 2) on Route 29 (pokeheartgold BattleSetup_New_Tutorial); Black/White:
+ * Juniper's Minccino and a Patrat (Lv. 2) on Route 1 (seen in White); Black 2/White 2: Bianca's Lillipup and a Purrloin
+ * (Lv. 2) on Route 19. The demo battles are flagged like any other (BATTLE_TYPE_CATCH_TUTORIAL lives in the battle's
+ * own heap data only), so they are told by these parties. → the demo's wild Pokémon, or null.
+ */
+const DS_DEMOS = [
+  { games: /^(diamond|pearl|platinum)_/, tutor: [387, 390, 393], wild: [399] },
+  { games: /^(heartgold|soulsilver)_/, tutor: [183], wild: [19] },
+  { games: /^(black|white|black2|white2)_/, tutor: [572, 506], wild: [504, 506, 509] },
+];
+function catchingDemo(entry, foreign) {
+  const d = DS_DEMOS.find((x) => x.games.test(String(entry.id || '')));
+  const ones = foreign.filter((mons) => mons.length === 1).map((mons) => mons[0]);
+  if (!d || ones.length < 2) return null;
+  const wild = ones.find((m) => m.level === 2 && d.wild.includes(m.species));
+  const tutor = ones.find((m) => m !== wild && m.level >= 5 && d.tutor.includes(m.species));
+  return wild && tutor ? wild : null;
 }
 
 /** Gen 5: the opponent's status condition from its battle struct (gen5Sick) – none when the struct isn't found. */
@@ -1778,7 +1883,7 @@ function note(state, what, flag) {
 }
 
 /**
- * Read the battle state: { kind: 'wild'|'trainer', enemy: { species, level, hp, maxHp, shiny, moves? }|null,
+ * Read the battle state: { kind: 'wild'|'trainer', tutorial?: true, enemy: { species, level, hp, maxHp, shiny, moves? }|null,
  * active: { index, hp?, maxHp? }|null, party?: [{ pid, hp, maxHp }] } – or null outside battle. A double battle
  * whose structs are known (HGSS) adds foes: [enemy, …] while both opponents stand and actives: [active, …] while
  * two of the player's own Pokémon are out; `enemy` / `active` stay the first of them.
@@ -1805,6 +1910,13 @@ export function readLiveBattle(entry, read, T, state = {}, party = null) {
     return null;
   }
 }
+
+/**
+ * The battle as the tracker takes it: a catching demo or tutorial (readLiveBattle's `tutorial` – an NPC's battle, or the
+ * Poké Dude's on the Teachy TV) is no battle of the player's – never an encounter, a missed encounter, a dupe, a catch
+ * chance or a cause of death. → the battle, or null.
+ */
+export const playerBattle = (fight) => (fight?.tutorial ? null : fight);
 
 /**
  * The opponents' catch rates for the catch chance (shared/catchrate.mjs): Gen 1/2 read one from RAM (gbCatch); the

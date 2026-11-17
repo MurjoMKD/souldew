@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
-import { findEntry, readLiveParty, readLiveBattle, withBattleHp, confirmFaints, LiveTables, gen5Status } from '../shared/live/parse.mjs';
+import { findEntry, readLiveParty, readLiveBattle, playerBattle, withBattleHp, confirmFaints, LiveTables, gen5Status } from '../shared/live/parse.mjs';
 import { encryptPK4 } from '../shared/gen4save.mjs';
 import { statusKey } from '../shared/overlay.mjs';
 import { vanillaCapFor, gymCapsFamily } from '../shared/routes.mjs';
@@ -161,10 +161,19 @@ test('White: the battle flag ends Juniper\'s catching demo and every battle at o
   };
   // checked live in White: the flag is 0x2100 in the demo too
   assert.equal(poll(0xf841, 0, {}), null, 'overworld');
-  // the demo sets the battle value too, so it shows while it runs – and leaves the panel the moment it ends
+  // the demo sets the battle value too – Juniper's party alone (its other copy not found yet) still reads as a battle …
   const demo = {};
   assert.equal(poll(0x2100, 0xd56bfdba, demo)?.enemy?.species, 572, 'the demo while it runs');
   assert.equal(poll(0xf841, 0xd56bfdba, demo), null, 'after the demo: its leftover copy stays off the panel');
+  // … and with the demo's wild Patrat (Lv. 2) next to it, it is the catching demo: no battle of the player's (2.8.1)
+  m.write(0x02300400, [6, 0, 0, 0, 1, 0, 0, 0, ...pk5({ pid: 0xd56bfdba, species: 504, level: 2, hp: 11, maxHp: 11 })]);
+  const demo2 = {};
+  const seen = poll(0x2100, 0xd56bfdba, demo2);
+  assert.equal(seen.tutorial, true);
+  assert.equal(seen.enemy.species, 504);
+  assert.equal(playerBattle(seen), null);
+  assert.equal(poll(0xf841, 0xd56bfdba, demo2), null);
+  m.write(0x02300400, new Array(8 + 220).fill(0));
   // a real battle: a copy of the player's party in the heap (here the demo copy stands in for the opponent) …
   m.write(0x02310000, [6, 0, 0, 0, 1, 0, 0, 0, ...pk5({ pid: 0x8efb4911, species: 498, level: 6, hp: 19, maxHp: 25 })]);
   const fight = {};

@@ -8,7 +8,7 @@ import { t, ago } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
 import { gameById, gameTitle, speciesName, hackById, itemName, moveName } from '../lib/data.mjs';
 import { players as getPlayers, live, othersOf, runMode, missedQuestion, openAreas, markMissed, locationChoices, areaForCatch, genOfRun, profileOf, rules as getRules, logCheat } from '../lib/run.mjs';
-import { findEntry, readLiveParty, readLiveBattle, withBattleHp, confirmFaints, inBattleFlag, LiveTables, expandedEntry } from '/shared/live/parse.mjs';
+import { findEntry, readLiveParty, readLiveBattle, playerBattle, withBattleHp, confirmFaints, inBattleFlag, LiveTables, expandedEntry } from '/shared/live/parse.mjs';
 import { addRareCandies, cheatSupported } from '/shared/live/cheats.mjs';
 import { MusicKeyTracker } from '/shared/live/location.mjs';
 import { PlayHome } from './playhome.mjs';
@@ -295,6 +295,7 @@ export function GameSession({ session, mode }) {
   // they all have names
   const [features, setFeatures] = useState(null);
   const setBattle = (b) => setBattleState((prev) => (JSON.stringify(prev) === JSON.stringify(b) ? prev : b));
+  const [demo, setDemo] = useState(false); // a catching demo is on (an NPC's battle – not shown, but still a battle)
   const [liveState, setLiveStateRaw] = useState({ status: 'searching' });
   const setLiveState = (x) => setLiveStateRaw((prev) => (prev.status === x.status && prev.entry === x.entry ? prev : x));
   const [pendingLoad, setPendingLoad] = useState(null); // { slot, bytes } – state load waiting for confirmation
@@ -970,12 +971,16 @@ export function GameSession({ session, mode }) {
             if (expanded && !res?.party?.length && inBattleFlag(ent, e.read) && ++expandedMisses > 20) setLiveState({ status: 'hack', entry: entry.name });
             if (res?.party) {
               expandedMisses = 0;
-              const fight = readLiveBattle(ent, e.read, TT, state, res.party);
+              const seen = readLiveBattle(ent, e.read, TT, state, res.party);
+              // a catching demo (an NPC's battle – Wally's, the old man's, the Dude's, Lyra's, Juniper's …) is no battle of
+              // the player's: no encounter, no missed encounter, no catch chance, no cause of death – the tracker skips it
+              const fight = playerBattle(seen);
               // (a Pokémon at 0 HP counts once two reads in a row say so – the tracker files deaths from this party)
               const party = confirmFaints(withBattleHp(res.party, fight), state);
               setMine(party);
               setBattle(fight);
-              inBattle = !!fight;
+              setDemo(!!seen && !fight);
+              inBattle = !!seen;
               noteMons([...res.party, ...(res.boxes || [])]);
               liveRead.current = { boxes: Array.isArray(res.boxes), party: res.party.length };
               setLiveState({ status: 'live', entry: entry.name });
@@ -986,7 +991,7 @@ export function GameSession({ session, mode }) {
                 fc.noteParty(res.party);
                 fc.noteNames(res.party, { itemName: (m) => (typeof m.item === 'string' ? m.item : m.itemOwn ? m.itemName || '' : itemName(m.item, gen)), moveName });
                 fc.noteLocation(hereNow);
-                fc.noteBattle(fight);
+                fc.noteBattle(seen);
                 const keys = [...res.party, ...(res.boxes || [])].map((m) => m.key);
                 if (!seenKeys) seenKeys = new Set(keys);
                 const joined = keys.filter((k) => !seenKeys.has(k));
@@ -1266,7 +1271,7 @@ export function GameSession({ session, mode }) {
   const cheatWhy = !cheatGame ? t('cheat.unsupported', 'Not available for this game.')
     : !cheatsAllowed ? t('cheat.off', 'Cheats are off in this run’s rules.')
       : liveState.status !== 'live' ? t('cheat.waiting', 'Available once live tracking has found your team.')
-        : battle?.enemy ? t('cheat.inBattle', 'Not during a battle.') : null;
+        : battle?.enemy || demo ? t('cheat.inBattle', 'Not during a battle.') : null;
   const doCheat = async () => {
     setConfirmCheat(false);
     const e = emu();

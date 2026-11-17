@@ -2,6 +2,17 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## 2.8.1
+
+- **Catching demos are no longer your encounter** (thanks to a player on Discord). In Emerald, Wally's catching lesson
+  in Petalburg City filed the Zigzagoon he catches his Ralts with as your Petalburg encounter, and your own team seemed
+  to vanish while it lasted. souldew now recognizes every game's catching demo – the old man in Viridian City (Red, Blue, Yellow,
+  FireRed, LeafGreen), Professor Oak's Pikachu in Yellow, the Dude on Route 29 (Gold, Silver, Crystal), Wally (Ruby,
+  Sapphire, Emerald), Dawn and Lucas (Diamond, Pearl, Platinum), Lyra and Ethan (HeartGold, SoulSilver), Professor
+  Juniper (Black, White) and Bianca (Black 2, White 2) – and the Poké Dude's battles on FireRed and LeafGreen's Teachy
+  TV. They never count as an encounter, a missed encounter or a dupe, show no catch chance and can't cost a Pokémon, and
+  your team stays on screen the whole time.
+
 ## 2.8.0
 
 - **Catch chance in wild battles** (a community idea). The battle help now shows your chance to catch the wild
