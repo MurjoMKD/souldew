@@ -2509,6 +2509,7 @@
   "battle.takes": "steckt ein",
   "battle.dealsTip": "Stärkster Treffer: {move} ({mult})",
   "battle.takesTip": "Trifft es am härtesten: {move} ({mult})",
+  "battle.takesTipHidden": "Sein härtester Treffer: {mult}",
   "battle.out": "im Kampf",
   "battle.fainted": "K.O.",
   "lib.live": "Live-Tracking",

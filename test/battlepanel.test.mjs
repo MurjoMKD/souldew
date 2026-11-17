@@ -56,4 +56,7 @@ test('"What hits …" (the opponent\'s moves) folds in – folded by default, re
   assert.match(src('play.mjs'), /collapsed=\$\{panelPrefs\.collapsed\} onPrefs=\$\{setPanelPrefs\} hitsOpen=\$\{panelPrefs\.hits\}/);
   const css = readFileSync(new URL('../web/session-info.css', import.meta.url), 'utf8');
   assert.match(css, /\.bt-fold:hover, \.bt-fold:focus-visible \{ color: var\(--ink\); \}/);
+  // folded, the team check's "takes" tip doesn't name the foe's move either – only how hard it hits
+  assert.match(panel, /hideFoeMoves=\$\{!!onPrefs && !hitsOpen\}/);
+  assert.match(panel, /hideFoeMoves && typeof mu\.takesBy === 'number' \? t\('battle\.takesTipHidden'/);
 });

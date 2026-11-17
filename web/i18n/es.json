@@ -2509,6 +2509,7 @@
   "battle.takes": "recibe",
   "battle.dealsTip": "Mejor golpe: {move} ({mult})",
   "battle.takesTip": "Lo que más le afecta: {move} ({mult})",
+  "battle.takesTipHidden": "Su golpe más fuerte: {mult}",
   "battle.out": "en combate",
   "battle.fainted": "debilitado",
   "lib.live": "Seguimiento en directo",

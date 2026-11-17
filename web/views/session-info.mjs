@@ -412,7 +412,7 @@ export function BattlePanel({ battle, mine, gen, game = '', isRun, side = 'left'
     ${help && !matchups && html`<p class="tiny faint bt-nohelp">${t('battle.noChart', 'souldew couldn’t read this ROM hack’s type chart – it shows the types, but no matchups rather than wrong ones.')}</p>`}
     ${help && matchups && outs.map((m) => html`<${OutHelp} key=${m.key || m.species} mon=${m} foes=${foeData} typesOf=${typesOf} movesOf=${movesOf} gen=${gen}
       hits=${onPrefs ? { open: hitsOpen, toggle: () => onPrefs({ hits: !hitsOpen }) } : null} />`)}
-    ${help && matchups && html`<${TeamCheck} team=${team} out=${new Set(outs)} foe=${foeData.find(({ f }) => !(f.maxHp > 0 && f.hp === 0)) || foeData[0]} typesOf=${typesOf} movesOf=${movesOf} gen=${gen} />`}
+    ${help && matchups && html`<${TeamCheck} team=${team} out=${new Set(outs)} foe=${foeData.find(({ f }) => !(f.maxHp > 0 && f.hp === 0)) || foeData[0]} typesOf=${typesOf} movesOf=${movesOf} gen=${gen} hideFoeMoves=${!!onPrefs && !hitsOpen} />`}
     ${help && matchups && foeData.map(({ f, types }) => types.length > 0 && html`<${TypeChart} key=${`c${f.species}`} title=${t('battle.chart', '{mon} against types', { mon: speciesName(f.species) })} chart=${defenseChart(types, gen, { fairy })} />`)}
     ${help && matchups && outs.map((m) => typesOf(m.species, m).length > 0 && html`<${TypeChart} key=${`m${m.key || m.species}`} title=${t('battle.myChart', 'Your {mon} against types', { mon: monName(m) })} chart=${defenseChart(typesOf(m.species, m), gen, { fairy })} mine />`)}
   </section>`;
@@ -499,7 +499,7 @@ function OutHelp({ mon, foes, typesOf, movesOf, gen, hits = null }) {
  * Switch-in check: every Pokémon of your team against the opponent – its best hit and the opponent's worst for it –
  * so you see at a glance who to send in. Shown from two Pokémon on.
  */
-function TeamCheck({ team, out, foe, typesOf, movesOf, gen }) {
+function TeamCheck({ team, out, foe, typesOf, movesOf, gen, hideFoeMoves = false }) {
   const list = team.filter((m) => m && !m.isEgg && m.species);
   if (list.length < 2 || !foe?.types?.length) return null;
   const foeSide = { types: foe.types, moves: foe.moves.map(({ id, info }) => ({ id, ...info })) };
@@ -512,7 +512,10 @@ function TeamCheck({ team, out, foe, typesOf, movesOf, gen }) {
       const down = fainted(m);
       const isOut = out.has(m);
       const dealsTip = mu.deals == null ? '' : t('battle.dealsTip', 'Best hit: {move} ({mult})', { move: label(mu.dealsBy), mult: multText(mu.deals) });
-      const takesTip = mu.takes == null ? '' : t('battle.takesTip', 'Hits it hardest: {move} ({mult})', { move: label(mu.takesBy), mult: multText(mu.takes) });
+      // with "What hits …" folded in, the foe's moves stay hidden here too: its hardest hit by type, not by name
+      const takesTip = mu.takes == null ? ''
+        : hideFoeMoves && typeof mu.takesBy === 'number' ? t('battle.takesTipHidden', 'Its hardest hit: {mult}', { mult: multText(mu.takes) })
+          : t('battle.takesTip', 'Hits it hardest: {move} ({mult})', { move: label(mu.takesBy), mult: multText(mu.takes) });
       // the one that is out: highlighted like the selected slot of a party menu (named for screen readers)
       return html`<li key=${m.key || m.species} class=${`${isOut ? 'out' : ''} ${down ? 'down' : ''}`} title=${isOut ? t('battle.out', 'in battle') : undefined}>
         <span class="bt-team-mon"><${Sprite} id=${m.species} shiny=${m.shiny} size=${30} gen=${gen} /><span class="bt-team-name">${monName(m)}</span>

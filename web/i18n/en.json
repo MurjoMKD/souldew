@@ -245,6 +245,7 @@
   "battle.staticFree": "Legendary/static – a free catch, it doesn’t use up the area.",
   "battle.takes": "takes",
   "battle.takesTip": "Hits it hardest: {move} ({mult})",
+  "battle.takesTipHidden": "Its hardest hit: {mult}",
   "battle.teamCheck": "Your team against {mon}",
   "battle.title": "Battle",
   "battle.trainer": "trainer",

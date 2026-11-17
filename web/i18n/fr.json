@@ -2509,6 +2509,7 @@
   "battle.takes": "subit",
   "battle.dealsTip": "Meilleure attaque : {move} ({mult})",
   "battle.takesTip": "Ce qui le touche le plus : {move} ({mult})",
+  "battle.takesTipHidden": "Son coup le plus fort : {mult}",
   "battle.out": "au combat",
   "battle.fainted": "K.O.",
   "lib.live": "Suivi en direct",

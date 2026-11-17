@@ -2509,6 +2509,7 @@
   "battle.takes": "subisce",
   "battle.dealsTip": "Colpo migliore: {move} ({mult})",
   "battle.takesTip": "Ciò che lo colpisce di più: {move} ({mult})",
+  "battle.takesTipHidden": "Il suo colpo più forte: {mult}",
   "battle.out": "in campo",
   "battle.fainted": "esausto",
   "lib.live": "Tracciamento dal vivo",
