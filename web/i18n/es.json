@@ -2735,5 +2735,11 @@
   "lives.usedUpNamed": "{name}: las muertes hasta ahora ya gastan estas vidas. El run sigue – el próximo Pokémon que pierda {name} lo termina.",
   "ctl.ffHold": "Avance rápido (mantener)",
   "ctl.ffToggle": "Avance rápido sí / no",
-  "ctl.hotkeyUnbindable": "Esta tecla no se puede usar para este atajo. Pulsa otra tecla."
+  "ctl.hotkeyUnbindable": "Esta tecla no se puede usar para este atajo. Pulsa otra tecla.",
+  "ext.saveUnreadable": "souldew no puede leer las partidas guardadas de este juego: tu equipo no se actualizará mientras juegues con {emu}.",
+  "ext.saveNotYet": "souldew empieza a leer la partida guardada en cuanto inicies {emu} desde aquí.",
+  "ext.saveError": "No se puede leer {file}: {error}",
+  "ext.saveWaiting": "Esperando {file}: guarda una vez en el juego.",
+  "ext.saveRead": "Lee {file} · última lectura {when}",
+  "ext.saveWatching": "Lee {file}"
 }

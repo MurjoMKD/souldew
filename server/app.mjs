@@ -20,8 +20,8 @@ import { shinySupport, isOriginalRom } from './lib/shiny.mjs';
 import { packFormatState, packMinVersion } from '../shared/runpack.mjs';
 import { shinyThreshold } from '../shared/shiny.mjs';
 import { buildRun, listRuns, readManifest, writeManifest, runDir, runPack, runSummary, trashRun, checkPack, stripLocalRules, isDiscordWebhook, mergeDocEntries, renamePlayers } from './lib/build.mjs';
-import { SaveWatcher } from './lib/savewatch.mjs';
-import { EMULATORS, detectEmulator, installEmulator, launchRom, revealInFileManager, emulatorRunning } from './lib/emulator.mjs';
+import { SaveWatcher, saveParser, isHgssGame } from './lib/savewatch.mjs';
+import { EMULATORS, detectEmulator, installEmulator, launchRom, revealInFileManager, emulatorRunning, melonConfigFiles, melonSaveDirs } from './lib/emulator.mjs';
 import { LiveBridge } from './lib/livebridge.mjs';
 import { AzaharBridge, enableRpc } from './lib/azahar.mjs';
 import { CtrSessions, ctrTools, saveStamp, ctrInventory, redactHome, ctrEncrypted } from './lib/ctr.mjs';
@@ -183,8 +183,8 @@ function serveFile(res, path, extraHeaders = {}, head = false) {
   createReadStream(path).on('error', () => res.destroy()).pipe(res);
 }
 
-/** Only HeartGold/SoulSilver battery saves can be parsed (shared/gen4save.mjs). */
-const isHgssRun = (m) => /^IP[KG]/i.test(m?.game?.code || '') || /heartgold|soulsilver/i.test(m?.game?.id || '');
+/** HeartGold/SoulSilver: their saves have their own parser (shared/gen4save.mjs), the only ones the graveyard edits. */
+const isHgssRun = (m) => isHgssGame(m?.game);
 
 /**
  * A file in a run's folder by name (a query parameter, or a name from run.json – which can be damaged or edited by
@@ -477,7 +477,27 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of sseClients) res.write(msg);
   };
+  let addressTable = null;
+  const addresses = () => {
+    if (!addressTable) {
+      try {
+        addressTable = JSON.parse(readFileSync(join(SHARED_DIR, 'data', 'addresses.json'), 'utf8'));
+      } catch {
+        addressTable = { games: [] };
+      }
+    }
+    return addressTable;
+  };
+  /** How the battery save of a run's game is read, or null: souldew can't (shared/live/parse.mjs readSaveFile). */
+  const parserOfRun = (manifest) => (manifest ? saveParser(manifest.game, { gen4: GEN4, addresses: addresses() }) : null);
   const watcher = new SaveWatcher(GEN4, emit, {
+    parserFor: (id) => {
+      try {
+        return parserOfRun(readManifest(id));
+      } catch {
+        return null;
+      }
+    },
     shinyOdds: (id) => {
       try {
         return shinyThreshold(readManifest(id)?.shiny);
@@ -486,6 +506,24 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       }
     },
   });
+  /**
+   * Watch a run's battery save – where the built-in players keep it and, for an external emulator, wherever else it
+   * may write it (`more`: melonDS's own save folder) – for every game whose saves souldew reads (it used to be
+   * HeartGold/SoulSilver only). A save the built-in players write starts a watch only where there is none yet;
+   * launching an emulator from the play view (`replace`) watches the places it writes to now – a watch kept from an
+   * earlier session may name a file the run doesn't use anymore.
+   */
+  const sameFile = (a, b) => (process.platform === 'win32' || process.platform === 'darwin' ? String(a).toLowerCase() === String(b).toLowerCase() : a === b);
+  const watchRunSave = (runId, manifest, path, { more = [], replace = false } = {}) => {
+    if (!path || !parserOfRun(manifest)) return;
+    const want = [path, ...more.filter((p) => p && !sameFile(p, path))];
+    const now = watcher.paths(runId);
+    if (now && (!replace || (now.length === want.length && want.every((p, i) => sameFile(p, now[i]))))) return;
+    watcher.watch(runId, want);
+    saveConfig({ watches: { ...(loadConfig().watches || {}), [runId]: want.length > 1 ? want : path } });
+  };
+  /** The save watch of a run as the page gets it – with whether souldew can read and edit (the graveyard) its saves. */
+  const watchStatus = (runId, manifest) => ({ ...watcher.status(runId), readable: !!parserOfRun(manifest), graveyard: isHgssRun(manifest) });
   // the anonymous "playing now" heartbeat – it reads the setting on every call, so "off" applies at once
   const playingNow = presenceCounter({ enabled: () => loadConfig().presence !== false });
   const live = new LiveBridge(emit);
@@ -509,10 +547,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     writeSave: ({ path, runId }, bytes) => {
       writeFileAtomic(path, bytes);
       const manifest = runId ? readManifest(runId) : null;
-      if (manifest && isHgssRun(manifest) && !watcher.status(runId).watching) {
-        watcher.watch(runId, path);
-        saveConfig({ watches: { ...(loadConfig().watches || {}), [runId]: path } });
-      }
+      if (manifest) watchRunSave(runId, manifest, path);
     },
   });
   /** Where the play view keeps the battery save behind `saveUrl` (its GET/PUT address), or null. */
@@ -1178,7 +1213,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const manifest = readManifest(m[1]);
     if (!manifest) throw httpError(404, 'Run not found', 'runNotFound');
     const defaultSaves = Object.fromEntries(slotsOf(manifest).map((s) => [s, defaultSavePath(manifest, s)]));
-    return { ...manifest, pack: runPack(manifest), watch: watcher.status(m[1]), defaultSaves };
+    return { ...manifest, pack: runPack(manifest), watch: watchStatus(m[1], manifest), defaultSaves };
   });
 
   // Delete = move the run folder to runs/.trash (recoverable by hand), forget watches / lastRun.
@@ -1326,12 +1361,8 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const bytes = await readRaw(req, 4 * 1024 * 1024);
     if (!bytes.length) throw httpError(400, 'Empty save file – not saved', 'emptySave');
     writeFileAtomic(p, bytes);
-    // Other games' saves can't be parsed – watching them would only produce error toasts.
-    if (isHgssRun(manifest) && !watcher.status(m[1]).watching) {
-      watcher.watch(m[1], p);
-      const cfg = loadConfig();
-      saveConfig({ watches: { ...(cfg.watches || {}), [m[1]]: p } });
-    }
+    // (games whose saves can't be read aren't watched – that would only produce error toasts)
+    watchRunSave(m[1], manifest, p);
     return { ok: true, size: bytes.length };
   });
 
@@ -1350,6 +1381,12 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     watches[m[1]] = abs;
     saveConfig({ watches });
     return watcher.watch(m[1], abs);
+  });
+  // what is watched for the run's save, for the play view of an external emulator ("souldew reads p1.sav – 14:32")
+  route('GET', /^\/api\/runs\/([a-f0-9]{8})\/watch$/, (req, m) => {
+    const manifest = readManifest(m[1]);
+    if (!manifest) throw httpError(404, 'Run not found', 'runNotFound');
+    return watchStatus(m[1], manifest);
   });
   route('POST', /^\/api\/runs\/([a-f0-9]{8})\/rescan$/, (req, m) => watcher.read(m[1], true) || watcher.last(m[1]));
   route('GET', /^\/api\/runs\/([a-f0-9]{8})\/save-parsed$/, (req, m) => watcher.last(m[1]));
@@ -1403,8 +1440,10 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       if (!out) throw httpError(409, 'The ROM for this player hasn’t been built yet', 'romNotBuilt');
       romPath = typeof out.rom === 'string' && out.rom ? runPath(runId, out.rom) : null;
       if (!romPath) throw httpError(409, 'The ROM for this player hasn’t been built yet', 'romNotBuilt');
+      // melonDS writes "<ROM name>.sav" next to the ROM – or into the save folder set in its own settings
       const sav = defaultSavePath(manifest, slot);
-      if (sav && isHgssRun(manifest) && !watcher.status(runId).watching) watcher.watch(runId, sav);
+      const more = m[1] === 'melonds' && sav ? melonSaveDirs(melonConfigFiles({ exePath: detectEmulator('melonds', loadConfig().emulatorPaths?.melonds).path || null })).map((d) => join(d, basename(sav))) : [];
+      watchRunSave(runId, manifest, sav, { more, replace: true });
     } else {
       // external emulators need a real file: unpack zipped ROMs into the cache
       const { abs, entry } = resolveId(romId, loadConfig());

@@ -1284,7 +1284,7 @@ export function runStats(doc, manifest, slot = 'p1') {
   return st;
 }
 
-/** Convert a parsed HGSS save (shared/gen4save.mjs) into a snapshot. */
+/** Convert a parsed DS save (shared/gen4save.mjs, shared/live/parse.mjs readSaveFile) into a snapshot. */
 export function snapshotFromSave(save) {
   const norm = (m) => ({ ...m, item: m.heldItem });
   // A failed PK4 checksum is a Bad Egg / damaged slot: its species and key are garbage, not a catch.
@@ -1292,7 +1292,7 @@ export function snapshotFromSave(save) {
   return {
     source: 'save',
     party: save.party.filter(ok).map(norm),
-    boxes: save.boxes.filter(ok).map(norm),
+    boxes: save.boxes ? save.boxes.filter(ok).map(norm) : null, // (null: its PC couldn't be read)
     badges: save.badges.count,
     trainer: save.trainer.name,
     playTime: save.playTime,

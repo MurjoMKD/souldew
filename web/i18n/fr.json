@@ -2735,5 +2735,11 @@
   "lives.usedUpNamed": "{name} : les morts jusqu’ici épuisent déjà ces vies. Le run continue – le prochain Pokémon que {name} perd y met fin.",
   "ctl.ffHold": "Avance rapide (maintenir)",
   "ctl.ffToggle": "Avance rapide marche / arrêt",
-  "ctl.hotkeyUnbindable": "Cette touche ne peut pas servir à ce raccourci. Appuie sur une autre touche."
+  "ctl.hotkeyUnbindable": "Cette touche ne peut pas servir à ce raccourci. Appuie sur une autre touche.",
+  "ext.saveUnreadable": "souldew ne peut pas lire les sauvegardes de ce jeu – ton équipe ne sera pas mise à jour pendant que tu joues avec {emu}.",
+  "ext.saveNotYet": "souldew commence à lire la sauvegarde dès que tu lances {emu} depuis ici.",
+  "ext.saveError": "Impossible de lire {file} : {error}",
+  "ext.saveWaiting": "En attente de {file} – sauvegarde une fois dans le jeu.",
+  "ext.saveRead": "Lit {file} · dernière lecture {when}",
+  "ext.saveWatching": "Lit {file}"
 }

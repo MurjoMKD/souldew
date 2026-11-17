@@ -2,6 +2,14 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## 2.8.2
+
+- **melonDS: your team updates after every in-game save in every DS game** (thanks to a player on Discord). When you
+  play with the melonDS app, souldew reads the save file it writes – but it only ever did that for HeartGold and
+  SoulSilver. In Diamond, Pearl, Platinum, Black, White, Black 2 and White 2 nothing changed after saving. souldew now
+  reads the saves of all of them, in every language, also when melonDS saves into its own save folder (set in melonDS's
+  settings) instead of next to the game. The melonDS page shows which save file souldew reads and when it last read it.
+
 ## 2.8.1
 
 - **Fast-forward on a key, like in mGBA** (thanks to a player for the idea). Hold Tab to fast-forward while it is held,

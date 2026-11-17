@@ -2735,5 +2735,11 @@
   "lives.usedUpNamed": "{name}: Die bisherigen Tode verbrauchen diese Leben schon. Der Run geht weiter – das nächste Pokémon, das {name} verliert, beendet ihn.",
   "ctl.ffHold": "Vorspulen (halten)",
   "ctl.ffToggle": "Vorspulen an / aus",
-  "ctl.hotkeyUnbindable": "Diese Taste kann nicht für dieses Kürzel belegt werden. Drück eine andere Taste."
+  "ctl.hotkeyUnbindable": "Diese Taste kann nicht für dieses Kürzel belegt werden. Drück eine andere Taste.",
+  "ext.saveUnreadable": "souldew kann die Spielstände dieses Spiels nicht lesen – dein Team wird nicht aktualisiert, solange du mit {emu} spielst.",
+  "ext.saveNotYet": "souldew liest den Spielstand, sobald du {emu} von hier aus startest.",
+  "ext.saveError": "{file} kann nicht gelesen werden: {error}",
+  "ext.saveWaiting": "Warte auf {file} – speichere einmal im Spiel.",
+  "ext.saveRead": "Liest {file} · zuletzt gelesen {when}",
+  "ext.saveWatching": "Liest {file}"
 }

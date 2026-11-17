@@ -6,6 +6,7 @@ import { diag } from '../lib/diag.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, ago } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
+import { serverErrorText } from '../lib/errors.mjs';
 import { gameById, gameTitle, speciesName, hackById, itemName, moveName } from '../lib/data.mjs';
 import { players as getPlayers, live, othersOf, runMode, missedQuestion, openAreas, markMissed, locationChoices, areaForCatch, genOfRun, profileOf, rules as getRules, logCheat } from '../lib/run.mjs';
 import { findEntry, readLiveParty, readLiveBattle, playerBattle, withBattleHp, confirmFaints, inBattleFlag, LiveTables, expandedEntry } from '/shared/live/parse.mjs';
@@ -1693,6 +1694,33 @@ export function ExternalFeed() {
   return null;
 }
 
+/**
+ * An emulator that can't share live data (melonDS): which save file souldew reads for the run and when it last read it
+ * – the place melonDS writes to, or why it can't be read. Asked every few seconds (an in-game save changes it).
+ */
+function SaveWatchLine({ runId, emu }) {
+  const [st, setSt] = useState(null);
+  useEffect(() => {
+    let stop = false;
+    const get = () => api.get(`/api/runs/${runId}/watch`).then((x) => !stop && setSt(x)).catch(() => {});
+    get();
+    const id = setInterval(get, 3000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [runId]);
+  if (!st) return null;
+  if (!st.readable) return html`<p class="small muted">${t('ext.saveUnreadable', 'souldew can’t read this game’s save files – your team won’t update while you play with {emu}.', { emu })}</p>`;
+  if (!st.watching) return html`<p class="tiny faint">${t('ext.saveNotYet', 'souldew starts reading the save file once you launch {emu} from here.', { emu })}</p>`;
+  const file = String(st.path || '').split(/[\\/]/).pop();
+  const text = st.error ? t('ext.saveError', 'Can’t read {file}: {error}', { file, error: serverErrorText({ code: st.errorCode, error: st.error }) })
+    : !st.exists ? t('ext.saveWaiting', 'Waiting for {file} – save in the game once.', { file })
+      : st.readAt ? t('ext.saveRead', 'Reads {file} · last read {when}', { file, when: ago(Date.parse(st.readAt)) })
+        : t('ext.saveWatching', 'Reads {file}', { file });
+  return html`<p class="tiny faint" title=${st.path} role="status" aria-live="polite">${text}</p>`;
+}
+
 function ExternalPlay({ target, emu }) {
   const { status, toast, liveInfo, manifest, me, route, setExternalRun } = useApp();
   const e = status.emulators[emu];
@@ -1735,7 +1763,8 @@ function ExternalPlay({ target, emu }) {
         ? html`<${ScriptBridge} fresh=${fresh} />`
         : e.live === 'rpc'
           ? html`<${AzaharBridge} fresh=${fresh} isRun=${isRun} />`
-          : html`<p class="small muted">${t('ext.saveText', '{emu} can’t share live data. Save in the game regularly – souldew reads the save file next to the ROM after every in-game save.', { emu: e.name })}</p>`}
+          : html`<p class="small muted">${t('ext.saveText', '{emu} can’t share live data. Save in the game regularly – souldew reads the save file next to the ROM after every in-game save.', { emu: e.name })}</p>
+            ${isRun && manifest?.id && html`<${SaveWatchLine} runId=${manifest.id} emu=${e.name} />`}`}
       ${target.system !== '3ds' && html`<p class="tiny faint">${t('ext.switch', 'You can switch back to the built-in emulator in the settings.')}</p>`}
     </section>
   </div>`;
