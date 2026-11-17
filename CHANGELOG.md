@@ -12,6 +12,11 @@
   Juniper (Black, White) and Bianca (Black 2, White 2) – and the Poké Dude's battles on FireRed and LeafGreen's Teachy
   TV. They never count as an encounter, a missed encounter or a dupe, show no catch chance and can't cost a Pokémon, and
   your team stays on screen the whole time.
+- **Black and White: Rotom's forms in the battle helper** (thanks to a player on Discord). Heat, Wash, Frost, Fan and
+  Mow Rotom showed Rotom's normal types, so the matchups were wrong. souldew now reads a Pokémon's form in the DS games
+  and uses its types and sprite – Rotom, Wormadam, Shaymin's Sky Forme, Arceus with its plate, Castform and the other
+  forms – from your ROM where it has them, so randomized and hacked games show theirs. In Diamond, Pearl, Platinum,
+  HeartGold and SoulSilver Rotom's forms keep Electric/Ghost, as in those games.
 
 ## 2.8.0
 

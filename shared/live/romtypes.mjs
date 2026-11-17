@@ -401,7 +401,43 @@ function dsPersonal(rom, gen, files, code) {
     out[i] = parts[i]?.length > 8 ? [parts[i][6], parts[i][7]] : null;
     rates[i] = out[i] ? parts[i][8] : 0; // (PKHeX PersonalInfo4/5: CatchRate at 0x08)
   }
-  return { path, types: out, rates };
+  return { path, types: out, rates, forms: gen === 5 ? personalForms(parts, count) : [] };
+}
+
+/**
+ * Gen 5's alternate forms in the personal data: their own entries after #649 – each species' entry names the first
+ * (FormStatsIndex u16 at +0x1C) and how many forms it has (FormeCount at +0x20); form k is entry FormStatsIndex + k − 1
+ * (PKHeX PersonalInfo5). Rotom's appliances, Wormadam's cloaks, Shaymin's Sky Forme … with the ROM's types (a
+ * randomizer's or a hack's). → [species] = [null, [type1, type2] of form 1, …] (the game's type ids).
+ */
+export function personalForms(parts, count) {
+  const forms = [];
+  for (let i = 1; i <= count; i++) {
+    const e = parts[i];
+    if (!e || e.length <= 0x20) continue;
+    const first = e[0x1c] | (e[0x1d] << 8);
+    const n = e[0x20];
+    if (n < 2 || first <= count || first + n - 2 >= parts.length) continue;
+    forms[i] = [null];
+    for (let k = 1; k < n; k++) forms[i][k] = parts[first + k - 1]?.length > 8 ? [parts[first + k - 1][6], parts[first + k - 1][7]] : null;
+  }
+  return forms;
+}
+
+/** The forms (personalForms) whose types differ from the species', named: species → { form: [type key, …] }. */
+export function namedForms(list, keys, species) {
+  const forms = {};
+  list.forEach((fs, id) => {
+    if (!fs || !species[id]) return;
+    fs.forEach((t, k) => {
+      if (!k || !t) return;
+      const ks = [...new Set(t.map((x) => keys[x]))];
+      if (ks.some((x) => !x)) return;
+      const named = ks.filter((x) => x !== '???');
+      if (named.join() !== species[id].join()) (forms[id] ||= {})[k] = named;
+    });
+  });
+  return forms;
 }
 
 // ---------------------------------------------------------------- catch rates
@@ -580,6 +616,7 @@ function dsTypes(rom) {
     const ks = [...new Set(t.map((x) => keys[x]))];
     if (!ks.some((k) => !k)) species[id] = ks.filter((k) => k !== '???');
   });
+  const forms = namedForms(p.forms, keys, species);
   // the chart: in the ARM9 binary or a battle overlay
   const idOf = (k) => { const i = keys.indexOf(k); return i >= 0 ? i : undefined; };
   const bins = [{ id: 'arm9', bytes: ndsArm9(rom).bytes }, ...ndsOverlays(rom)];
@@ -590,5 +627,5 @@ function dsTypes(rom) {
     if (got && (!c || got.score > c.score)) c = { ...got, where: `${b.id}+0x${got.offset.toString(16)}` };
   }
   const chart = c ? chartByKey(c.mult, keys) : null;
-  return { gen, keys, labels: {}, species, catchRates: catchRatesBy(p.rates, (i) => i, species), chart: fairy ? withFairy(chart) : chart, moves: null, fairy, own: 0, source: { personal: p.path, chart: c?.where || null } };
+  return { gen, keys, labels: {}, species, ...(Object.keys(forms).length ? { forms } : {}), catchRates: catchRatesBy(p.rates, (i) => i, species), chart: fairy ? withFairy(chart) : chart, moves: null, fairy, own: 0, source: { personal: p.path, chart: c?.where || null } };
 }

@@ -5,6 +5,7 @@ import { currentLang } from './i18n.mjs';
 import { slotsOf } from '/shared/slots.mjs';
 import { speciesCeiling } from '/shared/live/romspecies.mjs';
 import { setTypeChart } from '/shared/typechart.mjs';
+import { formTypes, formSpriteId } from '/shared/forms.mjs';
 
 let P = null;
 let CATALOG = { games: [], hacks: [] };
@@ -90,9 +91,17 @@ export function itemName(id, gen, lang = currentLang()) {
   return key ? items.names?.[lang]?.[key] || items.names?.en?.[key] || '' : '';
 }
 
-/** Sprite in the art style of the game's generation (served + cached by the local server). */
-export function spriteUrl(id, { gen = 4, shiny = false } = {}) {
+/**
+ * Sprite in the art style of the game's generation (served + cached by the local server). `form`: a DS Pokémon's
+ * alternate form (shared/forms.mjs – PokeAPI's own number for it; Gen 4/5's sprite sets have them).
+ */
+export function spriteUrl(id, { gen = 4, shiny = false, form = 0 } = {}) {
   if (!id || id > FAKEMON) return ''; // (a ROM hack's own Pokémon has no sprite here)
+  const fid = form && gen >= 4 ? formSpriteId(id, form) : id;
+  if (fid !== id) {
+    if (gen === 4 || gen === 5) return `/sprites/gen${gen}${shiny ? 'shiny' : ''}/${fid}.png`;
+    return `/sprites/${shiny ? 'shiny' : 'default'}/${fid}.png`;
+  }
   // Gen 6/7 (3DS games have 3D models, no sprite set of their own): the current artwork-style sprites
   if (gen >= 6) return `/sprites/${shiny ? 'shiny' : 'default'}/${id}.png`;
   const g = Math.min(Math.max(gen || 4, 1), 5);
@@ -208,7 +217,16 @@ export class RunData {
     return this.byId[slot] || Object.keys(this.byId).sort().map((s) => this.byId[s]).find(Boolean) || null;
   }
 
-  types(id, slot) {
+  /**
+   * A Pokémon's types in this run's game. `form`: a DS Pokémon's alternate form (shared/live/parse.mjs reads it) – the
+   * randomizer's types for that form, else the ROM's (Gen 5 keeps the forms' own entries), else the official ones;
+   * a form whose types aren't known anywhere has the species'.
+   */
+  types(id, slot, form = 0) {
+    if (form > 0) {
+      const ft = this.formTypes(id, slot, form);
+      if (ft) return ft;
+    }
     const p = this.byId[slot]?.get(id) || Object.keys(this.byId).sort().map((s) => this.byId[s]?.get(id)).find(Boolean);
     if (p) return p.types.filter(Boolean).map((t) => t.toLowerCase());
     // the game's own types (read from the ROM: loaded with the run, or from the game running right now); a Pokémon
@@ -219,6 +237,26 @@ export class RunData {
     // no types read from the ROM (a modified one whose tables weren't found too): the official ones – the battle
     // helper then shows no matchups for a modified ROM (matchupsKnown), as they may be wrong there
     return baseTypes(id, this.gen);
+  }
+
+  /** The types of `id` in form `form` when they are the form's own (see types), or null. */
+  formTypes(id, slot, form) {
+    // the randomizer's list names a form "<species>-<form>" (its own number, not the species')
+    const slots = [slot, ...Object.keys(this.romData).sort()];
+    for (const s of slots) {
+      const d = this.romData[s];
+      const base = this.byId[s]?.get(id);
+      if (!d || !base) continue;
+      const f = d.pokemon.find((p) => p.forme === form && p.id !== id && typeof p.name === 'string' && p.name.startsWith(`${base.name}-`));
+      if (f) return f.types.filter(Boolean).map((t) => t.toLowerCase());
+      return null; // (randomized: the official form types would be wrong)
+    }
+    const rt = this.romTypes || ROM_TYPES;
+    if (rt?.own) return rt.forms?.[id]?.[form] || null;
+    // (a Gen 5 ROM lists every form with types of its own – one it doesn't list has the species'; Arceus's type is its
+    // plate's, which the game works out itself)
+    if (rt?.forms && id !== 493) return rt.forms[id]?.[form] || null;
+    return formTypes(id, form, this.gen);
   }
 
   /** Can the battle helper tell matchups? The game's own chart, or the official one where the game has only those types. */
@@ -248,8 +286,8 @@ export class RunData {
     return cur;
   }
 
-  sprite(id, shiny) {
-    return spriteUrl(id, { gen: this.gen, shiny });
+  sprite(id, shiny, form = 0) {
+    return spriteUrl(id, { gen: this.gen, shiny, form });
   }
 
   encounterTables(slot) {

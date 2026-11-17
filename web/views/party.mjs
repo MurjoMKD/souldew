@@ -82,7 +82,7 @@ export function PartyPanel({ mon, gen = 4, lead, compact, accent, dead, types, c
   const label = [name, showSpecies ? species : '', lv ? `${t('common.lv', 'Lv')} ${lv}` : '', mon.maxHp ? `${mon.hp}/${mon.maxHp} ${t('hp.label', 'HP')}` : '', st ? statusLabel(st) : '', item ? t('party.holds', 'holds {item}', { item }) : ''].filter(Boolean).join(', ');
   const body = html`
     <span class="pp-sprite" style=${`--sp:${px}px`}>
-      <${Sprite} id=${mon.species} shiny=${mon.shiny} size=${px} gen=${gen} />
+      <${Sprite} id=${mon.species} form=${mon.form} shiny=${mon.shiny} size=${px} gen=${gen} />
       ${hasItem && html`<i class="pp-item" title=${item || t('party.item', 'Holds an item')}></i>`}
     </span>
     <span class="pp-top">

@@ -1717,7 +1717,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
         }
         return send(res, 404, { error: 'Unknown API endpoint', code: 'badRequest' });
       }
-      const sprite = path.match(/^\/sprites\/([a-z0-9]+)\/(\d{1,4})\.(png|gif)$/);
+      const sprite = path.match(/^\/sprites\/([a-z0-9]+)\/(\d{1,5})\.(png|gif)$/); // (10001+: PokeAPI's forms)
       if (sprite) {
         const u = spriteUrl(sprite[1], Number(sprite[2]));
         return u ? serveCached(res, join(CACHE_DIR, 'sprites', sprite[1], `${sprite[2]}.${sprite[3]}`), u) : send(res, 404, 'unknown set');

@@ -765,6 +765,8 @@ function pkMon(raw, gen, T) {
     metLocation, eggLocation, metLevel: d[0x84] & 0x7f, gender: ['M', 'F', '-'][(d[0x40] >> 1) & 3],
     shiny: isShiny(pid, ((sid << 16) | tid) >>> 0, T),
     status: gen === 5 ? gen5Status(d[0x88]) : d[0x88], level: d[0x8c], hp: u16le(d, 0x8e), maxHp: u16le(d, 0x90),
+    // the alternate form (+0x40 bits 3–7: Rotom's appliances, Wormadam's cloaks, Shaymin's Sky Forme … – shared/forms.mjs)
+    ...(d[0x40] >> 3 ? { form: d[0x40] >> 3 } : {}),
   };
 }
 
@@ -1482,6 +1484,9 @@ function battleMonAt(b, o) {
   return {
     species: u16le(b, o), level: b[o + 0x34], hp: u32le(b, o + 0x4c), maxHp: u32le(b, o + 0x50), pid: u32le(b, o + 0x68),
     status: u32le(b, o + 0x6c), otId: u32le(b, o + 0x74), moves: [0, 1, 2, 3].map((i) => u16le(b, o + 0x0c + i * 2)).filter(Boolean),
+    // the types and form it has right now (BattleMon type1/type2 +0x24/+0x25, form +0x26 bits 0–4: Castform's weather,
+    // Arceus's plate, a type change in battle)
+    typeIds: [b[o + 0x24], b[o + 0x25]], form: b[o + 0x26] & 0x1f,
   };
 }
 const saneBattleMon = (m) => m.species >= 1 && m.species <= 493 && m.level >= 1 && m.level <= 100 && m.maxHp > 0 && m.maxHp <= 999 && m.hp <= m.maxHp;
@@ -1584,7 +1589,7 @@ function battleDS(entry, read, T, state, party) {
     }
     const use = s.foe ? s : state.bmonHeld && now - state.bmonHeld.at < 3000 ? state.bmonHeld.s : null; // a switch in progress
     note(state, s.foe ? `struct ${s.foe.species}/${s.foe.level}` : use ? `held (${s.why})` : `none (${s.why})`, flag);
-    if (use) return (state.battle = structBattle(use, party, live, T));
+    if (use) return (state.battle = structBattle(use, party, live, T, state));
     if (state.bmonOk) {
       // in battle, the opponent not sent out yet (or the previous battle's still there): a battle without an opponent
       if (flag) return (state.battle = { kind: state.battle?.kind || 'wild', enemy: null, active: null });
@@ -1656,7 +1661,7 @@ function battleDS(entry, read, T, state, party) {
   }
   state.battle = {
     kind: enemy.mons.length > 1 || foe.key.split('-')[1] !== tid ? 'trainer' : 'wild',
-    enemy: { species: foe.species, level: foe.level, hp: foeHp ?? foe.hp, maxHp: foe.maxHp, shiny: foe.shiny, moves: foe.moves, ...(structs ? foeStatus5(structs.get(foe.pid)) : foeStatusDS(entry, read, state, foe)) },
+    enemy: { species: foe.species, level: foe.level, hp: foeHp ?? foe.hp, maxHp: foe.maxHp, shiny: foe.shiny, moves: foe.moves, ...(foe.form ? { form: foe.form } : {}), ...(structs ? foeStatus5(structs.get(foe.pid)) : foeStatusDS(entry, read, state, foe)) },
     active,
     // the battle's own party copy: HP and status conditions as they are now (the save party gets them at the end)
     party: live && live.map((m) => ({ pid: m.pid, hp: m.hp, maxHp: m.maxHp, status: m.status })),
@@ -1850,11 +1855,16 @@ function gen5Active(read, state, party, hpOf, structs) {
 }
 
 /** The battle from the battle structs; `live` is the battle's party copy (HP of the mons that aren't out). */
-function structBattle({ me, foe, foe2, ally }, party, live, T) {
+function structBattle({ me, foe, foe2, ally }, party, live, T, state = {}) {
   // a double battle: the one still standing (battler 1 first) leads, and both are listed while both stand
   const f = foe.hp === 0 && foe2?.hp > 0 ? foe2 : foe;
-  // (status: BattleMon.status, what the ball formula reads – pokeheartgold CalculateBallShakes)
-  const enemyOf = (x) => ({ species: x.species, level: x.level, hp: x.hp, maxHp: x.maxHp, shiny: isShiny(x.pid, x.otId, T), moves: x.moves, ...(statusOk(x.status) ? { status: x.status } : {}) });
+  // (status: BattleMon.status, what the ball formula reads – pokeheartgold CalculateBallShakes; the types and form it has
+  // right now – structTypes)
+  const myTypes = structTypes(T, state, me, true);
+  const enemyOf = (x) => {
+    const types = structTypes(T, state, x);
+    return { species: x.species, level: x.level, hp: x.hp, maxHp: x.maxHp, shiny: isShiny(x.pid, x.otId, T), moves: x.moves, ...(x.form ? { form: x.form } : {}), ...(types ? { types } : {}), ...(statusOk(x.status) ? { status: x.status } : {}) };
+  };
   const index = party.findIndex((p) => p.pid === me.pid);
   // the player's second battler in a double battle – only when it's one of the player's own (a multi battle's
   // partner sends out theirs)
@@ -1868,11 +1878,29 @@ function structBattle({ me, foe, foe2, ally }, party, live, T) {
     ...(foe2 ? { double: true } : {}),
     enemy: enemyOf(f),
     ...(standing.length > 1 ? { foes: standing.map(enemyOf) } : {}),
-    active: index >= 0 ? { index, hp: me.hp, maxHp: me.maxHp, status: me.status } : null,
+    active: index >= 0 ? { index, hp: me.hp, maxHp: me.maxHp, status: me.status, ...(myTypes ? { types: myTypes } : {}) } : null,
     ...(outs.length > 1 ? { actives: outs.map(([m, i]) => ({ index: i, hp: m.hp, maxHp: m.maxHp, status: m.status })) } : {}),
     // the mons that are out as the structs have them (the copy can lag a hit behind), the others from the copy
     party: live ? live.map((m) => byPid.get(m.pid) || { pid: m.pid, hp: m.hp, maxHp: m.maxHp, status: m.status }) : [...byPid.values()],
   };
+}
+
+/**
+ * The types a HeartGold/SoulSilver battler has right now (BattleMon type1/type2): Castform in the weather, Arceus with its
+ * plate, Rotom's appliance, a type change in battle. Named with the ROM's type ids (LiveTables.withRom) and trusted once
+ * the player's battler has read as its species' types in this session (state.typesDSOk) – before that, or without the
+ * ROM's types, none (the species' or the form's types stand in).
+ */
+function structTypes(T, state, x, own = false) {
+  const keys = T.types3?.keys;
+  if (!keys || !x?.typeIds || x.typeIds.some((i) => i >= keys.length)) return null;
+  const ks = [...new Set(x.typeIds.map((i) => keys[i]).filter((k) => k && k !== '???'))];
+  if (!ks.length) return null;
+  if (own && !state.typesDSOk && !x.form) {
+    const want = T.types3.species?.[x.species];
+    if (want && want.length === ks.length && want.every((k) => ks.includes(k))) state.typesDSOk = true;
+  }
+  return state.typesDSOk ? ks : null;
 }
 
 /** What the battle reader decided – for the diagnostics log (state.onDiag), only when it changes. */

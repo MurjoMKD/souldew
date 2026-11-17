@@ -47,12 +47,13 @@ function memory() {
 
 const TID = 31337;
 const SID = 4242;
-function pk5({ pid, species = 495, level = 9, hp = 25, maxHp = 30, status = 0, item = 0 }) {
+function pk5({ pid, species = 495, level = 9, hp = 25, maxHp = 30, status = 0, item = 0, form = 0 }) {
   const mon = new Uint8Array(220);
   const dv = new DataView(mon.buffer);
   dv.setUint32(0, pid, true);
   dv.setUint16(0x08, species, true);
   dv.setUint16(0x0a, item, true);
+  mon[0x40] = form << 3;
   dv.setUint16(0x0c, TID, true);
   dv.setUint16(0x0e, SID, true);
   dv.setUint32(0x88, status, true);
@@ -342,4 +343,30 @@ test('a Pokémon at 0 HP counts once two reads in a row say so – one odd read 
   assert.deepEqual(snap(0).deaths, [], 'one read at 0: no death yet');
   assert.equal(R.pairState(d, 'starter').state !== 'dead', true);
   assert.deepEqual(snap(0).deaths, ['starter'], 'the next one confirms it');
+});
+test('Black: Rotom\'s forms – the form is read, and the battle panel gets the form\'s types (2.8.1)', async () => {
+  const e = findEntry(TABLE, { platform: 'nds', code: 'IREO' });
+  const r = readLiveParty(e, black2({ mons: [pk5({ pid: 0x40740001, species: 479, form: 2 }), pk5({ pid: 0x40740002, species: 479 })] }).read, T, {});
+  assert.deepEqual(r.party.map((x) => x.form), [2, undefined]);
+  const { RunData } = await import('../web/lib/data.mjs');
+  const rd = new RunData();
+  rd.gen = 5;
+  assert.deepEqual(rd.types(479, 'p1', 2), ['electric', 'water'], 'Wash Rotom');
+  assert.deepEqual(rd.types(479, 'p1', 1), ['electric', 'fire'], 'Heat Rotom');
+  assert.deepEqual(rd.types(413, 'p1', 2), ['bug', 'steel'], 'Trash Cloak Wormadam');
+  assert.deepEqual(rd.types(492, 'p1', 1), ['grass', 'flying'], 'Sky Forme Shaymin');
+  assert.deepEqual(rd.types(493, 'p1', 9), ['fire'], 'Arceus with the Flame Plate (Gen 5 order)');
+  rd.gen = 4;
+  assert.deepEqual(rd.types(479, 'p1', 1), ['electric', 'ghost'], 'Gen 4: the appliances were still Electric/Ghost');
+  assert.deepEqual(rd.types(493, 'p1', 10), ['fire'], 'Arceus in Gen 4 (\'???\' at 9)');
+  // the randomizer's types for the form
+  rd.gen = 5;
+  rd.romData = { p1: { pokemon: [{ id: 479, name: 'Rotom', forme: 0, types: ['ELECTRIC', 'GHOST'] }, { id: 657, name: 'Rotom-W', forme: 2, types: ['ICE', 'DARK'] }] } };
+  rd.byId = { p1: new Map([[479, rd.romData.p1.pokemon[0]]]) };
+  assert.deepEqual(rd.types(479, 'p1', 2), ['ice', 'dark']);
+  // the sprite of the form (PokeAPI's number for it, in the Gen 5 set)
+  const { spriteUrl } = await import('../web/lib/data.mjs');
+  assert.equal(spriteUrl(479, { gen: 5, form: 2 }), '/sprites/gen5/10009.png');
+  assert.equal(spriteUrl(479, { gen: 5 }), '/sprites/gen5/479.png');
+  assert.equal(spriteUrl(646, { gen: 5, form: 2, shiny: true }), '/sprites/gen5shiny/10022.png', 'Black Kyurem');
 });

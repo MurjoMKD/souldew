@@ -33,6 +33,7 @@ function pk4({ pid = 0x1234abcd, species = 152, level = 12, tid = TID, sid = SID
   dv.setUint16(0x08, species, true);
   dv.setUint16(0x0c, tid, true);
   dv.setUint16(0x0e, sid, true);
+  d[0x40] = form << 3;
   dv.setUint16(0x46, 126, true);
   d[0x84] = metLevel;
   d[0x8c] = level;
