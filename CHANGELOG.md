@@ -47,6 +47,14 @@
   the place sign stayed away in every later session. Now it reads the file again a little later, and the play view keeps
   asking until it has the place names. If your team still isn't found, “Save diagnostics” now records what souldew sees
   at the game's party addresses, so the next report shows why.
+- **Skip the intro: start new attempts from your intro save** (a community idea). Play the intro once, save in the game
+  before you pick your starter, then choose Files › “Use as my intro save” on the run's board. From then on, “Start
+  from my intro save” is ticked when you start a new attempt or a new run of that game – randomized or not, the
+  starter you then pick comes from the new game. It works for every game souldew plays (3DS games in souldew's own
+  3DS player) and only for that exact game and language – German Smaragd keeps its own, separate from Emerald. Each
+  player keeps their own: it stays on your computer and never goes into an invite. If your save already has Pokémon,
+  souldew tells you, and they come along without counting for the run. Untick it to play the intro, or remove the
+  intro save right there.
 
 ## 2.8.1
 

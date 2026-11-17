@@ -13,6 +13,8 @@ const TEXTS = {
   idMissing: () => t('err.idMissing', 'ID missing'),
   emptySave: () => t('err.emptySave', 'Empty save file – not saved'),
   noSaveYet: () => t('err.noSaveYet', 'No save file yet'),
+  introEmpty: () => t('err.introEmpty', 'There is no game save in this file yet – save in the game first'),
+  introUnsupported: () => t('err.introUnsupported', 'Intro saves don’t work for this game'),
   runNotFound: () => t('err.runNotFound', 'Run not found'),
   runBuilding: () => t('err.runBuilding', 'This run is being built right now'),
   runIsLocal: () => t('err.runIsLocal', 'This run was created on this computer and can’t be replaced by a run pack'),
@@ -140,6 +142,7 @@ const LOG_TEXTS = {
   romMatches: (v) => t('buildLog.romMatches', '✔ The ROM for {name} is byte-identical to your friend’s', v),
   romDiffers: (v) => t('buildLog.romDiffers', '⚠ The ROM for {name} differs from the run pack (another base ROM or version?)', v),
   romPairMate: (v) => t('buildLog.romPairMate', 'ℹ {name} plays the other edition of the pair than the host – that’s fine, everyone plays their own copy', v),
+  introApplied: () => t('buildLog.introApplied', 'Your game starts from your intro save'),
   romOtherRelease: (v) => t('buildLog.romOtherRelease', 'ℹ The ROM for {name} is another release of the game than the host’s – that’s fine, everyone plays their own copy', v),
 };
 
