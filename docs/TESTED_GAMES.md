@@ -386,6 +386,10 @@ German FireRed/LeafGreen (2.3.1, issue #16) – the memory table was right, two 
 - Moves of DS hacks that retype them (Fairy moves in Renegade Platinum / Blaze Black 2 Redux) come from souldew's move
   data (Gen 6's types for a Fairy hack); the Pokémon's types and the chart come from the ROM.
 - The battle's current types are read in GBA games only; DS and Game Boy battles use the species' types from the ROM.
+- Gen 5 PC boxes (2.8.1): read from the save blocks in RAM, 0x18A00 before the party block (Black: 0x0221BFAC, as the
+  community's RAM maps give it) – checked with synthetic RAM, not yet in a running game; Black 2/White 2 by the same
+  layout. A PC that reads as completely empty counts as unknown. Gen 1/2's PC isn't read (Gold/Silver/Crystal keep the
+  boxes in the cartridge RAM, Red/Blue/Yellow only the current box in WRAM).
 - Gen 3 PC boxes are read live in the retail games (FireRed/LeafGreen in English, German, French, Italian and
   Spanish, English Emerald, English and German Ruby/Sapphire): a catch sent to the PC is filed right away. Not in the
   expanded-engine hacks: there a catch sent to the PC (a full team) is filed once it joins the team.

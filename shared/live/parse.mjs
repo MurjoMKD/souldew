@@ -863,9 +863,12 @@ function readDS(entry, read, T, state) {
   return scannedResult(entry, read, T, state, party, size);
 }
 
-/** Party, PC boxes (Gen 4) and badges of a DS game whose party was found at state.partyAddr. */
+/** Party, PC boxes and badges of a DS game whose party was found at state.partyAddr. */
 function dsResult(entry, read, T, state, party) {
-  if (entry.gen === 5) return { party, badges: readBadgesGen5(entry, read, state, party) };
+  if (entry.gen === 5) {
+    const boxes = readBoxesGen5(entry, read, T, state, party);
+    return { party, ...(boxes ? { boxes } : {}), badges: readBadgesGen5(entry, read, state, party) };
+  }
   return { party, boxes: readBoxesGen4(entry, read, T, state), badges: readBadgesGen4(entry, read, state, party) };
 }
 
@@ -959,6 +962,50 @@ function readBadgesGen5(entry, read, state, party) {
   const b = read(core + misc, 5);
   if (!b || u32le(b, 0) > 9999999) return undefined;
   return popcount(b[4]);
+}
+
+/**
+ * Gen 5 PC boxes. The game keeps its save blocks in RAM in the order of the .sav (readBadgesGen5, the bag in cheats.mjs),
+ * so the boxes – PKHeX SAV5: 24 boxes of 30 stored PK5 (136 bytes) from 0x400 on, 0x1000 apart – sit 0x18A00 in front of
+ * the party block (0x18E00): in Black at 0x0221BFAC, where the community's RAM maps put box 1. Without them a catch the
+ * game sent to the PC (full party) wasn't seen until it was taken out, and with a full party a wild Pokémon that got
+ * away was never asked about (it could have been caught unseen). Trusted like the badges – only when the trainer data
+ * behind the party is the party's own trainer (a scanned battle copy has nothing behind it) – and only when it reads as
+ * a PC: every slot empty or a valid Pokémon (a few torn slots aside), at least one Pokémon in it (a PC read as nothing
+ * at all can't be told from a wrong place, and would report every Pokémon in it as released). Read every 2.5 s at most.
+ */
+const GEN5_BOXES = 0x400 - 0x18e00;
+function readBoxesGen5(entry, read, T, state, party) {
+  const core = state.partyAddr;
+  if (!core || !party?.length) return null;
+  const now = Date.now();
+  if (state.box5 !== undefined && now - state.box5At < 2500) return state.box5;
+  state.box5At = now;
+  state.box5 = null;
+  const tr = read(core + GEN5_TRAINER + 0x14, 4);
+  if (!tr || !party.some((m) => m.key?.endsWith(`-${u16le(tr, 0)}-${u16le(tr, 2)}`))) return null;
+  const storage = read(core + GEN5_BOXES, 24 * 0x1000);
+  if (!storage) return null;
+  const boxes = [];
+  let bad = 0;
+  for (let b = 0; b < 24; b++) {
+    for (let s = 0; s < 30; s++) {
+      const o = b * 0x1000 + s * 136;
+      const raw = storage.subarray(o, o + 136);
+      if (raw.every((x) => x === 0)) continue;
+      const m = pkMon(raw, 5, T);
+      if (!m) {
+        // (an emptied slot is zeros encrypted: a valid checksum, species 0)
+        const { data, checksumOk } = decryptPK4(raw);
+        if (!(checksumOk && !u16le(data, 0x08))) bad++;
+        continue;
+      }
+      boxes.push({ ...m, box: b, slot: s, level: null, hp: null, maxHp: null, status: 0 });
+    }
+  }
+  if (bad > 3 || !boxes.length) return null;
+  state.box5 = boxes;
+  return boxes;
 }
 
 /** HGSS keeps the whole save image in RAM: storage follows the general block like in the file. */

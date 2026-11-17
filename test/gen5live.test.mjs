@@ -405,6 +405,36 @@ test('Black/White, Black 2/White 2: a trainer\'s next Pokémon is the one the ba
   assert.equal(g.enemy.species, 506);
 });
 
+test('Gen 5 PC boxes: a catch the game sends to the PC (full party) is filed at once – and a full party gets the missed-encounter question (2.8.1)', () => {
+  const e = findEntry(TABLE, { platform: 'nds', code: 'IREO' });
+  const team = [0, 1, 2, 3, 4, 5].map((i) => pk5({ pid: 0x10000 + i * 0x777, species: 495 + i }));
+  const m = black2({ mons: team });
+  const BOXES = CORE + 0x400 - 0x18e00; // PKHeX SAV5: box 1 at 0x400, the party block at 0x18E00
+  // box 1 slot 1: a Purrloin just caught (stored format: the first 136 bytes), slot 2 emptied (zeros, encrypted)
+  const purrloin = pk5({ pid: 0x0ca7c4a7, species: 509, level: 3 }).subarray(0, 136);
+  m.write(BOXES, [...purrloin, ...encryptPK4(new Uint8Array(220)).subarray(0, 136)]);
+  // box 3 slot 5
+  m.write(BOXES + 2 * 0x1000 + 4 * 136, [...pk5({ pid: 0x0ca7c4a8, species: 504, level: 4 }).subarray(0, 136)]);
+  const r = readLiveParty(e, m.read, T, {});
+  assert.deepEqual(r.boxes.map((x) => [x.species, x.box, x.slot]), [[509, 0, 0], [504, 2, 4]]);
+  // the tracker files the boxed catch where it was met
+  const B2 = { id: 'b2', mode: 'nuzlocke', players: { p1: { name: 'Lou' } }, game: { id: 'pokemon-black-2', code: 'IREO', system: 'nds' } };
+  const d = new RunDoc('t');
+  d._persistSoon = () => {};
+  team.forEach((x, i) => d.set(`enc:a${i}:p1`, { outcome: 'caught', species: 495 + i, key: r.party[i].key }));
+  const snap = R.applySnapshot(d, B2, 5, 'p1', { source: 'live', party: r.party, boxes: r.boxes.map((x) => ({ ...x, metLocation: 20 })) });
+  assert.ok(snap.newCatches.length + snap.inbox.length >= 1, 'the boxed Purrloin is seen');
+  // (with the PC read, a full party no longer rules the missed-encounter question out)
+  assert.equal(R.missedQuestion(d, B2, null, 'p1', { foe: { species: 506 }, wild: true, from: 2, newMonAt: 1, boxes: true, partySize: 6 }), true);
+  assert.equal(R.missedQuestion(d, B2, null, 'p1', { foe: { species: 506 }, wild: true, from: 2, newMonAt: 1, boxes: false, partySize: 6 }), false);
+  // another trainer's data behind the party (a battle's copy), garbage, or a PC with nothing readable: no PC rather than a wrong one
+  assert.equal(readLiveParty(e, black2({ mons: team, tid: 1 }).read, T, {}).boxes, undefined);
+  const junk = black2({ mons: team });
+  junk.write(BOXES, Array.from({ length: 0x3000 }, (_, i) => (i * 37 + 11) & 0xff));
+  assert.equal(readLiveParty(e, junk.read, T, {}).boxes, undefined);
+  assert.equal(readLiveParty(e, black2({ mons: team }).read, T, {}).boxes, undefined, 'empty: can\'t be told from a wrong place');
+});
+
 test('Black: Rotom\'s forms – the form is read, and the battle panel gets the form\'s types (2.8.1)', async () => {
   const e = findEntry(TABLE, { platform: 'nds', code: 'IREO' });
   const r = readLiveParty(e, black2({ mons: [pk5({ pid: 0x40740001, species: 479, form: 2 }), pk5({ pid: 0x40740002, species: 479 })] }).read, T, {});

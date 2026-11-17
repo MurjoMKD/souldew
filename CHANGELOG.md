@@ -21,6 +21,10 @@
   White 2, Diamond, Pearl and Platinum the battle helper jumped to the next Pokémon in the trainer's party as soon as one
   went down – but trainers pick their next Pokémon themselves. souldew now follows the battle itself: the defeated
   Pokémon stays until the trainer sends the next one, and the helper shows the one that really comes out.
+- **Black, White, Black 2 and White 2: catches sent to the PC are filed right away** (thanks to a player on Discord).
+  With a full team, a new catch only showed up once you took it out of the PC – and a wild Pokémon that got away was
+  never asked about, since souldew couldn't tell whether it had been caught. souldew now reads the PC live in these games
+  too, so both work like in the other games.
 
 ## 2.8.0
 
