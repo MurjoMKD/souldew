@@ -9,10 +9,11 @@ import { serverErrorText } from '/lib/errors.mjs';
 import { findEntry, regionsFor } from '/shared/live/parse.mjs';
 import { cheatRegions } from '/shared/live/cheats.mjs';
 import { CTR_LAYOUTS, ctrLayout, ctrTouchAt, blackPicture } from '/shared/ctrlayout.mjs';
+import { RomMusic } from '/lib/rommusic.mjs';
 
 const q = new URLSearchParams(location.search);
-const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7, FFSOUND: 8 };
-const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9 };
+const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7, FFSOUND: 8, ROMFS: 9, ROMDATA: 10 };
+const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9, ROMREAD: 10 };
 const post = (m) => window.parent?.postMessage(m, location.origin);
 
 const st = {
@@ -241,7 +242,7 @@ layout();
 // of the bandwidth (the sped-up sound is low-passed before it is sped up) – at 4× muffled music.
 // The worklet keeps more in hand than for the fast player: the sound comes between pictures of up to 7 MB.
 const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
-const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [], taps: [], rate: 0, exact: false, win: null, last: null };
+const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [], taps: [], rate: 0, exact: false, win: null, last: null, rom: null, romQueue: [] };
 /**
  * The worklet's buffer (frames, lib/jitterring.mjs): start / restart once 60 ms are there – more after each gap, up to
  * 240 ms, for a PC whose sound arrives late now and then –, read a little faster above 200 ms (the late sound queued
@@ -291,6 +292,7 @@ async function startAudio(rate) {
       if (!ev) return;
       if (ev.type === 'error') st.log.push(`turbo audio: ${ev.message}`);
       if (ev.type === 'probe') audio.probes.splice(0).forEach((f) => f(ev));
+      if (ev.type === 'rom-missing') audio.rom?.missing(ev.id);
       if (ev.type === 'state' || ev.type === 'error') {
         audio.events.push({ t: Math.round(performance.now()), ...ev });
         if (audio.events.length > 40) audio.events.shift();
@@ -307,6 +309,10 @@ async function startAudio(rate) {
         }
       }
     };
+    if (audio.rom) {
+      audio.rom.attach(audio.ctx);
+      for (const [m, tr] of audio.romQueue.splice(0)) audio.node.port.postMessage(m, tr);
+    }
     audio.gain = audio.ctx.createGain();
     audio.gain.gain.value = st.volume;
     audio.node.connect(audio.gain).connect(audio.ctx.destination);
@@ -315,6 +321,41 @@ async function startAudio(rate) {
   } catch (e) {
     st.log.push(`audio: ${e.message}`);
   }
+}
+/**
+ * Music from the ROM (lib/rommusic.mjs): a core with souldew's RomFS patch says which music stream the game reads – from
+ * the first frames on (the reads that start the title music come before the sound worklet is up: what it should get
+ * waits here until it is).
+ */
+function startRomMusic(rate) {
+  const transfer = (m) => (m.type === 'rom-track' ? [m.file?.buffer, m.l?.buffer, m.r?.buffer].filter(Boolean) : []);
+  const id = st.id;
+  audio.rom = new RomMusic({
+    rate,
+    send: (payload) => cmd(CMD.ROMREAD, payload),
+    // the server's index of the game file's streams, and its bytes straight from the file (server/app.mjs /api/ctr/music)
+    index: fetch(`/api/ctr/music?id=${id}`).then((r) => (r.ok ? r.json() : null)).then((j) => j?.music || null).catch(() => null),
+    fetchBytes: (off, len) => fetch(`/api/ctr/romfs?id=${id}&off=${off}&len=${len}`).then((r) => (r.ok ? r.arrayBuffer() : null)).then((b) => (b && b.byteLength === len ? new Uint8Array(b) : null)),
+    tell: (m) => {
+      if (audio.node) audio.node.port.postMessage(m, transfer(m));
+      else if (m.type === 'rom-track' || audio.romQueue.length < 64) audio.romQueue.push([m, transfer(m)]);
+    },
+    log: (e) => {
+      const ev = { t: Math.round(performance.now()), ...e };
+      for (const f of audio.subs) {
+        try {
+          f(ev);
+        } catch {
+          // the page's problem
+        }
+      }
+      if (/failed|error|calibrated|rom-track|rom-learned/.test(e.type)) {
+        audio.events.push(ev);
+        if (audio.events.length > 40) audio.events.shift();
+      }
+    },
+  });
+  audio.rom.enabled = st.turboAudio === 'music';
 }
 // browsers keep sound asleep until the first click / key in the frame
 const wake = () => audio.ctx?.state === 'suspended' && audio.ctx.resume().catch(() => {});
@@ -330,6 +371,7 @@ function floats(p) {
 function onAudio(p) {
   if (!audio.node || st.paused) return;
   const f = floats(p);
+  if (audio.rom && st.speed === 1) audio.rom.onGameSound(f); // (the game's 1× sound: the music's lead is measured on it)
   audio.node.port.postMessage(f, [f.buffer]);
 }
 /** Fast-forward: the core's own sound (message 8) – only "Music continues" records it, the other modes never use it. */
@@ -423,6 +465,7 @@ function onEvent(p) {
   }
   if (e.event === 'loaded') {
     st.liveMemory = !!e.memory;
+    if (e.romfs && !audio.rom && q.get('rommusic') !== '0') startRomMusic(e.sampleRate);
     startAudio(e.sampleRate);
     // a second "loaded" with another renderer: the server started the host again with a safer one (renderer "auto",
     // server/lib/ctrrenderer.mjs) – the play view says so
@@ -500,6 +543,8 @@ async function pump() {
       if (type === MSG.VIDEO) onVideo(p.slice());
       else if (type === MSG.AUDIO) onAudio(p);
       else if (type === MSG.FFSOUND) onFfSound(p);
+      else if (type === MSG.ROMFS) audio.rom?.onRomfs(p); // (before that frame's AUDIO: the position goes in band)
+      else if (type === MSG.ROMDATA) audio.rom?.onRomData(p);
       else if (type === MSG.MEM) onMem(p);
       else if (type === MSG.EVENT) onEvent(p);
       else if (type === MSG.STATE) waiters.state.shift()?.(p.slice());
@@ -712,6 +757,7 @@ window.__emu = {
   restart: () => {
     tellAudio('clear');
     tellAudio({ type: 'cut' });
+    audio.rom?.cut();
     return cmd(CMD.RESET);
   },
   /** 1–4, or Infinity: as fast as this computer can. (In fast-forward the host sends about 60 pictures a second.) */
@@ -719,6 +765,7 @@ window.__emu = {
     st.speed = ratio === Infinity ? Infinity : Math.max(1, Number(ratio) || 1);
     if (!st.paused) cmd(CMD.SPEED, f32(st.speed === Infinity ? 1000 : st.speed));
     tellAudio({ type: 'speed', ratio: Math.min(st.speed, MAX_SOUND_RATIO) });
+    audio.rom?.speed(st.speed);
   },
   speed: () => st.speed,
   setFullTurbo() {}, // the native host always runs fast-forward at full power
@@ -743,6 +790,7 @@ window.__emu = {
     if (st.ended) return Promise.resolve(false);
     tellAudio('clear');
     tellAudio({ type: 'cut' });
+    audio.rom?.cut();
     return ask(waiters.loaded, CMD.LOAD, u8 instanceof Uint8Array ? u8 : new Uint8Array(u8), false);
   },
   async screenshot() {
@@ -780,6 +828,7 @@ window.__emu = {
   setTurboAudio(mode) {
     st.turboAudio = mode;
     tellAudio({ type: 'mode', mode });
+    if (audio.rom) audio.rom.enabled = mode === 'music';
   },
   /** The music the game plays now (location.mjs musicKey), when the live reader knows it: the turbo mixer follows it. */
   songKey(key) {
@@ -793,7 +842,7 @@ window.__emu = {
     audio.subs.add(f);
     return () => audio.subs.delete(f);
   },
-  turboAudio: () => ({ mode: st.turboAudio, key: audio.key, events: audio.events.slice(-10) }),
+  turboAudio: () => ({ mode: st.turboAudio, key: audio.key, events: audio.events.slice(-10), rom: audio.rom?.state() ?? null }),
   /** Tests: what the mixer plays right now ({ playing, turbo, key, … }), or null without sound. */
   audioProbe() {
     if (!audio.node) return Promise.resolve(null);

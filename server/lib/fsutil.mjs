@@ -1,5 +1,5 @@
 // Small filesystem helpers shared by the server modules.
-import { writeFileSync, renameSync, rmSync, realpathSync } from 'node:fs';
+import { writeFileSync, renameSync, rmSync, realpathSync, openSync, readSync, closeSync } from 'node:fs';
 import { rm as rmAsync } from 'node:fs/promises';
 import { extname, posix, win32 } from 'node:path';
 
@@ -150,4 +150,15 @@ export function httpError(status, message, code, vars) {
  */
 export function logLine(code, text, vars) {
   return { code, text, ...(vars ? { vars } : {}) };
+}
+
+/** `len` bytes of a file from `offset` (fewer at its end) – a part of a big file without reading it whole. */
+export function readRange(path, offset, len) {
+  const fd = openSync(path, 'r');
+  try {
+    const b = Buffer.alloc(len);
+    return b.subarray(0, readSync(fd, b, 0, len, offset));
+  } finally {
+    closeSync(fd);
+  }
 }
