@@ -10,8 +10,8 @@
 // The music can change during fast-forward (new area, battle). RetroArch plays the sped-up sound in full
 // (audio_fastforward_speedup, set by player.html), so the mixer slows it back down by the speed ratio –
 // that is the game's music at its normal pitch, just r× more of it than fits. It listens for the silence
-// between two songs: then the old loop fades out, the new song plays from the slowed-down recording and, once it
-// repeats, becomes the new loop. (Comparing the heard music with the loop to catch songs that follow without a
+// between two songs: then the old loop fades out and the new song plays from the slowed-down recording (until 2.8.1 it
+// became the new loop once it repeated – a loop of raced-through sound, its effects on repeat; see work()). (Comparing the heard music with the loop to catch songs that follow without a
 // pause was tried: on real Game Boy music the same song scored as low as a different one – false alarms.)
 //
 // Around a speed command the sped-up sound is unreliable (measured in the app): OpenAL still plays sound made at
@@ -1047,12 +1047,12 @@ export class TurboMixer {
         this.retarget();
         this.emit({ type: 'stream', seg: this.seg.id, jump: false });
       }
-      // … and look for its loop as soon as there is enough of it
-      const u = this.usable();
-      if (!u || u.n * HOP < this.minSeg) return;
-      if (this.lastJob.segId === this.seg.id && this.frames - this.lastJob.frame < this.researchAfter()) return;
-      this.startJob(u);
-      this.pending = true;
+      // … and play it on. Its loop is not searched for here: the stream is the game's own sound (the 3DS host's, or the
+      // sped-up sound slowed down), effects and all, at most streamLag late, and a loop found in it is made of sound the
+      // game raced through (k× the effects per second of music) – it replaces what the game does next with a few
+      // seconds on repeat. In a Windows player's Pokémon Y video (2.8.x, 4×) a 5.66 s loop found in the first trainer
+      // battle played through the knock-out, the level-up and the prize money – an attack sound every 5.66 s, the
+      // battle's own sounds never. Loops recorded at 1× (the library, this stretch's own) still take the stream's place.
       return;
     }
     if (!this.job) {

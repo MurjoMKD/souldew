@@ -247,7 +247,7 @@ test('a long silence (area change) drops the old music', () => {
   assert.ok(streamed(m, jumps, c0, during, f, Math.round(0.5 * SR), SR, { ahead: 2 * SR }).corr > 0.95, 'the new music, not the old loop');
 });
 
-test('the music changes during fast-forward → the old loop stops, the new song plays and becomes the loop', () => {
+test('the music changes during fast-forward → the old loop stops, the new song plays on as the game plays it', () => {
   const A = tune({ seed: 1, period: 6.4 });
   const B = tune({ seed: 7, period: 4 });
   const m = new TurboMixer(SR, { seconds: 60 });
@@ -267,8 +267,9 @@ test('the music changes during fast-forward → the old loop stops, the new song
   // (it starts a few hundred samples late: song B is noticed once its first analysis frame is complete)
   assert.ok(streamed(m, jumps, c0, b, B, Math.round(0.2 * SR), Math.round(1.2 * SR), { back: 2048, ahead: 2 * SR }).corr > 0.95, 'song B at normal speed right away');
   assert.ok(Math.abs(corr(b, A, tB, Math.round(0.2 * SR), Math.round(2 * SR))) < 0.3, 'not song A any more');
-  assert.ok(m.carry && !m.carry.stream, 'B got its own loop');
-  assert.ok(Math.abs(m.carry.lag - 4 * SR) < 0.01 * SR, `loop ${m.carry.lag / SR} s`);
+  // (until 2.8.1 B's loop was then searched in the slowed-down recording and took over – a few seconds of raced-through
+  // sound on repeat, its effects too; the game's own sound now plays on until B is heard at 1×)
+  assert.ok(m.carry?.stream, 'B plays on as the game plays it');
   assert.ok(maxJump(b) < 0.2, 'no clicks');
 });
 
@@ -1779,9 +1780,16 @@ test('3DS battle (song keys from the zone and the battle reader): the battle mus
   // the battle music begins; the 'battle' key comes 2 s later (battle flag + the live reader's 0.7 s)
   feedHost(m, host, 2);
   m.command({ type: 'song', key: 'battle' });
+  const jumps = track(m);
+  const c0 = m.clock;
   out = feedHost(m, host, 7);
-  [a, b] = whichSong(out, out.length - 4 * R, out.length, [A, B]);
-  assert.ok(b > 0.8 && a < 0.4, `the battle music in the battle (A ${a.toFixed(2)}, B ${b.toFixed(2)})`);
+  // the game's own sound, streamed: the battle in pieces (it skips ahead to keep up), at most a second behind the game –
+  // at real time 3 s + i the game is at 4 × (3 s + i)
+  const from = out.length - 2 * R;
+  const g = 4 * (3 * R + from) - from;
+  const s = streamed(m, jumps, c0, out, (i) => game(t0 + i), from, out.length, { back: Math.round(1.1 * R) - g, ahead: g });
+  assert.ok(m.playing().src === 'stream' && m.playing().of === 'battle', `the battle's own sound plays (${JSON.stringify(m.playing())})`);
+  assert.ok(s.corr > 0.95, `the battle as the game plays it (${s.corr.toFixed(3)} over ${s.pieces} pieces)`);
   // the battle ends (game time tEnd = real 11 s), the route's key comes 1.5 s after the route's music
   feedHost(m, host, 1 + 1.5);
   m.command({ type: 'song', key: 'p7.20' });
@@ -1832,4 +1840,33 @@ test('a battle key that comes 2 s late at 1× (the battle reader): nothing of th
     assert.equal(battleShare(e), 0, `phase ${phase}: ${(battleShare(e) * 100).toFixed(0)} % of the route’s entry is battle music`);
   }
   assert.ok(kept >= 10, `the route’s entry is still kept on most visits (${kept} of 14)`);
+});
+
+test('3DS own fast-forward sound: the game’s own sound goes on – no loop of raced-through sound that repeats its effects and hides the real ones', () => {
+  // A Windows player's Pokémon Y video (2.8.x, "Music continues" at 4×, the PC at ≈1.8–3.7×): in the first trainer battle a
+  // 5.66 s loop found in the fast-forward recording played on through the knock-out, the level-up and the prize money –
+  // an attack sound from before the knock-out came round every 5.66 s, the real sounds of the battle never came.
+  const B = tune({ seed: 2 }); // the battle music (repeats every 6.4 s: a loop is there to be found)
+  const FX = 1500; // a battle sound the music never plays
+  const fxAt = [2, 25].map((s) => s * SR); // game time: one early in the battle (inside any loop found), one late
+  const game = (t) => B(t) + (fxAt.some((a) => t >= a && t < a + 0.3 * SR) ? 0.25 * Math.sin((2 * Math.PI * FX * t) / SR) : 0);
+  const k = 3.6;
+  const m = new TurboMixer(SR, { seconds: 60 });
+  m.command({ type: 'song', key: 'p6.1' });
+  feed(m, tune({ seed: 1 }), 0, 3); // the town at 1× (too short for a loop)
+  m.command({ type: 'speed', ratio: 4 });
+  m.command({ type: 'rate', ratio: k, exact: true });
+  m.command({ type: 'song', key: 'battle' });
+  const out = feedHost(m, ctrHost(game, k), 12);
+  const F = Math.round(0.1 * SR);
+  const hits = [];
+  for (let o = 0; o + F <= out.length; o += F) if (toneAt(out, FX, o, F) > 0.08 && !(hits.length && o - hits.at(-1) <= 3 * F)) hits.push(o);
+  const at = hits.map((o) => +(o / SR).toFixed(1));
+  // each battle sound once, at most ~1 s after the game made it (real time = game time / k)
+  assert.equal(hits.length, 2, `each battle sound heard once (heard at ${at.join(', ')} s)`);
+  fxAt.forEach((g, i) => {
+    const late = hits[i] / SR - g / SR / k;
+    assert.ok(late > -0.1 && late < 1.3, `sound ${i + 1}: ${late.toFixed(2)} s late`);
+  });
+  assert.ok(m.carry?.stream, 'the game’s own sound is streamed');
 });

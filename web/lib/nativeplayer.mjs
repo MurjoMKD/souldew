@@ -194,11 +194,12 @@ new ResizeObserver(layout).observe(document.body);
 layout();
 
 // ---- sound: the host's samples through souldew's turbo mixer (lib/native-audio-worklet.mjs) ------------------------
-// While fast-forwarding the host sends the sound sped up by the real speed (as RetroArch does for player.html); the
-// mixer keeps the music going at normal speed (Settings › sound while fast-forwarding), for DS games synthesized from the
+// While fast-forwarding the host sends the sound sped up by the real speed, resampled to real time with a steady ratio
+// (native/ctr-host/ffsound.h, as the 3DS host since 2.8.2), and says by how much ("ffrate", right before that sound – the
+// worklet hands the ratio to the mixer when the sound plays); the mixer keeps the music going at normal speed (Settings › sound while fast-forwarding), for DS games synthesized from the
 // ROM's own sound archive (lib/sdat-worker.mjs), as in player.html.
 const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
-const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [] };
+const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [], exact: false };
 function tellAudio(m) {
   audio.node?.port.postMessage(m);
 }
@@ -329,7 +330,7 @@ function onEvent(p) {
   } catch {
     return dbg('bad event', p.length);
   }
-  if (e.event !== 'stats' && e.event !== 'stepped' && e.event !== 'written') dbg('event', JSON.stringify(e).slice(0, 300));
+  if (!['stats', 'stepped', 'written', 'ffrate'].includes(e.event)) dbg('event', JSON.stringify(e).slice(0, 300));
   if (e.event === 'loaded') {
     st.info = e;
     // a mirror for every region the core has (all of it arrives with the first RAM message)
@@ -338,8 +339,13 @@ function onEvent(p) {
   } else if (e.event === 'stats') {
     st.fps = e.fps;
     st.hostSpeed = e.speed;
-    if (st.speed > 1 && !st.paused && e.speed > 0.5) tellAudio({ type: 'rate', ratio: Math.round(Math.min(e.speed, MAX_SOUND_RATIO) * 100) / 100 });
+    // (a host before 2.8.2 doesn't say its ratio: the measured speed then, as before)
+    if (!audio.exact && st.speed > 1 && !st.paused && e.speed > 0.5) tellAudio({ type: 'rate', ratio: Math.round(Math.min(e.speed, MAX_SOUND_RATIO) * 100) / 100 });
     if (Number.isFinite(e.frame)) st.hostFrame = e.frame;
+  } else if (e.event === 'ffrate') {
+    if (!(e.k >= 1)) return;
+    audio.exact = true;
+    tellAudio({ type: 'rate', ratio: e.k, exact: true, inband: true });
   } else if (e.event === 'stepped') {
     if (Number.isFinite(e.frame)) st.hostFrame = e.frame;
     waiters.stepped.splice(0).forEach((f) => f(e.frame));
