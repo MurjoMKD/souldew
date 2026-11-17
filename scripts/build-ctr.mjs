@@ -1,6 +1,7 @@
 // Builds souldew's 3DS part into tools/ctr/<platform>-<arch>/ (bundled with the app like the JRE, see package.json):
 //   ctrhost[.exe]            native/ctr-host/ctrhost.c – the host that runs the core with Vulkan (needs the Vulkan headers)
-//   azahar_libretro.*        Azahar's libretro core with native/azahar-patch applied (live data: reading game memory)
+//   azahar_libretro.*        Azahar's libretro core with native/azahar-patch/*.patch applied (live data: reading game
+//                            memory; music from the ROM: the game's RomFS reads)
 //   libMoltenVK.dylib        macOS only – Vulkan on Metal, from Azahar's own macOS release
 //   SOULDEW_CORE             marker: the core has the souldew patch
 //
@@ -34,6 +35,9 @@ const [os] = plat.split('-');
 const cross = plat !== `${process.platform}-${process.arch}`;
 const out = join(root, 'tools', 'ctr', plat);
 const ext = os === 'win32' ? 'dll' : os === 'darwin' ? 'dylib' : 'so';
+// native/azahar-patch/*.patch, applied in name order: souldew-memory (live data), souldew-romfs (music from the ROM)
+const PATCH_NAMES = readdirSync(join(root, 'native', 'azahar-patch')).filter((n) => n.endsWith('.patch')).sort();
+const PATCHES = PATCH_NAMES.map((n) => join(root, 'native', 'azahar-patch', n));
 if (has('check')) {
   const need = [os === 'win32' ? 'ctrhost.exe' : 'ctrhost', `azahar_libretro.${ext}`, 'SOULDEW_CORE', ...(os === 'darwin' ? ['libMoltenVK.dylib'] : [])];
   const missing = need.filter((f) => !existsSync(join(out, f)));
@@ -87,10 +91,11 @@ function buildCore() {
     copyFileSync(given, target);
   } else {
     const src = azahar;
-    // apply the patch once (a checkout that has it already is left as it is)
-    const patch = join(root, 'native', 'azahar-patch', 'souldew-memory.patch');
-    const check = spawnSync('git', ['apply', '--reverse', '--check', patch], { cwd: src });
-    if (check.status !== 0) run('git', ['apply', patch], { cwd: src });
+    // apply the patches once each, in name order (a checkout that has one already is left as it is)
+    for (const patch of PATCHES) {
+      const check = spawnSync('git', ['apply', '--reverse', '--check', patch], { cwd: src });
+      if (check.status !== 0) run('git', ['apply', patch], { cwd: src });
+    }
     const build = join(src, 'build-souldew');
     if (cross) throw new Error('building the core for another platform: use --core with a built one (.github/workflows/ctr.yml builds them)');
     const extra = process.platform === 'darwin' ? [`-DCMAKE_OSX_ARCHITECTURES=${process.arch === 'arm64' ? 'arm64' : 'x86_64'}`] : process.platform === 'linux' ? ['-DENABLE_LTO=OFF'] : [];
@@ -100,7 +105,7 @@ function buildCore() {
     if (!found) throw new Error('built core not found');
     copyFileSync(found, target);
   }
-  writeFileSync(join(out, 'SOULDEW_CORE'), `Azahar ${TAG} libretro core with native/azahar-patch/souldew-memory.patch\n`);
+  writeFileSync(join(out, 'SOULDEW_CORE'), `Azahar ${TAG} libretro core with ${PATCH_NAMES.map((n) => `native/azahar-patch/${n}`).join(', ')}\n`);
 }
 
 // ---- MoltenVK (macOS) -----------------------------------------------------------------------------------------------
@@ -149,7 +154,8 @@ buildHost();
 writeFileSync(join(out, 'LICENSES.txt'), `souldew's Nintendo 3DS part
 ctrhost – native/ctr-host/ctrhost.c, souldew (GPL-3.0); libretro headers MIT
 azahar_libretro – Azahar ${TAG} (GPL-2.0-or-later), https://github.com/azahar-emu/azahar, built with
-  native/azahar-patch/souldew-memory.patch from the souldew repository (the corresponding source: that tag + the patch)
+  ${PATCH_NAMES.map((n) => `native/azahar-patch/${n}`).join(' and ')} from the souldew repository (the corresponding
+  source: that tag + the patches)
 libMoltenVK – MoltenVK (Apache-2.0), https://github.com/KhronosGroup/MoltenVK, from Azahar's macOS release
 `);
 if (!has('host-only')) {
