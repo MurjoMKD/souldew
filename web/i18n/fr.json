@@ -2726,5 +2726,8 @@
   "invite.needsVersion": "Pour rejoindre ce run, chacun a besoin de souldew {version} ou plus récent. Les versions plus anciennes ne peuvent pas ouvrir l’invitation.",
   "invite.needsVersionShiny": "Ce run change le taux de chromatiques : pour le rejoindre, chacun a besoin de souldew {version} ou plus récent. Les versions plus anciennes ne peuvent pas ouvrir l’invitation.",
   "lives.usedUp": "Les morts jusqu’ici épuisent déjà ces vies. Le run continue – la prochaine mort y met fin.",
-  "lives.usedUpNamed": "{name} : les morts jusqu’ici épuisent déjà ces vies. Le run continue – le prochain Pokémon que {name} perd y met fin."
+  "lives.usedUpNamed": "{name} : les morts jusqu’ici épuisent déjà ces vies. Le run continue – le prochain Pokémon que {name} perd y met fin.",
+  "ctl.ffHold": "Avance rapide (maintenir)",
+  "ctl.ffToggle": "Avance rapide marche / arrêt",
+  "ctl.hotkeyUnbindable": "Cette touche ne peut pas servir à ce raccourci. Appuie sur une autre touche."
 }

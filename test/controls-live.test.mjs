@@ -176,3 +176,67 @@ test('every player takes changed controls while it runs, and the play view hands
   assert.match(play, /const controlsSig = JSON\.stringify\(\[status\?\.config\?\.controls \|\| null, status\?\.config\?\.pads \|\| null\]\);/);
   assert.match(play, /emu\(\)\?\.setControls\?\.\(\{ controls, pads \}\);\n\s+\}, \[phase, controlsSig\]\);/);
 });
+
+test('fast player: Tab fast-forwards instead of moving the focus; the controller can have fast-forward buttons too', async () => {
+  await until(() => globalThis.__emu?.ready);
+  const sent = [];
+  const parentWas = globalThis.parent;
+  globalThis.parent = { ...parentWas, postMessage: (m) => sent.push(m) };
+  try {
+    globalThis.__emu.setControls({ controls: null, pads: null });
+    const down = (props) => {
+      const e = new Event('keydown', { cancelable: true });
+      Object.assign(e, { keyCode: 0, key: '', code: '', shiftKey: false, ctrlKey: false, altKey: false, metaKey: false }, props);
+      page.dispatchEvent(e);
+      return e;
+    };
+    // Tab and Shift+Tab: the play view gets them (with the keyCode it matches re-bound keys by), the focus stays here
+    const tab = down({ keyCode: 9, key: 'Tab', code: 'Tab' });
+    assert.equal(tab.defaultPrevented, true);
+    assert.equal(down({ keyCode: 9, key: 'Tab', code: 'Tab', shiftKey: true }).defaultPrevented, true);
+    assert.equal(down({ keyCode: 9, key: 'Tab', code: 'Tab', ctrlKey: true }).defaultPrevented, false, 'Ctrl+Tab stays the system’s');
+    assert.equal(down({ keyCode: 71, key: 'g', code: 'KeyG' }).defaultPrevented, false, 'G is nothing');
+    const k = sent.find((m) => m.type === 'emu-key' && m.key === 'Tab');
+    assert.equal(k.keyCode, 9);
+    // re-bound to G: G is kept, Tab moves the focus again (the way out of the game for keyboard users)
+    globalThis.__emu.setControls({ controls: { ffHold: { keyCode: 71, key: 'g', code: 'KeyG' }, ffToggle: { keyCode: 72, key: 'h', code: 'KeyH' } }, pads: null });
+    assert.equal(down({ keyCode: 71, key: 'g', code: 'KeyG' }).defaultPrevented, true);
+    assert.equal(down({ keyCode: 9, key: 'Tab', code: 'Tab' }).defaultPrevented, false);
+    // focus lost: the play view is told, so a held fast-forward ends whatever key it is on
+    page.dispatchEvent(new Event('blur'));
+    assert.ok(sent.some((m) => m.type === 'emu-key' && m.down === false && m.blur === true));
+
+    // controller: R3 holds fast-forward, L3 switches it on / off – pressed and released like the keyboard's
+    globalThis.__emu.setControls({ controls: null, pads: { preset: 'nintendo', map: { ffHold: 'RIGHT_STICK', ffToggle: 'LEFT_STICK' } } });
+    sent.length = 0;
+    await tap(11);
+    assert.deepEqual(sent.filter((m) => m.type === 'emu-pad').map((m) => [m.action, m.down]), [['ffHold', true], ['ffHold', false]]);
+    sent.length = 0;
+    await tap(10);
+    assert.deepEqual(sent.filter((m) => m.type === 'emu-pad').map((m) => [m.action, m.down]), [['ffToggle', true]]);
+    sent.length = 0;
+    assert.deepEqual(await tap(7), [], 'ZR (turbo) presses no game button');
+    assert.deepEqual(sent.filter((m) => m.type === 'emu-pad').map((m) => m.action), ['turbo']);
+  } finally {
+    globalThis.parent = parentWas;
+    globalThis.__emu.setControls({ controls: null, pads: null });
+  }
+});
+
+test('every player keeps the fast-forward key and hands the controller hotkeys over', () => {
+  for (const f of ['../web/lib/nativeplayer.mjs', '../web/lib/ctrplayer.mjs']) {
+    const s = readFileSync(new URL(f, import.meta.url), 'utf8');
+    assert.match(s, /if \(controls\.isHotkeyKey\(e, hotkeys\)\) e\.preventDefault\(\);/, f);
+    assert.match(s, /hotkeys = controls\.resolveHotkeys\(config\?\.controls\);/, f);
+    assert.match(s, /controls\.padHotkeyPresses\(pad, padActions, held, controls\.appHasPad\(\)\)/, f);
+    assert.match(s, /keyCode: e\.keyCode/, f);
+  }
+  const html = readFileSync(new URL('../web/player.html', import.meta.url), 'utf8');
+  assert.match(html, /controlsLib\.isHotkeyKey\(e, hotkeys\)/);
+  assert.match(html, /hotkeys = c\.resolveHotkeys\(config\?\.controls\);/);
+  assert.match(html, /c\.padHotkeyPresses\(pad, padActions, held, muted\)/);
+  assert.match(html, /keyCode: e\.keyCode/);
+  const play = readFileSync(new URL('../web/views/play.mjs', import.meta.url), 'utf8');
+  assert.match(play, /hotRef\.current = resolveHotkeys\(status\?\.config\?\.controls\);/);
+  assert.match(play, /else if \(e\.data\.action === 'ffHold'\) act\.current\.ffHold\(e\.data\.down !== false\);/);
+});

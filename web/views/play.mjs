@@ -31,6 +31,7 @@ import { CTR_LAYOUTS, ctrLayoutAspect } from '/shared/ctrlayout.mjs';
 import { shinyThreshold } from '/shared/shiny.mjs';
 import { claimPad } from '../lib/padnav.mjs';
 import { presenceLoop, presenceBody } from '../lib/presence.mjs';
+import { resolveHotkeys, hotkeyOf, keyMatches } from '../lib/controls.mjs';
 
 let TABLES = null;
 async function liveTables() {
@@ -312,7 +313,10 @@ export function GameSession({ session, mode }) {
   const shotRef = useRef(null); // recent picture of the game – the state taken on close has no frame left to grab
   const infoRef = useRef(null); // () => team / badges / core for a state's card
   const turboHeld = useRef(false);
-  const lastSpeed = useRef(2);
+  const lastSpeed = useRef(2); // the turbo speed picked last – what the fast-forward hotkeys play at
+  // the fast-forward hotkeys (Settings › Controls; Tab held / Shift+Tab unless re-bound, lib/controls.mjs)
+  const hotRef = useRef(null);
+  hotRef.current = resolveHotkeys(status?.config?.controls);
   const speedRef = useRef(1);
   speedRef.current = speed;
   const isDs = target.system === 'nds';
@@ -433,6 +437,16 @@ export function GameSession({ session, mode }) {
       // the next step up, after the highest back to 1× (the current one may no longer be on offer, lib/reach.mjs)
       setSpeed(stepsRef.current.find((s) => s > speedRef.current) ?? 1);
     },
+    // fast-forward while the hotkey (Tab) is held: the turbo speed picked last, back to the set speed on release
+    ffHold: (on) => {
+      if (on === turboHeld.current) return;
+      turboHeld.current = on;
+      const ff = lastSpeed.current > 1 ? lastSpeed.current : 3;
+      emu()?.setSpeed(on ? ff : speedRef.current);
+      if (on) turboFlash(ff);
+    },
+    // fast-forward on / off (Shift+Tab): between 1× and the turbo speed picked last
+    ffToggle: () => setSpeed(speedRef.current > 1 ? 1 : lastSpeed.current > 1 ? lastSpeed.current : 3),
     faster: () => setSpeed(stepsRef.current.find((s) => s > speedRef.current) ?? stepsRef.current.at(-1)),
     slower: () => setSpeed([...stepsRef.current].reverse().find((s) => s < speedRef.current) ?? 1),
     quicksave: async (slot = selRef.current) => {
@@ -614,24 +628,23 @@ export function GameSession({ session, mode }) {
   // Keyboard shortcuts – from inside the emulator frame (fromGame) always, from the page only while
   // the game is shown big (in the mini player the page's keys belong to the page).
   const onKey = useCallback((k, fromGame) => {
-    if (k.key === 'Tab') {
-      // Releasing Tab always ends a held turbo (focus may have left the game in between).
-      if (!k.down) {
-        if (turboHeld.current) {
-          turboHeld.current = false;
-          emu()?.setSpeed(speedRef.current);
-        }
-        return false;
-      }
-      // Hold-for-turbo only while playing – on the page Tab keeps moving focus between controls.
-      if (!fromGame || k.ctrl || k.alt || k.meta) return false;
-      if (!turboHeld.current) {
-        turboHeld.current = true;
-        emu()?.setSpeed(lastSpeed.current > 1 ? lastSpeed.current : 3);
-        turboFlash(lastSpeed.current > 1 ? lastSpeed.current : 3);
-      }
+    const hot = hotRef.current;
+    // Releasing the hold key – or focus leaving the game (`blur`) – always ends a held fast-forward (focus may have left
+    // the game in between).
+    if (!k.down) {
+      if (turboHeld.current && (k.blur || keyMatches(k, hot?.ffHold))) act.current.ffHold(false);
+      return false;
+    }
+    const ff = hotkeyOf(k, hot);
+    if (ff) {
+      // On Tab only while playing – on the page Tab keeps moving focus between controls. Another key works like the
+      // other shortcuts.
+      if (k.ctrl || k.alt || k.meta || !(fromGame || (hot[ff].keyCode !== 9 && modeRef.current === 'full'))) return false;
+      if (ff === 'ffHold') act.current.ffHold(true);
+      else if (!k.repeat) act.current.ffToggle();
       return true;
     }
+    if (k.key === 'Tab') return false;
     // Ctrl/Alt/Cmd combos belong to the browser / the app menu (Ctrl+R, Cmd+1 …), not to the game.
     if (!k.down || k.repeat || k.ctrl || k.alt || k.meta) return false;
     if (!fromGame && modeRef.current !== 'full') return false;
@@ -679,7 +692,11 @@ export function GameSession({ session, mode }) {
             : t('ctr.rendererSwitchedCompat', 'The game stopped right after starting, so souldew started it again in a more compatible Vulkan mode. souldew remembers this for this graphics card; you can change it in Settings › Emulators.') });
       }
       if (e.data?.type === 'emu-key') onKey(e.data, true);
-      if (e.data?.type === 'emu-pad' && ['turbo', 'pause'].includes(e.data.action)) act.current[e.data.action]();
+      if (e.data?.type === 'emu-pad') {
+        // controller hotkeys (lib/controls.mjs padActions): ffHold comes pressed and released
+        if (['turbo', 'pause', 'ffToggle'].includes(e.data.action)) act.current[e.data.action]();
+        else if (e.data.action === 'ffHold') act.current.ffHold(e.data.down !== false);
+      }
       // EmulatorJS flushed the battery save by itself (periodic save) – write it to disk now.
       if (e.data?.type === 'emu-saved') window.dispatchEvent(new Event('sl-save-now'));
     };
@@ -688,11 +705,11 @@ export function GameSession({ session, mode }) {
       if (e.target.closest?.('input,textarea,select,dialog,.rules-drawer,.screen-confirm')) return;
       // a dialog (unsaved-progress, death alert …) or the rules drawer is open: its keys, not the game's
       if (rulesRef.current || document.querySelector('dialog[open]')) return;
-      if (onKey({ key: e.key, code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down: true, repeat: e.repeat }, false)) e.preventDefault();
+      if (onKey({ key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down: true, repeat: e.repeat }, false)) e.preventDefault();
     };
-    const up = (e) => onKey({ key: e.key, code: e.code, down: false }, false);
-    // Tab released while the window had no focus (alt-tab, a click into another app): end a held turbo anyway.
-    const blur = () => turboHeld.current && onKey({ key: 'Tab', down: false }, false);
+    const up = (e) => onKey({ key: e.key, code: e.code, keyCode: e.keyCode, down: false }, false);
+    // the hold key released while the window had no focus (alt-tab, a click into another app): end a held turbo anyway
+    const blur = () => turboHeld.current && onKey({ key: 'Tab', code: 'Tab', down: false, blur: true }, false);
     addEventListener('message', onMsg);
     addEventListener('keydown', down);
     addEventListener('keyup', up);

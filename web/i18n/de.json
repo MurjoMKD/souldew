@@ -2726,5 +2726,8 @@
   "invite.needsVersion": "Für diesen Run braucht jeder souldew {version} oder neuer. Ältere Versionen können die Einladung nicht öffnen.",
   "invite.needsVersionShiny": "Dieser Run ändert die Shiny-Rate: Zum Mitspielen braucht jeder souldew {version} oder neuer. Ältere Versionen können die Einladung nicht öffnen.",
   "lives.usedUp": "Die bisherigen Tode verbrauchen diese Leben schon. Der Run geht weiter – der nächste Tod beendet ihn.",
-  "lives.usedUpNamed": "{name}: Die bisherigen Tode verbrauchen diese Leben schon. Der Run geht weiter – das nächste Pokémon, das {name} verliert, beendet ihn."
+  "lives.usedUpNamed": "{name}: Die bisherigen Tode verbrauchen diese Leben schon. Der Run geht weiter – das nächste Pokémon, das {name} verliert, beendet ihn.",
+  "ctl.ffHold": "Vorspulen (halten)",
+  "ctl.ffToggle": "Vorspulen an / aus",
+  "ctl.hotkeyUnbindable": "Diese Taste kann nicht für dieses Kürzel belegt werden. Drück eine andere Taste."
 }

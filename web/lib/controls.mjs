@@ -156,6 +156,60 @@ export function ejsControls(saved, lay = current, pads = null) {
   return { 0: p1, 1: {}, 2: {}, 3: {} };
 }
 
+// ---- fast-forward hotkeys ---------------------------------------------------------------------------------------
+// As in mGBA: hold Tab = fast-forward while it is held, Shift+Tab = fast-forward on / off – both at the turbo speed
+// picked last in the play view (web/views/play.mjs handles them, the player pages only forward the keys). They can be
+// re-bound like the game buttons and are stored next to them: config.controls.ffHold / .ffToggle = { keyCode, key,
+// code, shift? }; on a controller config.pads.map.ffHold / .ffToggle = a button label (none unless the player picks one).
+export const HOTKEYS = [
+  { id: 'ffHold', keyCode: 9, key: 'Tab', code: 'Tab' },
+  { id: 'ffToggle', keyCode: 9, key: 'Tab', code: 'Tab', shift: true },
+];
+const TAB = 9;
+
+/** Can a hotkey sit on this key? Tab, or any key a game button could have – never one of the Play view's other shortcuts. */
+export const hotkeyBindable = (keyCode) => keyCode === TAB || (bindable(keyCode) && !(keyCode in RESERVED));
+
+/** The same key with the same Shift (Tab and Shift+Tab are two hotkeys). */
+export const sameCombo = (a, b) => !!a && !!b && a.keyCode === b.keyCode && !!a.shift === !!b.shift;
+
+/**
+ * Stored mapping → the hotkeys' keys, { ffHold, ffToggle }: { keyCode, key, code?, shift? } or null. A key a game
+ * button has, a key no hotkey may have or the other hotkey's (with the same Shift) falls back to the default.
+ */
+export function resolveHotkeys(saved, lay = current) {
+  const buttons = new Set(Object.values(resolve(saved, lay)).filter(Boolean).map((v) => v.keyCode));
+  const taken = [];
+  const ok = (v) => !!v && Number.isInteger(v.keyCode) && hotkeyBindable(v.keyCode) && !buttons.has(v.keyCode) && !taken.some((x) => sameCombo(x, v));
+  const out = {};
+  for (const h of HOTKEYS) {
+    const s = saved?.[h.id] && typeof saved[h.id] === 'object' ? { ...live(saved[h.id], lay), shift: !!saved[h.id].shift } : null;
+    const v = ok(s) ? s : ok(h) ? h : null;
+    if (v) taken.push(v);
+    out[h.id] = v ? { keyCode: v.keyCode, key: v.key || '', ...(v.code ? { code: v.code } : {}), ...(v.shift ? { shift: true } : {}) } : null;
+  }
+  return out;
+}
+
+/** Is this key event ({ keyCode?, code?, key? }) on the binding's key? The physical key when both know it. */
+export function keyMatches(e, b) {
+  if (!b || !e) return false;
+  if (e.code && b.code) return e.code === b.code;
+  const code = Number.isInteger(e.keyCode) ? e.keyCode : e.key === 'Tab' ? TAB : null;
+  return code === b.keyCode;
+}
+
+/**
+ * Does a player page keep this key press (a DOM KeyboardEvent) to itself – a hotkey's key, with or without Shift? Then
+ * Tab doesn't move the focus out of the game while it is the fast-forward key. Ctrl / Alt / Cmd combos stay the browser's.
+ */
+export const isHotkeyKey = (e, hot) => !!e && !e.ctrlKey && !e.altKey && !e.metaKey && HOTKEYS.some((h) => keyMatches(e, hot?.[h.id]));
+
+/** Which hotkey a key press is ({ keyCode?, code?, key?, shift }): its key with exactly its Shift – else null. */
+export function hotkeyOf(e, hot) {
+  return HOTKEYS.find((h) => hot?.[h.id] && keyMatches(e, hot[h.id]) && !!e.shift === !!hot[h.id].shift)?.id || null;
+}
+
 // ---- controllers ------------------------------------------------------------------------------------------------
 // The browser reports every controller in the "standard" layout (Gamepad API): button 0 is the bottom face button,
 // 1 the right, 2 the left, 3 the top – whatever is printed on them. EmulatorJS names them BUTTON_1 … BUTTON_4.
@@ -182,6 +236,48 @@ export function padMap(pads) {
     const v = PAD_LABELS.includes(want) && !(want in PAD_HOTKEYS) && !used.has(want) ? want : preset.map[b.id];
     out[b.id] = used.has(v) ? '' : v;
     if (v) used.add(v);
+  }
+  return out;
+}
+
+/**
+ * Saved controller settings → the hotkeys' buttons, { ffHold, ffToggle }: a label, or '' (none – the default). Never
+ * a game button's, ZL / ZR (pause / turbo) or the other hotkey's.
+ */
+export function padHotkeys(pads) {
+  const game = new Set(Object.values(padMap(pads)).filter(Boolean));
+  const out = {};
+  for (const h of HOTKEYS) {
+    const want = pads?.map?.[h.id];
+    const ok = PAD_LABELS.includes(want) && !(want in PAD_HOTKEYS) && !game.has(want) && !Object.values(out).includes(want);
+    out[h.id] = ok ? want : '';
+  }
+  return out;
+}
+
+/**
+ * The controller buttons a player page hands to the play view, by their standard index → action: ZR / RT / R2 steps
+ * the turbo, ZL / LT / L2 and Home (16) pause, and the fast-forward buttons the player picked (ffHold: pressed and
+ * released, ffToggle: pressed).
+ */
+export function padActions(pads) {
+  const out = { 7: 'turbo', 6: 'pause', 16: 'pause' };
+  for (const [id, label] of Object.entries(padHotkeys(pads))) if (label) out[PAD_LABELS.indexOf(label)] = id;
+  return out;
+}
+
+/**
+ * One poll of those buttons (`held`: what was down at the last poll, updated here) → the messages for the play view,
+ * { type: 'emu-pad', action, down }: a press of each, and the release of the fast-forward hold. While the app's menus
+ * have the controller (appHasPad) only pause and turbo go through – ZL / Home still resume the game.
+ */
+export function padHotkeyPresses(pad, actions, held, appHas = false) {
+  const out = [];
+  for (const [i, action] of Object.entries(actions)) {
+    const on = !!pad?.buttons?.[i]?.pressed;
+    if (on && !held[i] && !(appHas && (action === 'ffHold' || action === 'ffToggle'))) out.push({ type: 'emu-pad', action, down: true });
+    else if (!on && held[i] && action === 'ffHold') out.push({ type: 'emu-pad', action, down: false });
+    held[i] = on;
   }
   return out;
 }

@@ -2726,5 +2726,8 @@
   "invite.needsVersion": "Para unirse a este run, todos necesitan souldew {version} o posterior. Las versiones anteriores no pueden abrir la invitación.",
   "invite.needsVersionShiny": "Este run cambia la probabilidad de variocolores: para unirse, todos necesitan souldew {version} o posterior. Las versiones anteriores no pueden abrir la invitación.",
   "lives.usedUp": "Las muertes hasta ahora ya gastan estas vidas. El run sigue – la próxima muerte lo termina.",
-  "lives.usedUpNamed": "{name}: las muertes hasta ahora ya gastan estas vidas. El run sigue – el próximo Pokémon que pierda {name} lo termina."
+  "lives.usedUpNamed": "{name}: las muertes hasta ahora ya gastan estas vidas. El run sigue – el próximo Pokémon que pierda {name} lo termina.",
+  "ctl.ffHold": "Avance rápido (mantener)",
+  "ctl.ffToggle": "Avance rápido sí / no",
+  "ctl.hotkeyUnbindable": "Esta tecla no se puede usar para este atajo. Pulsa otra tecla."
 }
