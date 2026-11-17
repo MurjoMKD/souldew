@@ -16,6 +16,7 @@ import { needsIdenticalRom } from '../../shared/restart.mjs';
 import { pairMate } from '../../shared/pair-titles.mjs';
 import { cleanShiny } from '../../shared/shiny.mjs';
 import { applyShiny } from './shiny.mjs';
+import { ctrFileReport } from './ctr.mjs';
 import { packFormatOf } from '../../shared/runpack.mjs';
 
 /** Runs from before 1–4 players were always a pair – the default where no slots are passed (shared/slots.mjs). */
@@ -418,6 +419,8 @@ async function buildInto(opts, onLog, onProgress, bridge) {
   // 3DS: without the randomizer the game file is linked/copied as it is (1–4 GB); randomized, UPR ZX rebuilds it as
   // one .cxi per player (server/lib/ctrrando.mjs)
   const ctr = patched.system === '3ds';
+  // a cut-off copy of a 3DS game (server/lib/ctrcheck.mjs): neither randomized nor linked into a run
+  if (ctr && ctrFileReport(patched.path).integrity?.state === 'damaged') throw httpError(409, 'This 3DS game file is incomplete', 'ctrIncomplete');
   const manifest = {
     ...(existing || {}),
     id: identity.id,

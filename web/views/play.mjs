@@ -11,6 +11,7 @@ import { players as getPlayers, live, othersOf, runMode, missedQuestion, openAre
 import { findEntry, readLiveParty, readLiveBattle, playerBattle, withBattleHp, confirmFaints, inBattleFlag, LiveTables, expandedEntry } from '/shared/live/parse.mjs';
 import { addRareCandies, cheatSupported } from '/shared/live/cheats.mjs';
 import { MusicKeyTracker } from '/shared/live/location.mjs';
+import { probeGen67 } from '/shared/live/gen67.mjs';
 import { PlayHome } from './playhome.mjs';
 import { PartyGrid } from './party.mjs';
 import { PartnerScreen, useScreenShare } from './partnerscreen.mjs';
@@ -158,7 +159,7 @@ function CtrFailed({ fail, target, onClose }) {
   const { status, reloadStatus, toast, navigate, endSession } = useApp();
   const [busy, setBusy] = useState(false);
   // the game file itself is the problem (encrypted, not a 3DS game, missing): Azahar wouldn't play it either
-  const noAzahar = ['ctrEncrypted', 'notCtr', 'romNotFound', 'ctrInArchive', 'badRomUrl'].includes(fail.code);
+  const noAzahar = ['ctrEncrypted', 'ctrIncomplete', 'notCtr', 'romNotFound', 'ctrInArchive', 'badRomUrl'].includes(fail.code);
   const toAzahar = async () => {
     setBusy(true);
     try {
@@ -698,6 +699,13 @@ export function GameSession({ session, mode }) {
           text: e.data.to === 'software' ? t('ctr.rendererSwitchedSoftware', 'The graphics driver couldn’t run the game with Vulkan, so it runs without the graphics card now – slower, but it runs. souldew remembers this for this graphics card; you can change it in Settings › Emulators.')
             : t('ctr.rendererSwitchedCompat', 'The game stopped right after starting, so souldew started it again in a more compatible Vulkan mode. souldew remembers this for this graphics card; you can change it in Settings › Emulators.') });
       }
+      // the 3DS game runs but has shown nothing but black for a while (lib/ctrplayer.mjs watchBlack): a cut-off copy of the
+      // game or a driver that can't draw it – say what helps, and keep it for "Save diagnostics"
+      if (e.data?.type === 'emu-black' && target.system === '3ds') {
+        diag('perf', { type: 'ctrBlack', seconds: Number(e.data.seconds) || 0, renderer: String(e.data.renderer || ''), title: String(e.data.title || ''), frames: Number(e.data.frames) || 0, liveMemory: !!e.data.liveMemory });
+        toast({ kind: 'warn', ttl: 30000, title: t('ctr.blackTitle', 'The 3DS game shows only a black screen'),
+          text: t('ctr.blackText', 'If it stays black, the game file may be incomplete – remove it from the library and add the game again – or your graphics driver can’t draw it: try Settings › Emulators › 3DS renderer › Software. “Save diagnostics” in the sound menu records what souldew sees.') });
+      }
       if (e.data?.type === 'emu-key') onKey(e.data, true);
       if (e.data?.type === 'emu-pad') {
         // controller hotkeys (lib/controls.mjs padActions): ffHold comes pressed and released
@@ -940,6 +948,8 @@ export function GameSession({ session, mode }) {
       // what souldew can read for this game, confirmed poll by poll (shared/live/features.mjs): only what passed is shown,
       // and every change goes into the diagnostics
       let fc = null;
+      let fcOwn = null; // the ROM data fc was made from
+      const ctrNoTeam = { since: 0, told: false, found: false }; // 3DS: since when memory comes without a team (diagnostics)
       let seenKeys = null; // the Pokémon of the first team read – one that joins later is a catch
       setFeatures(null);
       const tick = () => {
@@ -981,7 +991,9 @@ export function GameSession({ session, mode }) {
             const own = romOwnNow();
             const TT = (sp ? T.withSpecies(sp, own) : T).withRom(own).withShinyOdds(target.shinyOdds);
             const res = readLiveParty(ent, e.read, TT, state);
-            if (!fc && romDataReady()) {
+            // (again when the ROM's data came only on a later try – the server couldn't read the file at first)
+            if (romDataReady() && (!fc || fcOwn !== romOwnNow())) {
+              fcOwn = romOwnNow();
               const rd = romDataNow();
               const curatedCaps = /^IP[KG]/.test(String(target.code || '')) || (!!rd?.vanilla && !!gymCapsFamily(target.gameId));
               fc = new FeatureCheck(romFeatures(rd, addresses, { curatedCaps }));
@@ -992,6 +1004,22 @@ export function GameSession({ session, mode }) {
             // starter and every catch after it were never seen. Only a battle without a team proves the search
             // wrong (nobody battles without a Pokémon): then this hack isn't supported – until a team turns up.
             if (expanded && !res?.party?.length && inBattleFlag(ent, e.read) && ++expandedMisses > 20) setLiveState({ status: 'hack', entry: entry.name });
+            // 3DS: memory comes in but no team for a minute – what each update's address holds goes into the diagnostics
+            // once (ticket #21: a team that wasn't found any more after reopening the game), and when one turns up later
+            if (entry.gen >= 6) {
+              if (res?.party?.length) {
+                if (ctrNoTeam.told && !ctrNoTeam.found) diag('live', { type: 'ctrTeamFound', after: Math.round((Date.now() - ctrNoTeam.since) / 1000), version: state.g67 != null ? entry.partyAddrs?.[state.g67]?.version || null : null });
+                ctrNoTeam.found = true;
+                ctrNoTeam.since = 0;
+              } else if (!e.paused?.()) {
+                ctrNoTeam.since ||= Date.now();
+                if (!ctrNoTeam.told && Date.now() - ctrNoTeam.since > 60000) {
+                  ctrNoTeam.told = true;
+                  const rd = romDataNow();
+                  diag('live', { type: 'ctrNoTeam', title: e.title?.() || null, entry: entry.id, ...probeGen67(entry, e.read), places: rd?.data?.ctr?.places?.length ?? null, romHeader: !!rd?.header });
+                }
+              }
+            }
             if (res?.party) {
               expandedMisses = 0;
               const seen = readLiveBattle(ent, e.read, TT, state, res.party);

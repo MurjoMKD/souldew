@@ -18,6 +18,7 @@ import { BUNDLED_TOOLS, TOOLS_DIR, DATA_DIR, DEV, APP_ROOT } from './paths.mjs';
 import { httpError } from './fsutil.mjs';
 import { identifyCtr } from '../../shared/ctr.mjs';
 import { nextRenderer, rendererFailure, withRenderer, withArg, scaleFor } from './ctrrenderer.mjs';
+import { ctrIntegrity } from './ctrcheck.mjs';
 
 export const PLATFORM_DIR = `${process.platform}-${process.arch}`;
 const EXE = process.platform === 'win32' ? 'ctrhost.exe' : 'ctrhost';
@@ -102,6 +103,48 @@ export function ctrEncrypted(path) {
     if (fd !== undefined) closeSync(fd);
   }
 }
+
+const fileReports = new Map(); // path|size|time → ctrFileReport (a game file doesn't change under the same stamp)
+
+/**
+ * What souldew knows about a 3DS game file before it starts it – for the start's checks and "Save diagnostics", with
+ * nothing in it that names the player (no path): { size, magic ('NCSD' | 'NCCH' | the first bytes as hex …), format,
+ * encrypted, code, titleId, kind, integrity: { state, why } (server/lib/ctrcheck.mjs) } – or { error } (the file can't
+ * be read: its code, ENOENT / EBUSY / EPERM …). Cached per file stamp; ~40 small reads the first time.
+ */
+export function ctrFileReport(path) {
+  let st;
+  try {
+    st = statSync(path);
+  } catch (e) {
+    return { error: e.code || 'stat' };
+  }
+  const stamp = `${path}|${st.size}|${st.mtimeMs}`;
+  if (fileReports.has(stamp)) return fileReports.get(stamp);
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const readAt = (o, n) => {
+      const b = Buffer.alloc(n);
+      return new Uint8Array(b.buffer, b.byteOffset, readSync(fd, b, 0, n, o));
+    };
+    const h = readAt(0, 0x200);
+    const at = (o) => (h.length >= o + 4 ? String.fromCharCode(...h.subarray(o, o + 4)) : '');
+    const magic = at(0x100) === 'NCSD' || at(0x100) === 'NCCH' ? at(0x100) : at(0) === 'Z3DS' || at(0) === '3DSX' ? at(0) : h.length >= 4 && h[0] === 0x20 && h[1] === 0x20 && !h[2] && !h[3] ? 'CIA' : Buffer.from(h.subarray(0, 4)).toString('hex');
+    const info = identifyCtr(readAt, extname(path).slice(1));
+    const integrity = info && !info.encrypted && /^(cci|cxi)$/.test(info.format) ? ctrIntegrity(readAt, st.size, sha256) : { state: 'unchecked', why: info ? (info.encrypted ? 'encrypted' : info.format) : 'format' };
+    const report = { size: st.size, magic, format: info?.format || null, encrypted: info ? !!info.encrypted : null, code: info?.code || null, titleId: info?.titleId || null, kind: info?.kind || null, integrity };
+    if (fileReports.size > 50) fileReports.delete(fileReports.keys().next().value);
+    fileReports.set(stamp, report);
+    return report;
+  } catch (e) {
+    // (not remembered: a file a scanner holds for a moment reads fine on the next start)
+    return { size: st.size, error: e.code || 'read' };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 
 /** A save folder per game / run slot: the 3DS's SD card and system memory of that playthrough. */
 export function saveDirFor(key) {
@@ -290,7 +333,7 @@ export class CtrSessions {
 
   status() {
     const s = this.current;
-    return s ? { id: s.id, running: !s.exit, exit: s.exit, exitText: exitText(s.exit), events: s.events.slice(-5), gpu: s.gpu || null, ...(s.renderer ? { renderer: s.renderer, scale: s.scale || 1, fellBack: s.fellBack || [] } : {}) } : null;
+    return s ? { id: s.id, running: !s.exit, exit: s.exit, exitText: exitText(s.exit), events: s.events.slice(-5), gpu: s.gpu || null, ...(s.renderer ? { renderer: s.renderer, scale: s.scale || 1, fellBack: s.fellBack || [] } : {}), ...(s.file ? { file: s.file } : {}) } : null;
   }
 
   /** For "Save diagnostics": the running session (with the end of its stderr) and how the last failed one ended. */
@@ -319,6 +362,7 @@ export class CtrSessions {
       error: error?.message ? redactHome(error.message).slice(0, 1000) : null,
       gpu: s.gpu || null,
       ...(s.renderer ? { renderer: s.renderer, scale: s.scale || 1 } : {}),
+      ...(s.file ? { file: s.file } : {}),
       ...(retry ? { retriedWith: retry } : {}),
       startedAt: s.startedAt,
       secondsRun: Math.round((Date.now() - s.startedAt) / 1000),
@@ -335,14 +379,15 @@ export class CtrSessions {
    * Start the game `rom` (a path) with the save folder of `key`; ends a session that still runs. `renderer`: how the
    * host draws (server/lib/ctrrenderer.mjs); `auto`: a crash in the first seconds steps down to the next safer one.
    */
-  start({ rom, key, tools, scale = 1, renderer = 'vulkan', auto = false }) {
+  start({ rom, key, tools, scale = 1, renderer = 'vulkan', auto = false, file = null }) {
     this.stop();
     const save = saveDirFor(key);
     const system = join(save, 'system');
     mkdirSync(system, { recursive: true });
     const sc = scaleFor(scale, renderer);
     const args = ['--core', tools.core, '--vulkan', tools.vulkan, '--rom', rom, '--system', system, '--save', save, '--scale', String(sc), '--renderer', renderer];
-    return this.launch(tools.host, args, save, { renderer, scale: sc, auto: !!auto, fellBack: [] });
+    // (file: what ctrFileReport found about the game file – size, header, integrity – for "Save diagnostics")
+    return this.launch(tools.host, args, save, { renderer, scale: sc, auto: !!auto, fellBack: [], file });
   }
 
   /**

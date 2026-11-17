@@ -29,6 +29,24 @@
   the 3DS player: the pitch follows the speed the game holds over a few seconds, no bits are dropped any more, and the
   sound stays about a quarter of a second behind the picture. With “Music continues” a song souldew hadn't heard at normal
   speed yet also no longer turns into a few seconds on repeat – the game's own music and sounds go on.
+- **Adding a 3DS game no longer freezes souldew, and an interrupted copy can't end up as a black screen** (thanks to a
+  player on Discord). A 3DS game is up to 4 GB, and souldew copied it into the library in one go – the window froze
+  until the copy was done, which on Windows can take a minute and looks like a crash. Closing souldew meanwhile left a
+  cut-off copy behind that was listed as ready and only played a black screen. Now the copy runs in the background, goes
+  into the library only once it is complete and checked against the original, and leftovers of an interrupted copy are
+  cleaned up on the next start. A game file that is already incomplete is recognised before it starts (from the game's
+  own checksums) and souldew says to add it again instead of showing a black screen.
+- **A 3DS game that only shows black says so** (thanks to a player on Discord). If the picture stays black, souldew now
+  tells you what helps – adding the game again, or the Software renderer for a graphics driver that can't draw it – and
+  “Save diagnostics” records the game file's size, header, whether it is encrypted, whether it is complete and which
+  renderer ran, without any file names.
+- **.7z and .rar archives** (thanks to a player on Discord). souldew can't unpack them, and adding one did nothing at all.
+  Now souldew says so and asks you to unpack the game first and add the .3ds, .cci or .cxi file.
+- **3DS place sign after reopening a game** (thanks to a player on Discord). If souldew couldn't read a 3DS game's file
+  for a moment – a virus scan or a backup holding the 3 GB file – it remembered that game as having no place names, and
+  the place sign stayed away in every later session. Now it reads the file again a little later, and the play view keeps
+  asking until it has the place names. If your team still isn't found, “Save diagnostics” now records what souldew sees
+  at the game's party addresses, so the next report shows why.
 
 ## 2.8.1
 

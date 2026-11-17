@@ -142,7 +142,9 @@ export async function addGamesFlow({ reloadLibrary, folder = false, toast } = {}
         await api.post('/api/library/folders', { add: paths[0] });
         added = null;
       } else {
-        added = (await api.post('/api/library/import', { paths }))?.added || [];
+        const r = await api.post('/api/library/import', { paths });
+        added = r?.added || [];
+        failures = skippedFailures(r?.skipped);
       }
     } else {
       const input = document.createElement('input');
@@ -278,6 +280,13 @@ async function uploadFiles(files) {
     }
   }
   return { failures, added };
+}
+
+/** Files the server didn't take (server/lib/library.mjs importFiles `skipped`) as failures to show: { name, error }. */
+export function skippedFailures(skipped) {
+  return (skipped || []).map((x) => ({ name: x.name,
+    error: x.why === 'archive' ? t('lib.skipArchive', 'souldew can’t open .7z or .rar archives – unpack the game first (with 7-Zip, for example), then add the .3ds, .cci or .cxi file.')
+      : t('lib.skipType', 'not a game or patch file souldew knows') }));
 }
 
 function toastFailures(toast, failures) {

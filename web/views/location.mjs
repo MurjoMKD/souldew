@@ -6,6 +6,7 @@ import { useApp } from '../lib/ui.mjs';
 import { t, currentLang } from '../lib/i18n.mjs';
 import { speciesName, gen4data, setRomSpecies, setRomTypes } from '../lib/data.mjs';
 import { readLocation, readMusicInfo, locationLabel, sameLocation, canReadLocation, placeName } from '/shared/live/location.mjs';
+import { watchRomData } from '../lib/romdata.mjs';
 import { pairState, encounter, players as getPlayers, slotsOf, isNuzlocke, genOfRun, setRomPlaces, areaForPlace } from '../lib/run.mjs';
 
 let MAPS = null; // shared/data/maps.json once loaded
@@ -32,22 +33,28 @@ export function loadRomLocations(src) {
   setRomPlaces(null); // (another game's names don't apply any more)
   setRomSpecies(null);
   setRomTypes(null);
-  const p = fetch(`/api/rom/locations?src=${encodeURIComponent(src)}`)
-    .then((r) => (r.ok ? r.json() : null))
-    .catch(() => null)
-    .then((j) => {
-      if (ROMLOC.src !== src) return;
-      Object.assign(ROMLOC, {
-        data: j?.data || null, species: j?.species || null, wram: j?.wram || null, gbMaps: j?.gbMaps || null, pending: false,
-        own: { items: j?.items || null, moves: j?.moves || null, types: j?.types || null, caps: j?.caps || null, capsWhy: j?.capsWhy || null, header: j?.header || null, vanilla: j ? j.vanilla !== false : null },
-      });
-      setRomPlaces(ROMLOC.data); // catches made now are named like the sign names their place
-      setRomSpecies(ROMLOC.species); // a ROM hack's own Pokémon get the game's names
-      setRomTypes(j?.types || null); // … and the game's types (names, chart, Fairy, a hack's own)
-    });
+  // (the first answer right away; while the server couldn't read the file, it is asked again in the background)
+  const p = new Promise((done) => {
+    watchRomData(src, (j) => {
+      applyRomData(src, j);
+      done();
+    }, { current: () => ROMLOC.src === src }).finally(done);
+  });
   ROMLOC.p = p;
   return p;
 }
+
+function applyRomData(src, j) {
+  if (ROMLOC.src !== src) return;
+  Object.assign(ROMLOC, {
+    data: j?.data || null, species: j?.species || null, wram: j?.wram || null, gbMaps: j?.gbMaps || null, pending: false,
+    own: { items: j?.items || null, moves: j?.moves || null, types: j?.types || null, caps: j?.caps || null, capsWhy: j?.capsWhy || null, header: j?.header || null, vanilla: j ? j.vanilla !== false : null },
+  });
+  setRomPlaces(ROMLOC.data); // catches made now are named like the sign names their place
+  setRomSpecies(ROMLOC.species); // a ROM hack's own Pokémon get the game's names
+  setRomTypes(j?.types || null); // … and the game's types (names, chart, Fairy, a hack's own)
+}
+
 
 /**
  * The game session ended: its ROM's types and species names don't apply to whatever is shown next (another run's
