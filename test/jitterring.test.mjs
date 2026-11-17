@@ -7,7 +7,8 @@ import { JitterRing } from '../web/lib/jitterring.mjs';
 
 const SR = 32728;
 const ms = (x) => Math.round((SR * x) / 1000);
-const DS = { prime: ms(60), primeMax: ms(240), trim: ms(200), maxLag: ms(450) }; // the 3DS page's options
+const DS = { prime: ms(60), primeMax: ms(120), trim: ms(40), maxLag: ms(250) }; // the 3DS page's options (ctrplayer.mjs)
+const DS0 = { ...DS, startGrace: 0 }; // (a game's first seconds are a break the player asked for: not here)
 
 /** n frames of a stereo signal f(i) (left), -f(i) (right) from frame `from`, interleaved as the page posts them. */
 function frames(f, from, n) {
@@ -59,7 +60,7 @@ test('at the normal fill the frames come out exactly as they went in (3DS option
 });
 
 test('running dry: no click – the last sample dies away, the sound coming back fades in; the buffer gets deeper', () => {
-  const ring = new JitterRing(SR, DS);
+  const ring = new JitterRing(SR, DS0);
   const f = (i) => 0.5 + 0.2 * Math.sin(i * 0.05); // loud and off-centre: a hard stop would be a big step
   let at = 0;
   const out = run(ring, 600, (b) => {
@@ -76,8 +77,8 @@ test('running dry: no click – the last sample dies away, the sound coming back
   assert.equal(ring.prime, Math.round(ms(60) * 1.5), 'the next gap waits for half as much again');
 });
 
-test('`prime` grows with every gap up to `primeMax` and shrinks again after 30 s without one', () => {
-  const ring = new JitterRing(SR, DS);
+test('`prime` grows with every gap up to `primeMax` (120 ms) and is back at its base 12 s after the last one', () => {
+  const ring = new JitterRing(SR, DS0);
   const f = () => 0.1;
   let at = 0;
   for (let gap = 0; gap < 6; gap++) {
@@ -88,19 +89,22 @@ test('`prime` grows with every gap up to `primeMax` and shrinks again after 30 s
       }
     });
   }
-  assert.equal(ring.prime, ms(240), 'capped');
-  run(ring, Math.ceil((31 * SR) / 128), steady(ring, f, 128, 1));
-  assert.ok(ring.prime < ms(240) && ring.prime >= ms(60), `smaller again (${ring.prime})`);
+  assert.equal(ring.prime, ms(120), 'capped');
+  assert.equal(ring.stats.underruns, 6);
+  run(ring, Math.ceil((6.5 * SR) / 128), steady(ring, f, 128, 1));
+  assert.ok(ring.prime < ms(120) && ring.prime > ms(60), `smaller after 6 s (${ring.prime})`);
+  run(ring, Math.ceil((6 * SR) / 128), steady(ring, f, 128, 1));
+  assert.equal(ring.prime, ms(60), 'back at its base after 12 s (until 2.8.2: 30 s for the first step, ~3 min from 240 ms)');
 });
 
 test('too much buffered: read up to 0.5 % faster with a clean interpolator until back in range, then exact again', () => {
-  const ring = new JitterRing(SR, DS);
+  const ring = new JitterRing(SR, DS0);
   const f = (i) => Math.sin((2 * Math.PI * 1000 * i) / SR) * 0.4;
   let at = 0;
   let maxRatio = 1;
   const out = run(ring, Math.ceil((120 * SR) / 128), (b) => {
-    // 400 ms arrive at once at the start (as after a stall), then real time
-    const n = b === 0 ? ms(400) : 128;
+    // 200 ms arrive at once at the start (as after a stall), then real time
+    const n = b === 0 ? ms(200) : 128;
     ring.push(frames(f, at, n));
     at += n;
     maxRatio = Math.max(maxRatio, ring.ratio);
@@ -184,7 +188,7 @@ test('the speed change is clean: a tone keeps 60+ dB to its error up to 10 kHz (
 });
 
 test('far too much: skips ahead to the middle of the range with a crossfade, no click', () => {
-  const ring = new JitterRing(SR, DS);
+  const ring = new JitterRing(SR, DS0);
   const f = (i) => 0.3 * Math.sin(i * 0.02) + 0.3;
   let at = 0;
   const out = run(ring, 800, (b) => {
@@ -194,7 +198,7 @@ test('far too much: skips ahead to the middle of the range with a crossfade, no 
     at += n;
   });
   assert.equal(ring.stats.skips, 1);
-  assert.ok(ring.stats.dropped > ms(300), `skipped ${ring.stats.dropped} frames`);
+  assert.ok(ring.stats.dropped > ms(400), `skipped ${ring.stats.dropped} frames`);
   const first = out.findIndex((x) => x !== 0);
   assert.ok(maxStep(out, first + 1) < 0.03, `no click (largest step ${maxStep(out, first + 1).toFixed(4)})`);
 });
@@ -236,4 +240,108 @@ test('paused: running dry is no gap – `prime` stays, and the sound after the p
   ring.push(frames(() => 0.2, 0, ms(70)));
   const out = run(ring, 4);
   assert.ok(out[200] > 0.19, 'plays again once `prime` is there');
+});
+
+/**
+ * The 3DS host at 1× as the page receives it: 547 frames per emulated frame (59.83 fps), each a few ms late, now and
+ * then held back 20–35 ms behind a big picture and then arriving together. `stalls`: [start, seconds] where the core
+ * stands still (the host then catches up at most 100 ms, as ctrhost.c does). Returns feed(b) for run().
+ */
+function host3ds(ring, { seed = 1, stalls = [] } = {}) {
+  let s = seed;
+  const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const q = []; // deliveries [at (s), frames]
+  let next = 0; // the host's next frame (s)
+  let held = 0; // a big picture holds the socket until then
+  let at = 0;
+  return (b) => {
+    const t = (b * 128) / SR;
+    while (stalls.length && stalls[0][0] <= t) {
+      const [from, len] = stalls.shift();
+      next = Math.max(next, from + len - 0.1); // (frozen; then it catches up at most 100 ms)
+    }
+    if (rnd() < 0.004) held = Math.max(held, t + 0.02 + rnd() * 0.015);
+    for (; next <= t; next += 1 / 59.83) q.push([Math.max(next + 0.003 + rnd() * 0.006, held), 547]);
+    q.sort((x, y) => x[0] - y[0]);
+    while (q.length && q[0][0] <= t) {
+      const [, n] = q.shift();
+      ring.push(frames((i) => 0.2 * Math.sin(i * 0.03), at, n));
+      at += n;
+    }
+  };
+}
+
+test('1× for 10 minutes with a 3DS-like delivery: no gap, the delay stays at its base (~60 ms), nothing resampled or skipped', () => {
+  const ring = new JitterRing(SR, DS);
+  const feed = host3ds(ring, { seed: 3 });
+  const lags = [];
+  run(ring, Math.ceil((600 * SR) / 128), (b) => {
+    feed(b);
+    if (b % 64 === 0 && b > (5 * SR) / 128) lags.push(ring.lag);
+  });
+  const mean = lags.reduce((x, y) => x + y, 0) / lags.length;
+  assert.equal(ring.stats.underruns, 0);
+  assert.equal(ring.prime, ms(60));
+assert.ok(mean > ms(50) && mean < ms(75), `the delay averages ${((mean / SR) * 1000).toFixed(0)} ms`);
+  assert.equal(ring.stats.skips, 0);
+});
+
+test('real gaps (the core stalls 150 ms): `prime` grows, then the delay is back at its base within seconds, not minutes', () => {
+  const ring = new JitterRing(SR, DS);
+  // three stalls 10, 12 and 14 s in (after the game's first seconds), then none
+  const feed = host3ds(ring, { seed: 5, stalls: [[10, 0.15], [12, 0.15], [14, 0.15]] });
+  const at = (s) => Math.ceil((s * SR) / 128);
+  let peak = 0;
+  run(ring, at(15), (b) => {
+    feed(b);
+    peak = Math.max(peak, ring.prime);
+  });
+  assert.ok(ring.stats.underruns >= 2, `the stalls are gaps (${ring.stats.underruns}; the deeper buffer may cover the last)`);
+  assert.ok(peak >= ms(90) && peak <= ms(120), `the buffer got deeper (${((peak / SR) * 1000).toFixed(0)} ms, at most 120; until 2.8.2: 240)`);
+  const lags = [];
+  run(ring, at(30), (b) => {
+    feed(at(15) + b);
+    if (b > at(20) && b % 32 === 0) lags.push(ring.lag);
+  });
+  const mean = lags.reduce((x, y) => x + y, 0) / lags.length;
+assert.equal(ring.prime, ms(60), 'back at its base');
+  assert.ok(mean < ms(72), `the delay is back near 60 ms ~25 s after the last gap (${((mean / SR) * 1000).toFixed(0)} ms)`);
+});
+
+test('breaks the player asked for (rebase: speed step, loaded state, pause, sound mode) are no gaps: `prime` back to its base, what piled up skipped', () => {
+  const ring = new JitterRing(SR, DS0);
+  const f = (i) => 0.3 * Math.sin(i * 0.02);
+  let at = 0;
+  const push = (n) => {
+    ring.push(frames(f, at, n));
+    at += n;
+  };
+  // a deep buffer from earlier gaps
+  ring.prime = ms(120);
+  run(ring, 400, (b) => b % 4 === 0 && push(512));
+  ring.rebase(); // e.g. turbo off
+  assert.equal(ring.prime, ms(60));
+  // the sound from before the step runs out (nothing for 150 ms) – no gap; then the host catches up 100 ms at once
+  const before = ring.stats.underruns;
+  run(ring, 40);
+  push(ms(100));
+  const out = run(ring, 200, (b) => b % 4 === 0 && push(512));
+  assert.equal(ring.stats.underruns, before, 'running dry right after it is no gap');
+  assert.ok(ring.stats.breaks >= 1);
+  assert.equal(ring.prime, ms(60), 'and `prime` stays at its base');
+  assert.ok(ring.lag <= ms(60) + 512, `what piled up is skipped: ${((ring.lag / SR) * 1000).toFixed(0)} ms left`);
+  assert.ok(maxStep(out, 140) < 0.03, 'crossfaded, no click');
+  // after GRACE a gap counts again
+  run(ring, 400, (b) => b % 4 === 0 && push(512));
+  run(ring, 60);
+  assert.equal(ring.stats.underruns, before + 1);
+});
+
+test('a game’s first seconds: running dry while it loads is no gap', () => {
+  const ring = new JitterRing(SR, DS);
+  const feed = host3ds(ring, { seed: 9, stalls: [[1, 0.2], [2, 0.15]] });
+  run(ring, Math.ceil((8 * SR) / 128), feed);
+  assert.equal(ring.stats.underruns, 0);
+  assert.equal(ring.prime, ms(60));
+  assert.ok(ring.stats.breaks >= 1);
 });
