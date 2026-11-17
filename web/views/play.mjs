@@ -6,8 +6,9 @@ import { diag } from '../lib/diag.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, ago } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
+import { serverErrorText } from '../lib/errors.mjs';
 import { gameById, gameTitle, speciesName, hackById, itemName, moveName } from '../lib/data.mjs';
-import { players as getPlayers, live, othersOf, runMode, missedQuestion, openAreas, markMissed, locationChoices, areaForCatch, genOfRun, profileOf, rules as getRules, logCheat } from '../lib/run.mjs';
+import { players as getPlayers, live, othersOf, runMode, missedQuestion, openAreas, markMissed, locationChoices, areaForCatch, genOfRun, profileOf, rules as getRules, logCheat, dupeOf, areaForPlace, encounter } from '../lib/run.mjs';
 import { findEntry, readLiveParty, readLiveBattle, playerBattle, withBattleHp, confirmFaints, inBattleFlag, LiveTables, expandedEntry } from '/shared/live/parse.mjs';
 import { addRareCandies, cheatSupported } from '/shared/live/cheats.mjs';
 import { MusicKeyTracker } from '/shared/live/location.mjs';
@@ -26,6 +27,7 @@ import { CartInsert } from './cartinsert.mjs';
 import { play as playCue } from '../lib/sound.mjs';
 import { addSample, typicalReach, offeredSteps, beyondReach, HELD } from '../lib/reach.mjs';
 import { SlowWatch, slowTips } from '../lib/slowdown.mjs';
+import { MissedTracker, openQuestions } from '../lib/missed.mjs';
 import { gpuBackends } from '/shared/gpu.mjs';
 import { GPU_LABELS } from './settings.mjs';
 import { CTR_LAYOUTS, ctrLayoutAspect } from '/shared/ctrlayout.mjs';
@@ -72,9 +74,6 @@ const SPEEDS = [1, 2, 3, 4];
 // Settings › "Max" turbo step (config.turboMax): after 4× comes "as fast as this computer can" – no limit at all.
 const MAX = Infinity;
 const speedText = (s) => (s === MAX ? t('play.speedMax', 'Max') : `${s}×`);
-// A wild battle ended and no new Pokémon showed up this long after → it got away (Nuzlocke: ask about the area).
-// Long enough for the catch to land in the party / box (the box is read every few seconds).
-const MISSED_WAIT = 10000;
 // what you hear while fast-forwarding; 'plain' takes the turbo mixer out of the sound path altogether
 const TURBO_AUDIO = ['music', 'mute', 'original', 'plain'];
 
@@ -377,22 +376,20 @@ export function GameSession({ session, mode }) {
   volRef.current = volume;
   const pendingRef = useRef(null);
   const pendingTimer = useRef(null);
-  // Missed encounters (solo Nuzlocke and SoulLink): every Pokémon key seen this session, when the last new one turned
-  // up, and when the current wild battle began – a catch is a new key after the start of the battle.
-  const [missed, setMissed] = useState(null); // { species, level } – the prompt on the screen
+  // Missed encounters (solo Nuzlocke and SoulLink): every Pokémon key seen this session (a catch is a new key), the
+  // battles that ended without one (web/lib/missed.mjs) and the questions about them waiting for an answer.
+  const [questions, setQuestions] = useState([]); // MissedTracker records + their area – the first open one is asked
   const monKeys = useRef(null);
-  const newMonAt = useRef(0);
-  const wildFrom = useRef(0);
-  const wildOnly = useRef(false); // the current battle began wild and never looked like a trainer battle
+  const missedTr = useRef(null);
+  if (!missedTr.current) missedTr.current = new MissedTracker();
   const liveRead = useRef({ boxes: false, party: 0 }); // does the live read see the PC; party size (a full one sends a catch there)
-  const prevBattle = useRef(null);
   const noteMons = (mons) => {
-    const keys = mons.map((m) => m?.key).filter(Boolean);
-    if (!monKeys.current) return void (monKeys.current = new Set(keys)); // the team we started with
-    for (const k of keys) {
-      if (monKeys.current.has(k)) continue;
-      monKeys.current.add(k);
-      newMonAt.current = Date.now();
+    const known = mons.filter((m) => m?.key);
+    if (!monKeys.current) return void (monKeys.current = new Set(known.map((m) => m.key))); // the team we started with
+    for (const m of known) {
+      if (monKeys.current.has(m.key)) continue;
+      monKeys.current.add(m.key);
+      if (!m.isEgg) missedTr.current.newMon(Date.now(), m.species || null); // (an egg is never a catch)
     }
   };
   // The long-running loops below must always see the current applySnap (the doc may load later).
@@ -1030,6 +1027,9 @@ export function GameSession({ session, mode }) {
               const party = confirmFaints(withBattleHp(res.party, fight), state);
               setMine(party);
               setBattle(fight);
+              // (every poll – a stray reading must not decide whether the battle was a wild one)
+              const ended = isRun ? missedTr.current.see(fight, Date.now(), hereNow) : null;
+              if (ended) wildEndRef.current?.(ended);
               setDemo(!!seen && !fight);
               inBattle = !!seen;
               noteMons([...res.party, ...(res.boxes || [])]);
@@ -1087,37 +1087,51 @@ export function GameSession({ session, mode }) {
   // player's own encounter – the pair fails, and the partners get it with the next sync). It asks (without stopping the
   // game) and offers the areas still open – the place sign's area first, where the game shows one. No question when
   // the Pokémon was caught after all, a shiny (shiny clause), a dupe (it doesn't count anyway) or when this player's
-  // encounter of the place is entered already.
+  // encounter of the place is entered already. Each ended battle waits for its question on its own clock – the next
+  // battle starting right away (a route full of grass, fast-forward) no longer drops it – and a question stays until it
+  // is answered, hidden while a battle runs (web/lib/missed.mjs).
+  const askRef = useRef(null);
+  askRef.current = (q) => {
+    if (!doc || !manifest || !me) return false;
+    const seen = liveRead.current;
+    return missedQuestion(doc, manifest, runData, me, { foe: q.foe, wild: true, from: q.from, newMonAt: missedTr.current.caughtAt(q), boxes: seen.boxes, partySize: seen.party, here: q.here });
+  };
+  // not asked because it's a dupe: said in passing, where the place's first encounter is still open – so nobody wonders
+  // why fleeing there "didn't count"
+  const dupeRef = useRef(null);
+  dupeRef.current = (q) => {
+    if (!doc || !manifest || !me || doc.get('run:status', null) || missedTr.current.caughtAt(q) || !q.foe?.species) return false;
+    if (!dupeOf(doc, manifest, runData, q.foe.species, me)) return false;
+    const at = q.here ? areaForPlace(doc, manifest, genOfRun(manifest, runData), q.here) : null;
+    return !at || !encounter(doc, at, me);
+  };
+  // (the live loop feeds every poll's battle into missedTr) a wild battle just ended: its Pokémon stays with the place
+  // sign until the player moves on – the board's "Missed" fills it in (lib/run.mjs lastWildAt)
+  const wildEndRef = useRef(null);
+  wildEndRef.current = (r) => {
+    if (!doc || !me || !r.here) return;
+    const where = doc.get(`where:${me}`, null);
+    if (where && where.gen === r.here.gen && where.id === r.here.id) doc.set(`where:${me}`, { ...where, wild: { species: r.foe.species, level: r.foe.level ?? null, at: Date.now() } });
+  };
   useEffect(() => {
-    const prev = prevBattle.current;
-    prevBattle.current = battle;
     if (!isRun) return undefined;
-    if (battle?.enemy) {
-      if (!prev?.enemy) {
-        wildFrom.current = Date.now();
-        wildOnly.current = battle.kind === 'wild';
-      }
-      if (battle.kind !== 'wild') wildOnly.current = false; // (Gen 4 guesses the kind – one trainer read is enough)
-      setMissed(null); // the next battle started: that one gets its own question
-      return undefined;
-    }
-    if (battle || !prev?.enemy?.species) return undefined;
-    const foe = prev.enemy;
-    const fight = { foe, wild: wildOnly.current && prev.kind === 'wild', from: wildFrom.current, here };
-    const where = fight.wild && doc && me && here ? doc.get(`where:${me}`, null) : null;
-    if (where && where.gen === here.gen && where.id === here.id) doc.set(`where:${me}`, { ...where, wild: { species: foe.species, level: foe.level ?? null, at: Date.now() } });
-    const id = setTimeout(() => {
-      if (!doc || !manifest) return;
-      const seen = liveRead.current;
-      if (!missedQuestion(doc, manifest, runData, me, { ...fight, newMonAt: newMonAt.current, boxes: seen.boxes, partySize: seen.party })) return;
-      setMissed({ species: foe.species, level: foe.level ?? null });
-    }, MISSED_WAIT);
-    return () => clearTimeout(id);
-  }, [battle, isRun]);
-  // a catch that took longer (nickname screen, full party → box): no question anymore
-  useEffect(() => {
-    if (missed && newMonAt.current >= wildFrom.current) setMissed(null);
-  });
+    const id = setInterval(() => {
+      const tr = missedTr.current;
+      const due = tr.due(Date.now());
+      const add = due.filter((q) => askRef.current(q));
+      const dupe = due.find((q) => !add.includes(q) && dupeRef.current(q));
+      if (dupe && modeRef.current === 'full') flash(t('play.missedDupe', 'Wild {species} got away – dupes clause, it doesn’t count.', { species: speciesName(dupe.foe.species) }), 3500);
+      setQuestions((qs) => {
+        const next = [...qs.filter((q) => askRef.current(q)), ...add];
+        return next.length === qs.length && next.every((q, i) => q === qs[i]) ? qs : next;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isRun]);
+  const runGen = genOfRun(manifest, runData);
+  const asked = !battle && mode === 'full' && !pendingLoad && !confirmReset && doc && manifest
+    ? openQuestions(questions, { caughtAt: (q) => missedTr.current.caughtAt(q), stillOpen: (q) => askRef.current(q), areaOf: (q) => (q.here ? areaOfHere(doc, manifest, runGen, q.here) : null) })[0] || null
+    : null;
 
   // Fast-forward sound: keep the music going at 1× (default), mute it, or play the sped-up original.
   useEffect(() => {
@@ -1305,7 +1319,7 @@ export function GameSession({ session, mode }) {
   // or opening anything over it (a menu, a panel, a prompt on the screen) hands it to the app.
   const padRef = useRef(null);
   // (also the 3DS screen-layout menu and the message that the 3DS player stopped – CtrFailed)
-  padRef.current = { phase, overlay: !!(rulesOpen || statesOpen || soundOpen || cheatOpen || layoutOpen || ctrFail || confirmReset || pendingLoad || confirmCheat || missed) };
+  padRef.current = { phase, overlay: !!(rulesOpen || statesOpen || soundOpen || cheatOpen || layoutOpen || ctrFail || confirmReset || pendingLoad || confirmCheat || asked) };
   useEffect(() => claimPad(() => ({
     mode: modeRef.current,
     playing: padRef.current.phase !== 'error',
@@ -1390,7 +1404,7 @@ export function GameSession({ session, mode }) {
               <button class="btn small primary" onClick=${() => { actions.confirmLoad(); focusGame(); }}>${t('play.loadConfirmYes', 'Load')}</button>
               <button class="btn small ghost" data-pad-back onClick=${() => { actions.cancelLoad(); focusGame(); }}>${t('common.cancel', 'Cancel')}</button>
             </div>`}
-            ${missed && mode === 'full' && !pendingLoad && !confirmReset && html`<${MissedPrompt} missed=${missed} here=${here} onDone=${() => { setMissed(null); focusGame(); }} />`}
+            ${asked && html`<${MissedPrompt} key=${asked.id} missed=${asked.foe} here=${asked.here} onDone=${() => { setQuestions((qs) => qs.filter((q) => q !== asked)); focusGame(); }} />`}
             ${confirmReset && html`<div class="screen-confirm" role="alertdialog" aria-live="assertive">
               <span class="grow">${t('play.resetConfirm', 'Reset the game? Unsaved progress is lost.')}</span>
               <button class="btn small primary" onClick=${() => { setConfirmReset(false); emu()?.restart(); focusGame(); }}>${t('play.resetYes', 'Reset')}</button>
@@ -1729,6 +1743,33 @@ export function ExternalFeed() {
   return null;
 }
 
+/**
+ * An emulator that can't share live data (melonDS): which save file souldew reads for the run and when it last read it
+ * – the place melonDS writes to, or why it can't be read. Asked every few seconds (an in-game save changes it).
+ */
+function SaveWatchLine({ runId, emu }) {
+  const [st, setSt] = useState(null);
+  useEffect(() => {
+    let stop = false;
+    const get = () => api.get(`/api/runs/${runId}/watch`).then((x) => !stop && setSt(x)).catch(() => {});
+    get();
+    const id = setInterval(get, 3000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [runId]);
+  if (!st) return null;
+  if (!st.readable) return html`<p class="small muted">${t('ext.saveUnreadable', 'souldew can’t read this game’s save files – your team won’t update while you play with {emu}.', { emu })}</p>`;
+  if (!st.watching) return html`<p class="tiny faint">${t('ext.saveNotYet', 'souldew starts reading the save file once you launch {emu} from here.', { emu })}</p>`;
+  const file = String(st.path || '').split(/[\\/]/).pop();
+  const text = st.error ? t('ext.saveError', 'Can’t read {file}: {error}', { file, error: serverErrorText({ code: st.errorCode, error: st.error }) })
+    : !st.exists ? t('ext.saveWaiting', 'Waiting for {file} – save in the game once.', { file })
+      : st.readAt ? t('ext.saveRead', 'Reads {file} · last read {when}', { file, when: ago(Date.parse(st.readAt)) })
+        : t('ext.saveWatching', 'Reads {file}', { file });
+  return html`<p class="tiny faint" title=${st.path} role="status" aria-live="polite">${text}</p>`;
+}
+
 function ExternalPlay({ target, emu }) {
   const { status, toast, liveInfo, manifest, me, route, setExternalRun } = useApp();
   const e = status.emulators[emu];
@@ -1771,7 +1812,8 @@ function ExternalPlay({ target, emu }) {
         ? html`<${ScriptBridge} fresh=${fresh} />`
         : e.live === 'rpc'
           ? html`<${AzaharBridge} fresh=${fresh} isRun=${isRun} />`
-          : html`<p class="small muted">${t('ext.saveText', '{emu} can’t share live data. Save in the game regularly – souldew reads the save file next to the ROM after every in-game save.', { emu: e.name })}</p>`}
+          : html`<p class="small muted">${t('ext.saveText', '{emu} can’t share live data. Save in the game regularly – souldew reads the save file next to the ROM after every in-game save.', { emu: e.name })}</p>
+            ${isRun && manifest?.id && html`<${SaveWatchLine} runId=${manifest.id} emu=${e.name} />`}`}
       ${target.system !== '3ds' && html`<p class="tiny faint">${t('ext.switch', 'You can switch back to the built-in emulator in the settings.')}</p>`}
     </section>
   </div>`;

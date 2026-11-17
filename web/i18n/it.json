@@ -2769,5 +2769,12 @@
   "err.importVerify": "La copia di {name} non corrisponde all’originale, quindi non è stata aggiunta. Riprova – se succede di nuovo, forse l’unità ha un problema.",
   "lib.skipArchive": "souldew non può aprire archivi .7z o .rar – estrai prima il gioco (con 7-Zip, per esempio), poi aggiungi il file .3ds, .cci o .cxi.",
   "lib.skipType": "non è un file di gioco o patch che souldew conosce",
-  "restart.introTip": "Suggerimento: salva nel gioco prima di scegliere lo starter e scegli File › «Usa come mio salvataggio dell’intro» nella bacheca – i nuovi tentativi potranno saltare l’intro."
+  "restart.introTip": "Suggerimento: salva nel gioco prima di scegliere lo starter e scegli File › «Usa come mio salvataggio dell’intro» nella bacheca – i nuovi tentativi potranno saltare l’intro.",
+  "ext.saveUnreadable": "souldew non può leggere i salvataggi di questo gioco – la tua squadra non si aggiornerà mentre giochi con {emu}.",
+  "ext.saveNotYet": "souldew inizia a leggere il salvataggio non appena avvii {emu} da qui.",
+  "ext.saveError": "Impossibile leggere {file}: {error}",
+  "ext.saveWaiting": "In attesa di {file} – salva una volta nel gioco.",
+  "ext.saveRead": "Legge {file} · ultima lettura {when}",
+  "ext.saveWatching": "Legge {file}",
+  "play.missedDupe": "{species} selvatico è fuggito – clausola dei doppioni, non conta."
 }

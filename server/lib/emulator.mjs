@@ -1,7 +1,7 @@
 // External emulators: detection, one-click install from GitHub releases, launching.
 // The integrated emulator (EmulatorJS inside the app) needs none of this.
-import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync, cpSync, statSync, chmodSync } from 'node:fs';
-import { join, basename, dirname, isAbsolute, resolve, posix } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync, readdirSync, rmSync, cpSync, statSync, chmodSync, readFileSync } from 'node:fs';
+import { join, basename, dirname, isAbsolute, resolve, posix, win32 } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { TOOLS_DIR } from './paths.mjs';
 import { httpError, renameRetry, safeFileName } from './fsutil.mjs';
@@ -128,6 +128,49 @@ export function validCustomPath(id, p) {
   }
   if (/\.app$/i.test(name)) return process.platform === 'darwin' && st.isDirectory() && emu.app.test(name) ? abs : null;
   return st.isFile() && emu.exe.test(name) ? abs : null;
+}
+
+/**
+ * melonDS's own config files, most specific first: next to the program (a portable melonDS – the Windows zip keeps its
+ * settings there), then the user's config folder (Qt's AppConfigLocation: ~/Library/Preferences/melonDS on a Mac,
+ * ~/.config/melonDS on Linux, AppData on Windows). melonDS 1.x writes melonDS.toml, 0.9.x melonDS.ini.
+ */
+export function melonConfigFiles({ exePath = null, platform = process.platform, env = process.env } = {}) {
+  const P = platform === 'win32' ? win32 : posix;
+  const home = env.HOME || env.USERPROFILE || '';
+  const dirs = [];
+  if (exePath && !/\.app$/i.test(exePath)) dirs.push(P.dirname(exePath)); // (a Mac app keeps none in its bundle)
+  if (platform === 'darwin') dirs.push(P.join(home, 'Library', 'Preferences', 'melonDS'));
+  else if (platform === 'win32') dirs.push(...[env.LOCALAPPDATA, env.APPDATA].filter(Boolean).map((d) => P.join(d, 'melonDS')));
+  else dirs.push(P.join(env.XDG_CONFIG_HOME || P.join(home, '.config'), 'melonDS'), P.join(home, '.var', 'app', 'net.kuribo64.melonDS', 'config', 'melonDS'));
+  return dirs.flatMap((d) => ['melonDS.toml', 'melonDS.ini'].map((f) => P.join(d, f)));
+}
+
+/**
+ * The save folders set in melonDS's own settings (Emu settings › Paths › Save files – `SaveFilePath`, per instance in
+ * 1.x) – empty means "next to the ROM", melonDS's default. A relative folder counts from melonDS's config folder.
+ * `files`: melonConfigFiles(). → absolute folders, the first instance's first; [] when none is set.
+ */
+export function melonSaveDirs(files = melonConfigFiles()) {
+  const out = [];
+  for (const f of files) {
+    let text;
+    try {
+      text = readFileSync(f, 'utf8');
+    } catch {
+      continue;
+    }
+    // TOML: SaveFilePath = "C:\\Saves" (backslashes escaped) or 'C:\Saves'; INI: SaveFilePath=C:\Saves
+    for (const m of text.matchAll(/^[ \t]*SaveFilePath[ \t]*=[ \t]*(?:"((?:[^"\\\r\n]|\\.)*)"|'([^'\r\n]*)'|([^\r\n]*?))[ \t]*$/gm)) {
+      const raw = m[1] !== undefined ? m[1].replace(/\\(["\\])/g, '$1') : m[2] ?? m[3] ?? '';
+      const v = raw.trim();
+      if (!v) continue;
+      const abs = isAbsolute(v) || /^[A-Za-z]:[\\/]/.test(v) ? v : resolve(dirname(f), v);
+      if (!out.includes(abs)) out.push(abs);
+    }
+    break; // the first config there is, is the one melonDS uses
+  }
+  return out;
 }
 
 export function detectEmulator(id, customPath) {

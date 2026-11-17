@@ -743,7 +743,7 @@ function GravesTab() {
   const l = live(doc, me);
   const deadInTeam = (l?.party || []).filter((m) => m.area && pairState(doc, m.area, slots).state === 'dead');
   return html`<div class="stack-l">
-    ${deadInTeam.length > 0 && manifest.watch?.watching && html`<section class="panel stack">
+    ${deadInTeam.length > 0 && manifest.watch?.watching && manifest.watch.graveyard !== false && html`<section class="panel stack">
       <h3>${t('graves.cleanTitle', 'Dead Pokémon are still in your team')}</h3>
       <p class="small muted">${t('graves.cleanText', 'Close the game first (save in-game). Then the app moves them into PC box 18 in your save file – with a backup.')}</p>
       <div><button class="btn danger" disabled=${busy} onClick=${async () => {

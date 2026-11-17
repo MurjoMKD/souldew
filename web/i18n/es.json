@@ -2769,5 +2769,12 @@
   "err.importVerify": "La copia de {name} no coincide con el original, así que no se añadió. Inténtalo de nuevo – si vuelve a pasar, puede que la unidad tenga un problema.",
   "lib.skipArchive": "souldew no puede abrir archivos .7z o .rar – descomprime primero el juego (con 7-Zip, por ejemplo) y luego añade el archivo .3ds, .cci o .cxi.",
   "lib.skipType": "no es un archivo de juego o parche que souldew conozca",
-  "restart.introTip": "Consejo: guarda en el juego antes de elegir tu inicial y elige Archivos › «Usar como mi partida de intro» en el tablero; así los nuevos intentos pueden saltarse la intro."
+  "restart.introTip": "Consejo: guarda en el juego antes de elegir tu inicial y elige Archivos › «Usar como mi partida de intro» en el tablero; así los nuevos intentos pueden saltarse la intro.",
+  "ext.saveUnreadable": "souldew no puede leer las partidas guardadas de este juego: tu equipo no se actualizará mientras juegues con {emu}.",
+  "ext.saveNotYet": "souldew empieza a leer la partida guardada en cuanto inicies {emu} desde aquí.",
+  "ext.saveError": "No se puede leer {file}: {error}",
+  "ext.saveWaiting": "Esperando {file}: guarda una vez en el juego.",
+  "ext.saveRead": "Lee {file} · última lectura {when}",
+  "ext.saveWatching": "Lee {file}",
+  "play.missedDupe": "{species} salvaje escapó – cláusula de duplicados, no cuenta."
 }

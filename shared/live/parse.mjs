@@ -1045,6 +1045,127 @@ function readBoxesGen4(entry, read, T, state) {
   return boxes;
 }
 
+// ---------------------------------------------------------------- battery saves (an external emulator: melonDS)
+
+/**
+ * The Gen 4 save layouts (PKHeX SAV4DP / SAV4Pt / SAV4HGSS; checked against real Platinum saves): two partitions of
+ * 0x40000, each a general block (the party, the trainer) and a storage block (the PC), each block ending in a footer –
+ * its save count at end − 0x10, its size at end − 0xC, a magic at end − 8 and a CRC16 at end − 2 over the block up to
+ * the footer (0x14 bytes in Diamond/Pearl/Platinum, 0x10 in HeartGold/SoulSilver). The game writes the blocks in turn,
+ * so the newest general block and the newest storage block may sit in different partitions.
+ */
+const SAVE4 = {
+  hgss: { general: 0xf628, storage: 0xf700, storageSize: 0x12310, foot: 0x10 },
+  pt: { general: 0xcf2c, storage: 0xcf2c, storageSize: 0x121e4, foot: 0x14 },
+  dp: { general: 0xc100, storage: 0xc100, storageSize: 0x121e0, foot: 0x14 },
+};
+const SAVE4_MAGIC = [0x20060623, 0x20070903];
+const save4Family = (entry) => (/^(heartgold|soulsilver)/.test(entry.id) ? 'hgss' : /^platinum/.test(entry.id) ? 'pt' : /^(diamond|pearl)/.test(entry.id) ? 'dp' : null);
+
+/** The save count of a valid Gen 4 block at `base` (or -1: erased, torn, another layout). */
+function block4(u8, base, size, foot) {
+  const end = base + size;
+  if (end > u8.length) return -1;
+  const count = u32le(u8, end - 0x10);
+  if (u32le(u8, end - 0x0c) !== size || !SAVE4_MAGIC.includes(u32le(u8, end - 0x08)) || count === 0xffffffff) return -1;
+  let top = 0xff;
+  let bot = 0xff;
+  for (let i = base; i < end - foot; i++) {
+    let x = u8[i] ^ top;
+    x ^= x >> 4;
+    top = (bot ^ (x >> 3) ^ (x << 4)) & 0xff;
+    bot = (x ^ (x << 5)) & 0xff;
+  }
+  return ((top << 8) | bot) === u16le(u8, end - 2) ? count : -1;
+}
+
+/** A thrown save error: `code` is what the page words in the player's language (web/lib/errors.mjs), like gen4save's. */
+const saveFileError = (code, message) => Object.assign(new Error(message), { code });
+
+/**
+ * The team, the PC and the badges in a DS game's battery save (.sav – melonDS writes it next to the ROM after every
+ * in-game save; DeSmuME's .dsv carries the same 512 KB in front of its footer): every DS game the live readers know –
+ * Diamond, Pearl, Platinum, HeartGold, SoulSilver, Black, White, Black 2, White 2, in any language. The games keep their
+ * save in RAM in the very layout of the file (the live readers above read the PC, the badges and the trainer from
+ * there), so the file is laid out as the RAM it came from and read with the same readers – one layout, two sources.
+ * `entry` = the addresses.json entry of the run's game (findEntry). → { gen, party, boxes, badges: { count },
+ * trainer: { name, tid, sid }, playTime } in the shape the run logic takes a save in (web/lib/run.mjs
+ * snapshotFromSave: `heldItem`, per-Pokémon `checksumOk`); throws saveNotFound when the file holds no save of it.
+ */
+export function readSaveFile(entry, file, T) {
+  if (!entry || (entry.gen !== 4 && entry.gen !== 5)) throw saveFileError('saveNotFound', 'Not a DS game souldew reads saves of');
+  // a save cut short (DeSmuME, an older souldew – the rest of the flash is erased) – 0xFF up to 512 KB, like the flash
+  let u8 = file.subarray(0, 0x80000);
+  if (u8.length < 0x80000) {
+    const full = new Uint8Array(0x80000).fill(0xff);
+    full.set(u8);
+    u8 = full;
+  }
+  const BASE = 0x02200000; // where the save is "in RAM" for the readers (any address in main RAM)
+  const ram = new Map(); // RAM address → [file offset, length]
+  const map = (addr, off, len) => ram.set(addr, [off, len]);
+  const read = (addr, len) => {
+    for (const [a, [off, n]] of ram) {
+      if (addr >= a && addr + len <= a + n) return u8.subarray(off + addr - a, off + addr - a + len);
+    }
+    return null;
+  };
+  const state = {};
+  if (entry.gen === 4) {
+    const fam = save4Family(entry);
+    const L = fam && SAVE4[fam];
+    if (!L || !entry.partyMonsOffset || !entry.badges?.generalOffsetFromSaveBase) throw saveFileError('saveNotFound', 'No save layout for this game');
+    const newest = (rel, size) => [0, 0x40000].map((p) => ({ p, n: block4(u8, p + rel, size, L.foot) })).filter((x) => x.n >= 0).sort((a, b) => b.n - a.n)[0] || null;
+    const g = newest(0, L.general);
+    if (!g) throw saveFileError('saveNotFound', 'No valid save found (never saved in the game yet?)');
+    const s = newest(L.storage, L.storageSize);
+    const head = hex(entry.badges.generalOffsetFromSaveBase); // SaveData in RAM: a header, then the general block
+    map(BASE + head, g.p, L.general);
+    if (s) map(BASE + head + L.storage, s.p + L.storage, L.storageSize);
+    state.saveBase = BASE;
+    state.partyAddr = BASE + hex(entry.partyMonsOffset) - 8;
+  } else {
+    // Black/White, Black 2/White 2 (PKHeX SAV5): the party block at 0x18E00, the PC from 0x400, the trainer at 0x19400 –
+    // the readers go from the party block. The file's first copy is the current one; the backup behind it (0x24000 in
+    // Black/White, 0x26000 in Black 2/White 2) is taken when the first doesn't hold a team.
+    const backup = /^(black2|white2)_/.test(entry.id) ? 0x26000 : 0x24000;
+    const at = [0, backup].find((o) => readPartyCore((a, n) => u8.subarray(o + a - BASE, o + a - BASE + n), BASE + 0x18e00, 220, 5, T));
+    if (at === undefined) throw saveFileError('saveNotFound', 'No valid save found (never saved in the game yet?)');
+    map(BASE, at, backup);
+    state.partyAddr = BASE + 0x18e00;
+  }
+  const size = entry.gen === 5 ? 220 : 236;
+  const party = readPartyCore(read, state.partyAddr, size, entry.gen, T);
+  if (!party) throw saveFileError('saveNotFound', 'No team in the save');
+  const res = dsResult(entry, read, T, state, party);
+  // the trainer: Gen 4 PKHeX Trainer1 (name 8 chars, TID/SID +0x10/+0x12, play time +0x22), Gen 5 the trainer block
+  // (name UTF-16 at +0x4, TID/SID +0x14/+0x16)
+  let trainer = { name: '', tid: null, sid: null };
+  let playTime = null;
+  const tr = entry.gen === 4 ? read(BASE + hex(entry.badges.generalOffsetFromSaveBase) + hex(entry.badges.trainerOffset), 0x26) : read(state.partyAddr + GEN5_TRAINER, 0x18);
+  if (tr) {
+    const at = entry.gen === 4 ? 0 : 4;
+    let name = '';
+    for (let i = 0; i < 8; i++) {
+      const c = u16le(tr, at + i * 2);
+      if (!c || c === 0xffff) break;
+      name += entry.gen === 5 ? String.fromCharCode(c) : T.gen4?.chars?.[c] ?? '';
+    }
+    const o = entry.gen === 4 ? 0x10 : 0x14;
+    trainer = { name, tid: u16le(tr, o), sid: u16le(tr, o + 2) };
+    if (entry.gen === 4) playTime = { h: u16le(tr, 0x22), m: tr[0x24], s: tr[0x25] };
+  }
+  const plain = (m) => ({ ...m, heldItem: m.item || 0, checksumOk: true });
+  return {
+    gen: entry.gen,
+    party: res.party.map((m, slot) => ({ ...plain(m), slot })),
+    boxes: res.boxes ? res.boxes.map(plain) : null, // (null: the PC couldn't be read – not an empty PC)
+    badges: { count: res.badges ?? 0 },
+    trainer,
+    playTime,
+  };
+}
+
 /**
  * Read the party of a running game.
  * @param {object} entry  addresses.json entry (findEntry)
@@ -1459,6 +1580,11 @@ function battleFlag(entry, read, state = {}) {
     seen.add(on);
     state.flagOn = on;
     state.otherStreak = 0;
+    // The game's other languages (scanOnly) keep their static data elsewhere: the English address counts once this
+    // session has seen both its battle and its overworld value there. Before, whatever sat at it decided – a word that
+    // happened to read 0x2800 hid every battle, a random one ended battles at random (Gen 4: no question after a wild
+    // Pokémon got away). Until then the copies decide, as for a game without a flag.
+    if (entry.scanOnly && seen.size < 2) return null;
     return on;
   }
   // Black/White, Black 2/White 2: the flag has its battle values in every battle and any other value means none

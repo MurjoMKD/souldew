@@ -2769,5 +2769,12 @@
   "err.importVerify": "La copie de {name} ne correspond pas à l’original, elle n’a donc pas été ajoutée. Réessaie – si cela se reproduit, le disque a peut-être un problème.",
   "lib.skipArchive": "souldew ne peut pas ouvrir les archives .7z ou .rar – décompresse d’abord le jeu (avec 7-Zip, par exemple), puis ajoute le fichier .3ds, .cci ou .cxi.",
   "lib.skipType": "pas un fichier de jeu ou de patch que souldew connaît",
-  "restart.introTip": "Astuce : sauvegarde dans le jeu avant de choisir ton starter, puis choisis Fichiers › « Utiliser comme sauvegarde d’intro » sur le tableau – les nouvelles tentatives pourront alors passer l’intro."
+  "restart.introTip": "Astuce : sauvegarde dans le jeu avant de choisir ton starter, puis choisis Fichiers › « Utiliser comme sauvegarde d’intro » sur le tableau – les nouvelles tentatives pourront alors passer l’intro.",
+  "ext.saveUnreadable": "souldew ne peut pas lire les sauvegardes de ce jeu – ton équipe ne sera pas mise à jour pendant que tu joues avec {emu}.",
+  "ext.saveNotYet": "souldew commence à lire la sauvegarde dès que tu lances {emu} depuis ici.",
+  "ext.saveError": "Impossible de lire {file} : {error}",
+  "ext.saveWaiting": "En attente de {file} – sauvegarde une fois dans le jeu.",
+  "ext.saveRead": "Lit {file} · dernière lecture {when}",
+  "ext.saveWatching": "Lit {file}",
+  "play.missedDupe": "{species} sauvage s’est échappé – clause des doublons, il ne compte pas."
 }
