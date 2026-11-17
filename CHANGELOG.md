@@ -2,6 +2,13 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## 2.8.1
+
+- **Fast-forward sound keeps up with the game** (thanks to a player on Discord). With “Music continues”, a song souldew
+  hadn't heard at normal speed yet played at its normal pace while the game raced ahead – so the game's own sounds, menu
+  sounds too, came later and later the longer fast-forward ran, up to half a minute. Now that music skips ahead in small,
+  smooth steps and stays at most a second behind the game, at every speed and however long you fast-forward.
+
 ## 2.8.0
 
 - **Catch chance in wild battles** (a community idea). The battle help now shows your chance to catch the wild
