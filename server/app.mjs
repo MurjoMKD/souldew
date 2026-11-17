@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { join, extname, resolve, basename, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { WEB_DIR, SHARED_DIR, CACHE_DIR, DATA_DIR, CONFIG_PATH, NODE_MODULES, DEV, LIBRARY_DIR } from './lib/paths.mjs';
-import { writeFileAtomic, httpError, safeFileName, safeJoin, realInside } from './lib/fsutil.mjs';
+import { writeFileAtomic, httpError, safeFileName, safeJoin, realInside, logLine } from './lib/fsutil.mjs';
 import { detectJava, uprStatus, installUpr, runBridge, inspectRom } from './lib/toolchain.mjs';
 import { preparePatchedRom, KNOWN_PATCHES } from './lib/roms.mjs';
 import { ROM_EXTENSIONS, PATCH_EXTENSIONS, isCtrExt, matchCatalog } from '../shared/romid.mjs';
@@ -40,6 +40,7 @@ import { COFFEE_CORNERS } from '../shared/coffee.mjs';
 import { LINKS } from '../shared/links.mjs';
 import { randomBytes } from 'node:crypto';
 import { syncTrophies } from './lib/trophies.mjs';
+import { listIntroSaves, introFor, introKeyFor, introKeyForLibrary, publicIntro, keepIntroSave, removeIntroSave, applyIntroSave, introState } from './lib/introsave.mjs';
 import * as liveRuns from './lib/liveruns.mjs';
 import { presence as presenceCounter } from './lib/presence.mjs';
 
@@ -1133,7 +1134,16 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     }
     try {
       if (body.runId) discordWebhookFor(body.runId); // moves a legacy webhook out of the rules before they are rewritten
-      const manifest = await buildRun({ ...body, identity, config: loadConfig() }, (l) => log.push(l), (p) => (track.progress = p));
+      let manifest = await buildRun({ ...body, identity, config: loadConfig() }, (l) => log.push(l), (p) => (track.progress = p));
+      // "Start from my intro save": the player on this computer (introSlot) begins with the intro save of the game –
+      // only theirs, and only while they have no save in this run yet
+      if (body.introSave === true && ALL_SLOTS.includes(body.introSlot)) {
+        const started = applyIntroSave(manifest.id, body.introSlot, { savePath: defaultSavePath });
+        if (started) {
+          manifest = started;
+          log.push(logLine('introApplied', 'Your game starts from your intro save'));
+        }
+      }
       adoptLegacyWebhook(manifest.id, body.rules?.discordWebhook); // older clients still send it inside the rules
       saveConfig({ lastRun: manifest.id });
       followCheck();
@@ -1333,6 +1343,40 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       saveConfig({ watches: { ...(cfg.watches || {}), [m[1]]: p } });
     }
     return { ok: true, size: bytes.length };
+  });
+
+  // ---- intro saves (server/lib/introsave.mjs): a save after the intro that new attempts of the game start from ----
+  route('GET', /^\/api\/intro-saves$/, () => ({ saves: listIntroSaves().map(publicIntro) }));
+  // the one kept for a run's game (?run=<id>) or for a library ROM + patch the new-run wizard picked (?romId=&patchId=)
+  route('GET', /^\/api\/intro-saves\/for$/, (req, m, url) => {
+    const runId = url.searchParams.get('run');
+    let key = null;
+    if (runId) {
+      const manifest = readManifest(runId);
+      if (!manifest) throw httpError(404, 'Run not found', 'runNotFound');
+      key = introKeyFor(manifest);
+    } else {
+      const lib = scanLibrary(loadConfig());
+      const rom = lib.roms.find((r) => r.id === url.searchParams.get('romId'));
+      const patchId = url.searchParams.get('patchId');
+      const patch = patchId ? lib.patches.find((p) => p.id === patchId) : null;
+      if (!rom || (patchId && !patch)) return { intro: null };
+      key = introKeyForLibrary(rom, patch);
+    }
+    return { intro: publicIntro(introFor(key)) };
+  });
+  route('DELETE', /^\/api\/intro-saves\/([a-f0-9]{16})$/, (req, m) => ({ removed: removeIntroSave(m[1]) }));
+  route('GET', /^\/api\/runs\/([a-f0-9]{8})\/intro\/(p[1-4])$/, (req, m) => {
+    const manifest = readManifest(m[1]);
+    if (!manifest) throw httpError(404, 'Run not found', 'runNotFound');
+    return introState(manifest, m[2], { savePath: defaultSavePath });
+  });
+  // keep this player's current battery save (3DS: save folder) as the intro save of the run's game
+  route('POST', /^\/api\/runs\/([a-f0-9]{8})\/intro\/(p[1-4])$/, (req, m) => {
+    const manifest = readManifest(m[1]);
+    if (!manifest) throw httpError(404, 'Run not found', 'runNotFound');
+    if (!slotsOf(manifest).includes(m[2])) throw httpError(400, 'Invalid player', 'badPlayer');
+    return { intro: publicIntro(keepIntroSave(manifest, m[2], { savePath: defaultSavePath })) };
   });
 
   route('POST', /^\/api\/runs\/([a-f0-9]{8})\/watch$/, async (req, m) => {

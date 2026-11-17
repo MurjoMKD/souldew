@@ -1043,6 +1043,9 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
   }
   const ignored = doc.scan(`ign:${slot}:`);
   const extras = doc.scan(`extra:${slot}:`);
+  // the Pokémon of the intro save this player's game started from (server/lib/introsave.mjs – normally none, it's a
+  // save from before the starter): no encounter, no catch, no death – they are set aside like ignored ones
+  const fromIntro = new Set(Array.isArray(manifest?.intro?.[slot]?.keys) ? manifest.intro[slot].keys : []);
   const inbox = [];
   const alerts = [];
   const newCatches = [];
@@ -1105,6 +1108,10 @@ export function applySnapshot(doc, manifest, gen, slot, snap, { auto = true, rd 
       continue;
     }
     if (ignored[m.key] || extras[m.key]) continue;
+    if (fromIntro.has(m.key)) {
+      writes[`ign:${slot}:${m.key}`] = { species: m.species, nickname: m.nickname || null, level: m.level || null, shiny: !!m.shiny, reason: 'intro', at: Date.now() };
+      continue;
+    }
     // Gen 4 writes a caught Pokémon into the party first and its met data (place, level) a moment later –
     // a live read in between saw met location 0 ("Mystery Zone") and filed the catch there, pairing it with
     // the partner's next such read. Every Gen 4 Pokémon has a met location, so wait for the next pass.

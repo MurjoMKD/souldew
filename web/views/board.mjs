@@ -13,6 +13,7 @@ import {
 import { PartyPanel, PartyGrid, TeamColumns, unhatched } from './party.mjs';
 import { HostCode, PackVersionNote } from './invitecode.mjs';
 import { RestartModal } from './restart.mjs';
+import { KeepIntroItem } from './introsave.mjs';
 import { useStreamer } from '../lib/streamer.mjs';
 import { NuzlockeRules, Choice, TypeHelpRule, LivesRule, MissedDupesRule } from './nuzrules.mjs';
 import { ShareButton, HallOfFame } from './liveshare.mjs';
@@ -235,11 +236,13 @@ function FilesMenu() {
   const { manifest, me } = useApp();
   const [open, setOpen] = useState(false);
   const [hasSave, setHasSave] = useState(false);
+  const [intro, setIntro] = useState(null); // can this save become the intro save of the game (KeepIntroItem)
   const base = `/api/runs/${manifest.id}/download`;
   useEffect(() => {
     if (!open) return;
     let off = false;
     fetch(`${base}?what=save&slot=${me}`, { method: 'HEAD' }).then((r) => !off && setHasSave(r.ok)).catch(() => !off && setHasSave(false));
+    api.get(`/api/runs/${manifest.id}/intro/${me}`).then((r) => !off && setIntro(r), () => !off && setIntro(null));
     return () => { off = true; };
   }, [open, manifest.id, me]);
   const nothing = !manifest.outputs?.[me] && !hasSave && isNuzlocke(manifest);
@@ -251,6 +254,7 @@ function FilesMenu() {
     ${open && html`<div class="run-menu" role="menu">
       ${manifest.outputs?.[me] && html`<a role="menuitem" href=${`${base}?what=rom&slot=${me}`} download>${t('board.fileRom', 'Save my game (ROM)')}</a>`}
       ${hasSave && html`<a role="menuitem" href=${`${base}?what=save&slot=${me}`} download>${t('board.fileSave', 'Save my save file')}</a>`}
+      <${KeepIntroItem} manifest=${manifest} me=${me} state=${intro} onDone=${() => setOpen(false)} />
       ${!isNuzlocke(manifest) && html`<a role="menuitem" href=${`${base}?what=pack`} download>${t('board.filePack', 'Save invite')}</a>`}
       ${nothing && html`<span class="small faint" style="padding:7px 10px;white-space:nowrap">${t('board.filesNone', 'Nothing to save yet.')}</span>`}
     </div>`}

@@ -2,6 +2,17 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## 2.8.2
+
+- **Skip the intro: start new attempts from your intro save** (a community idea). Play the intro once, save in the game
+  before you pick your starter, then choose Files › “Use as my intro save” on the run's board. From then on, “Start
+  from my intro save” is ticked when you start a new attempt or a new run of that game – randomized or not, the
+  starter you then pick comes from the new game. It works for every game souldew plays (3DS games in souldew's own
+  3DS player) and only for that exact game and language – German Smaragd keeps its own, separate from Emerald. Each
+  player keeps their own: it stays on your computer and never goes into an invite. If your save already has Pokémon,
+  souldew tells you, and they come along without counting for the run. Untick it to play the intro, or remove the
+  intro save right there.
+
 ## 2.8.1
 
 - **Fast-forward on a key, like in mGBA** (thanks to a player for the idea). Hold Tab to fast-forward while it is held,

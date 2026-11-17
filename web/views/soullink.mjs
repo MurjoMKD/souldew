@@ -19,6 +19,7 @@ import { Board, InviteBody } from './board.mjs';
 import { JoinCode } from './invitecode.mjs';
 import { NuzlockeRules, TypeHelpRule, LivesRule } from './nuzrules.mjs';
 import { FirstSteps } from './firststeps.mjs';
+import { IntroSaveOption, useIntroSave } from './introsave.mjs';
 import { SHINY_RATES, NORMAL_RATE, MIN_RATE, cleanShiny, shinyOdds, shinyNeedsHigh } from '/shared/shiny.mjs';
 
 /**
@@ -609,6 +610,9 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
   const [result, setResult] = useState(null);
   const [progressId, setProgressId] = useState(null);
   const progress = useBuildProgress(progressId);
+  // the intro save kept for the picked game (server/lib/introsave.mjs) – the host's game starts from it unless unticked
+  const [intro, forgetIntro] = useIntroSave(rom ? `romId=${encodeURIComponent(rom.id)}${patchId ? `&patchId=${encodeURIComponent(patchId)}` : ''}` : null);
+  const [fromIntro, setFromIntro] = useState(true);
 
   useEffect(() => {
     if (!rom) return;
@@ -686,6 +690,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
         name: numberedName(defaultRunName(players, mode), status?.runs),
         rules: { ...(solo ? nzRules : from && runMode(from) === 'soullink' ? from.rules || {} : {}), ...lives, typeHelp },
         shiny,
+        ...(intro && fromIntro ? { introSave: true, introSlot: 'p1' } : {}),
       });
       setLog(res.log);
       await reloadStatus();
@@ -837,6 +842,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
       ${!solo && html`<div class="row small"><span class="muted">${t('new.buildFor', 'Build games for')}</span>
         <div class="seg" role="group" aria-label=${t('new.buildFor', 'Build games for')}><button class=${buildFor === 'all' ? 'on' : ''} aria-pressed=${buildFor === 'all'} onClick=${() => setBuildFor('all')}>${count > 2 ? t('new.forAll', 'All of us') : t('new.forBoth', 'Both of us')}</button>
           <button class=${buildFor === 'me' ? 'on' : ''} aria-pressed=${buildFor === 'me'} onClick=${() => setBuildFor('me')}>${t('new.forMe', 'Only me')}</button></div></div>`}
+      <${IntroSaveOption} intro=${intro} forget=${forgetIntro} on=${fromIntro} onChange=${setFromIntro} disabled=${busy} />
       ${ctrGames > 1 && html`<p class="small muted">${t('new.ctrGames', 'This builds {n} 3DS games on this computer{size}. “Only me” builds just yours – the others build their own.', { n: ctrGames, size: ctrGb ? ` (≈ ${(ctrGames * Number(ctrGb)).toFixed(1)} GB)` : '' })}</p>`}
       <div class="row">
         <button class="btn primary big" disabled=${busy || !inspect || inspect.failed} onClick=${build}><${Icon} name=${solo ? 'play' : 'link'} size=${16} />${busy ? t('new.building', 'Building …')
@@ -915,6 +921,9 @@ function JoinRun() {
   const ownReleases = pack && needsIdenticalRom(pack) ? (library?.roms || []).filter((r) => !r.hackId && !r.customHack && r.gameId && rootOf(r.gameId) === pack.game?.id) : [];
   const ownMate = pack && mateId && needsIdenticalRom(pack) && (library?.roms || []).some((r) => !r.hackId && !r.customHack && r.gameId && rootOf(r.gameId) === mateId);
   const patch = pack?.patch ? library?.patches?.find((p) => p.sha1 === pack.patch.sha1) || (baseCrc && library?.patches?.find((p) => p.expectedCrc === baseCrc)) : null;
+  // our own intro save for this game (server/lib/introsave.mjs) – nothing of it comes with the invite
+  const [intro, forgetIntro] = useIntroSave(rom ? `romId=${encodeURIComponent(rom.id)}${patch ? `&patchId=${encodeURIComponent(patch.id)}` : ''}` : null);
+  const [fromIntro, setFromIntro] = useState(true);
 
   // seat: the host's hint with a code invite – { slot, taken } (see JoinCode); none with an invite file
   const load = async (text, seat = null) => {
@@ -952,6 +961,7 @@ function JoinRun() {
         // same file name as the host's ("Robin – Silberne Edition Randomized.gbc", not the raw header title; a hack –
         // also a pre-patched one without a patch file – by its name, as the host's wizard does); our own title on a pair join
         gameTitle: pack.patch?.name || hackById(pack.game?.hackId)?.name || pack.game?.hackName || (pair ? titleOf(pair.yours) : gameById(pack.game?.id) ? gameTitle(gameById(pack.game.id)) : undefined),
+        ...(intro && fromIntro ? { introSave: true, introSlot: mine } : {}),
       });
       setLog(res.log);
       setMe(mine, pack.id);
@@ -1006,6 +1016,7 @@ function JoinRun() {
         ${taken.includes(mine) && html`<p class="small warning info">${t('join.takenHint', 'The host’s app says {name} is already in the run. Only pick it if that’s you on another computer.', { name: pack.players?.[mine]?.name || mine.toUpperCase() })}</p>`}`}
       ${shinyNote(pack) && html`<p class="small muted">${t('join.shiny', 'This run changes shinies ({what}) – your game gets the same.', { what: shinyNote(pack) })}</p>`}
       ${pack.game?.system === '3ds' && pack.randomizer?.enabled && html`<p class="small muted">${t('join.ctrNote', 'A randomized 3DS run: your game is rebuilt from your own decrypted copy – a few GB and a few minutes. Afterwards souldew checks that it matches the host’s byte for byte.')}</p>`}
+      <${IntroSaveOption} intro=${intro} forget=${forgetIntro} on=${fromIntro} onChange=${setFromIntro} disabled=${busy} />
       <div><button class="btn primary big" disabled=${busy || !rom || (pack.patch && !patch)} onClick=${build}>${busy ? t('new.building', 'Building …') : t('join.build', 'Build my game & join')}</button></div>
       ${busy && html`<${BuildProgress} state=${progress} name=${(s) => pack.players?.[s]?.name || s?.toUpperCase() || ''} />`}
       ${(busy ? progress?.log || [] : log).length > 0 && html`<div class="log">${(busy ? progress.log : log).map(buildLogText).join('\n')}</div>`}

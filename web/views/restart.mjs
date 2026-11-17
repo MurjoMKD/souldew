@@ -10,6 +10,7 @@ import { t } from '../lib/i18n.mjs';
 import { restartRun, mySlotIn } from '../lib/restart.mjs';
 import { api } from '../lib/api.mjs';
 import { ShareButton, HallOfFame } from './liveshare.mjs';
+import { IntroSaveOption, useIntroSave } from './introsave.mjs';
 import { endEvent } from '../lib/liveshare.mjs';
 import { numberedName, baseName, newAttempt, restartPlan, RESTART_KEY, CLAIM_TTL } from '/shared/restart.mjs';
 
@@ -23,6 +24,9 @@ export function RestartModal({ r, rules, onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [lost, setLost] = useState(false); // our build lost a same-moment race and was set aside
+  // the intro save kept for this game (server/lib/introsave.mjs): the new attempt starts from it unless unticked
+  const [intro, forgetIntro] = useIntroSave(`run=${r.id}`);
+  const [fromIntro, setFromIntro] = useState(true);
   const next = numberedName(baseName(r.name), status?.runs);
   const solo = runMode(r) === 'nuzlocke';
   const n = slotsOf(r).length;
@@ -68,7 +72,7 @@ export function RestartModal({ r, rules, onClose }) {
       // open the old run – their app offers to join the new one
       const out = await newAttempt({
         doc: live, entry: live ? null : saved ?? null, me: mine, byName: myName, runs: status?.runs,
-        build: () => restartRun(r, { runs: status?.runs, ...(rules ? { rules } : {}) }),
+        build: () => restartRun(r, { runs: status?.runs, ...(rules ? { rules } : {}), introSave: !!intro && fromIntro }),
         discard: (id) => api.del(`/api/runs/${id}`),
       });
       if (!out.started) {
@@ -130,7 +134,9 @@ export function RestartModal({ r, rules, onClose }) {
       ${randomized === false && html`<li>${t('restart.same2NoRnd', 'no randomizer – the same Pokémon as last time')}</li>`}
       ${!solo && html`<li>${n > 2 ? t('restart.same3Group', 'the other players get an invitation to join right away') : t('restart.same3', 'your partner gets an invitation to join right away')}</li>`}
     </ul>
-    <p class="small faint">${t('restart.note', 'Saves, encounters and the board start empty. “{old}” stays in your list as it is.', { old: r.name })}</p>
+    <${IntroSaveOption} intro=${intro} forget=${forgetIntro} on=${fromIntro} onChange=${setFromIntro} disabled=${busy} />
+    <p class="small faint">${intro && fromIntro ? t('restart.noteIntro', 'Encounters and the board start empty, your game starts from your intro save. “{old}” stays in your list as it is.', { old: r.name })
+      : t('restart.note', 'Saves, encounters and the board start empty. “{old}” stays in your list as it is.', { old: r.name })}</p>
     ${busy && html`<p class="small muted" role="status">${t('restart.building', 'Building the new games – this can take a minute …')}</p>`}`}
     ${error && html`<div class="warning error" role="alert">${error}</div>`}
   <//>`;
