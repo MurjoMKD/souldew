@@ -274,17 +274,25 @@ static size_t audio_n, audio_cap;
 // away whole frames once it was ahead of real time (as the fast player's host does – its cores hold their speed):
 // with a swinging speed the page got too little sound, then too much, and played it with ~10 holes a second.
 // Now the frames' sound goes into a queue and comes out resampled by k, exactly as many samples as wall-clock time
-// has passed – without holes. k follows the measured speed and how full the queue is (about FF_TARGET seconds); it is
+// has passed – without holes. k follows the measured speed and how full the queue is (about FF_TARGET seconds); it
 // glides (no jumps in pitch), and every change is announced right before the first sound made with it (event
 // "ffrate"), so souldew's turbo mixer can slow the sound back down by exactly the ratio it was sped up with.
+// Until 2.8.1 k followed the speed within 0.15 s and pulled hard on the queue (60 % faster or slower at a full target's
+// error): a Windows player's Pokémon Y video (4× asked, the PC at ≈1.7–3.7×) had the sped-up sound warble by about a
+// semitone, up and down every second or so – the pitch followed every swing of the speed. Now k follows the speed it
+// holds over a few seconds (FF_FOLLOW), and the queue (three times as deep) takes up the swings; it is only pulled on gently
+// (FF_PULL) – hard only near empty or full, where a hole or a skip would be worse than a short change of pitch.
 // A low-pass at the new Nyquist frequency goes first (two biquads – the plain average let the overtones fold back
 // into the audible range: harsh). Above FF_MAXK× the queue overflows and skips ahead, with a short crossfade.
 // That low-pass leaves a k-th of the bandwidth: slowed back down by the mixer ("Music continues" while a song has no
 // loop yet), 4× sound kept nothing above ~1.8 kHz – muffled music. So each frame's sound also goes out as it is
 // (message 8, FFSOUND), and the mixer records that one: the music at its own pace and pitch, nothing resampled.
 #define FF_MAXK 16.0
-#define FF_TARGET 0.15 // seconds of output kept in the queue (latency doesn't matter much for sped-up sound)
-#define FF_GLIDE 0.15  // seconds k takes to follow the speed (time constant)
+#define FF_TARGET 0.45 // seconds of output kept in the queue (latency doesn't matter much for sped-up sound)
+#define FF_FOLLOW 5    // seconds over which the speed the sound comes in at is averaged (time constant)
+#define FF_GLIDE 0.6   // seconds k takes to get where it is headed (time constant)
+#define FF_PULL 0.08   // how much faster / slower k goes for a queue a whole FF_TARGET too full / too empty …
+#define FF_EDGE 0.6    // … and, beyond this share of FF_TARGET off, how much more for the rest (near empty or full)
 #define FF_XFADE 256   // output frames of crossfade where the queue skips ahead
 #define FF_PI 3.14159265358979323846
 #define FF_CHUNK 160  // output frames sent at least at a time (~5 ms)
@@ -296,6 +304,7 @@ static struct {
   double glide;     // where k is gliding
   double kin;       // the speed the sound comes in at (smoothed)
   double due;       // output frames owed to wall-clock time
+  double age;       // seconds since turbo began (the speed isn't known yet at first: k follows it faster)
   int primed;       // the queue was full enough to start (again)
   double xpos;      // where the queue skipped from (crossfade), and how many frames of it are left
   int xleft;
@@ -331,6 +340,7 @@ static void ff_reset(double k) {
   ff.primed = 0;
   ff.xleft = 0;
   ff.k = ff.glide = ff.kin = k;
+  ff.age = 0;
   memset(ff.z, 0, sizeof ff.z);
   ff_lowpass(k);
 }
@@ -428,14 +438,22 @@ static void ff_frame(double dt, double sample_rate) {
   }
   // the ratio: the speed the sound comes in at, nudged towards the queue's target fill, gliding there (no jumps in
   // pitch); souldew hears of every change of more than 1 %, right before the sound made with it
-  if (dt > 0) ff.kin += ((double)(audio_n / 2) / (dt * sample_rate) - ff.kin) * (dt < FF_GLIDE ? dt / FF_GLIDE : 1);
+  // (right after the switch k starts at the asked-for speed, which the PC may not reach: it follows faster at first, so
+  // the queue doesn't run dry while it gets there)
+  ff.age += dt;
+  const double follow = ff.age < FF_FOLLOW ? 0.25 + ff.age * (FF_FOLLOW - 0.25) / FF_FOLLOW : FF_FOLLOW;
+  const double glide = ff.age < FF_FOLLOW ? 0.15 + ff.age * (FF_GLIDE - 0.15) / FF_FOLLOW : FF_GLIDE;
+  if (dt > 0) ff.kin += ((double)(audio_n / 2) / (dt * sample_rate) - ff.kin) * (dt < follow ? dt / follow : 1);
   double e = (fill - FF_TARGET) / FF_TARGET;
   if (e < -1) e = -1;
   if (e > 1.5) e = 1.5;
-  double to = ff.kin * (1 + 0.6 * e);
+  double pull = FF_PULL * e; // gently around the target, hard near empty or full
+  if (e > FF_EDGE) pull += 0.6 * (e - FF_EDGE);
+  else if (e < -FF_EDGE) pull += 0.6 * (e + FF_EDGE);
+  double to = ff.kin * (1 + pull);
   if (to < 1) to = 1;
   if (to > FF_MAXK) to = FF_MAXK;
-  ff.glide += (to - ff.glide) * (dt < FF_GLIDE ? dt / FF_GLIDE : 1);
+  ff.glide += (to - ff.glide) * (dt < glide ? dt / glide : 1);
   if (fabs(ff.glide / ff.k - 1) > 0.01) {
     ff.k = ff.glide;
     ff_lowpass(ff.k);
