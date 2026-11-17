@@ -1817,7 +1817,7 @@ export function readDoc(runId) {
  */
 export function defaultSavePath(manifest, slot) {
   const rom = manifest?.outputs?.[slot]?.rom;
-  if (typeof rom !== 'string' || !/\.(nds|gba|gbc|gb)$/i.test(rom)) return null;
-  return runPath(manifest.id, rom.replace(/\.(nds|gba|gbc|gb)$/i, '.sav'));
+  if (typeof rom !== 'string' || !/\.(nds|gba|gbc|gb|sgb)$/i.test(rom)) return null;
+  return runPath(manifest.id, rom.replace(/\.(nds|gba|gbc|gb|sgb)$/i, '.sav'));
 }
 

@@ -371,7 +371,7 @@ handle('pick-files', async (e, opts) => {
     title: typeof opts.title === 'string' && opts.title ? opts.title.slice(0, 200) : t('lib.addTitle', 'Add games to souldew'),
     properties: opts.folder ? ['openDirectory'] : ['openFile', 'multiSelections'],
     filters: opts.folder ? undefined : [
-      { name: t('dialog.fileTypes', 'ROMs, patches & archives'), extensions: ['gb', 'gbc', 'gba', 'nds', '3ds', 'cci', 'cxi', 'cia', '3dsx', 'zcci', 'zcxi', 'z3dsx', 'zip', 'xdelta', 'vcdiff', 'bps', 'ups', 'ips', 'json'] },
+      { name: t('dialog.fileTypes', 'ROMs, patches & archives'), extensions: ['gb', 'gbc', 'sgb', 'gba', 'nds', '3ds', 'cci', 'cxi', 'cia', '3dsx', 'zcci', 'zcxi', 'z3dsx', 'zip', 'xdelta', 'vcdiff', 'bps', 'ups', 'ips', 'json'] },
     ],
   });
   if (r.canceled) return [];

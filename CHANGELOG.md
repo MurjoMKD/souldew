@@ -2,6 +2,21 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## 2.8.1
+
+- **Fast-forward on a key, like in mGBA** (thanks to a player for the idea). Hold Tab to fast-forward while it is held,
+  press Shift+Tab to switch fast-forward on or off – both at the turbo speed you picked last. It works in every player
+  (the browser player, the fast player and the 3DS player), and Tab no longer moves the focus away from the game while
+  you play. Both keys can be changed under Settings › Controls, and under Settings › Controller you can put them on a
+  controller button too (none by default). Help › Controls & shortcuts shows the keys you use.
+- **“What hits …” in the battle help folds in** (thanks to a player for the feedback). Seeing the opponent's moves before
+  it uses them gave a bit too much away, so that part of the battle help is now folded in to its title line by default.
+  Click it (or use the keyboard) to unfold it – souldew remembers your choice. Your own moves, the type charts and the
+  team check stay as they were.
+- **.sgb files work like .gb files** (thanks to a player for the report). Some cartridge readers save Red, Blue and other
+  Game Boy games as .sgb (Super Game Boy) files. souldew now takes them everywhere: adding files, drag & drop, zips,
+  “Find ROMs on this computer”, recognising the game, ROM hacks, new runs and playing.
+
 ## 2.8.0
 
 - **Catch chance in wild battles** (a community idea). The battle help now shows your chance to catch the wild

@@ -445,11 +445,13 @@ function sendInput() {
 }
 
 let keyMap = {}; // keyCode → button
+let hotkeys = controls.resolveHotkeys(null); // the fast-forward keys (Tab, Shift+Tab) – handled by the play view
 function forwardKey(e, down) {
-  post({ type: 'emu-key', key: e.key, code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down, repeat: e.repeat });
+  post({ type: 'emu-key', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down, repeat: e.repeat, blur: e.blur || undefined });
 }
 addEventListener('keydown', (e) => {
   forwardKey(e, true);
+  if (controls.isHotkeyKey(e, hotkeys)) e.preventDefault(); // Tab fast-forwards here, it doesn't move the focus
   const b = keyMap[e.keyCode];
   if (b === undefined) return;
   e.preventDefault();
@@ -464,7 +466,7 @@ addEventListener('keyup', (e) => {
   sendInput();
 });
 addEventListener('blur', () => {
-  forwardKey({ key: 'Tab', code: 'Tab' }, false);
+  forwardKey({ key: 'Tab', code: 'Tab', blur: true }, false); // ends a held fast-forward
   inp.keys = 0;
   inp.pad = 0;
   inp.touch = false;
@@ -510,14 +512,18 @@ if (SYSTEM === 'nds') {
 let padCfg = null; // config.pads
 let padButtons = controls.padMap(null); // game button → controller button label
 const padRec = controls.padRecorder(); // (diagnostics: __emu.padInfo)
+let padActions = controls.padActions(null); // controller hotkeys: standard button index → action
 let controlsSig = '';
 function applyControls(config) {
   const sig = JSON.stringify([config?.controls || null, config?.pads || null]);
   if (sig === controlsSig) return; // (the play view hands them over once the game runs – mostly what was read at start)
   controlsSig = sig;
   keyMap = controls.keyButtons(config?.controls);
+  hotkeys = controls.resolveHotkeys(config?.controls);
   padCfg = config?.pads || null;
   padButtons = controls.padMap(padCfg);
+  padActions = controls.padActions(padCfg);
+  post({ type: 'emu-pad', action: 'ffHold', down: false }); // (a fast-forward button held under the old buttons)
   // what was held under the old buttons is let go (the next poll presses what is still down)
   inp.keys = 0;
   inp.pad = 0;
@@ -528,7 +534,6 @@ function applyControls(config) {
 // like the D-pad; RT/R2 toggles turbo, LT/L2 and Home pause (as in player.html)
 function startPads() {
   const IDX = Object.fromEntries(controls.PAD_LABELS.map((l, i) => [l, i]));
-  const HOT = { 7: 'turbo', 6: 'pause', 16: 'pause' };
   const held = {};
   setInterval(() => {
     if (!st.ready || document.visibilityState === 'hidden') return;
@@ -552,11 +557,7 @@ function startPads() {
     if (ly < -0.5) bits |= 1 << BIT.up;
     if (ly > 0.5) bits |= 1 << BIT.down;
     inp.pad = controls.appHasPad() ? 0 : bits; // the app's menus have the controller (lib/padnav.mjs)
-    for (const [i, action] of Object.entries(HOT)) {
-      const on = !!pad.buttons[i]?.pressed;
-      if (on && !held[i]) post({ type: 'emu-pad', action });
-      held[i] = on;
-    }
+    for (const m of controls.padHotkeyPresses(pad, padActions, held, controls.appHasPad())) post(m);
     sendInput();
   }, 16);
 }

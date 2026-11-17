@@ -1374,15 +1374,21 @@
     window.parent?.postMessage({ type: 'emu-started', core: E().getCore(), system: E().getCore(true) }, location.origin);
   };
   const forwardKey = (e, down) => window.parent?.postMessage({
-    type: 'emu-key', key: e.key, code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down, repeat: e.repeat,
+    type: 'emu-key', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down, repeat: e.repeat,
+    blur: e.blur || undefined,
   }, location.origin);
-  window.addEventListener('keydown', (e) => forwardKey(e, true));
+  let hotkeys = null; // the fast-forward keys (Tab, Shift+Tab – lib/controls.mjs resolveHotkeys), handled by the play view
+  window.addEventListener('keydown', (e) => {
+    forwardKey(e, true);
+    // Tab fast-forwards here, it doesn't move the focus out of the game (before the controls are read: Tab)
+    if (controlsLib ? controlsLib.isHotkeyKey(e, hotkeys) : e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) e.preventDefault();
+  });
   window.addEventListener('keyup', (e) => forwardKey(e, false));
   // Focus left the game while keys were held (alt-tab, a click outside): the keyups never come. End the turbo and
   // let go of every game button – otherwise the player keeps walking in one direction when they come back.
   let release = () => {};
   window.addEventListener('blur', () => {
-    forwardKey({ key: 'Tab', code: 'Tab' }, false);
+    forwardKey({ key: 'Tab', code: 'Tab', blur: true }, false); // ends a held fast-forward
     release();
   });
 
@@ -1393,6 +1399,7 @@
   // USB microphone (issue #2), and the real controller then pressed nothing. So its gamepad events go through here:
   // only the chosen device's reach the game, always as player 1.
   let padWanted = null; // config.pads.device – Settings › Controller › "Controller to use"
+  let padActions = { 7: 'turbo', 6: 'pause', 16: 'pause' }; // controller hotkeys (lib/controls.mjs padActions)
   function startPads(c) {
     const idx = Object.fromEntries(c.BUTTONS.map((b) => [b.id, b.ejs]));
     const stick = { up: false, down: false, left: false, right: false };
@@ -1447,7 +1454,6 @@
         g.loop();
       }
     };
-    const HOT = { 7: 'turbo', 6: 'pause', 16: 'pause' };
     let wasMuted = false;
     setInterval(() => {
       route(); // as soon as EmulatorJS is there – a controller may appear before the game runs
@@ -1462,11 +1468,7 @@
       set('right', x > 0.5);
       set('up', y < -0.5);
       set('down', y > 0.5);
-      for (const [i, action] of Object.entries(HOT)) {
-        const on = !!pad.buttons[i]?.pressed;
-        if (on && !held[i]) window.parent?.postMessage({ type: 'emu-pad', action }, location.origin);
-        held[i] = on;
-      }
+      for (const m of c.padHotkeyPresses(pad, padActions, held, muted)) window.parent?.postMessage(m, location.origin);
     }, 16);
   }
   // Settings › Controls and › Controller changed while the game runs (play.mjs → __emu.setControls): the game often
@@ -1481,6 +1483,9 @@
     controlsSig = sig;
     const table = c.ejsControls(config?.controls, undefined, config?.pads)[0];
     padWanted = config?.pads?.device || null;
+    hotkeys = c.resolveHotkeys(config?.controls);
+    padActions = c.padActions(config?.pads);
+    window.parent?.postMessage({ type: 'emu-pad', action: 'ffHold', down: false }, location.origin); // (held under the old buttons)
     release(); // what was held under the old buttons
     // (not booted yet: EmulatorJS still takes the table it was handed – the same object, so it is updated in place)
     if (window.EJS_defaultControls?.[0]) Object.assign(window.EJS_defaultControls[0], table);
@@ -1495,6 +1500,8 @@
       controlsLib = c;
       controlsSig = JSON.stringify([st?.config?.controls || null, st?.config?.pads || null]);
       padWanted = st?.config?.pads?.device || null;
+      hotkeys = c.resolveHotkeys(st?.config?.controls);
+      padActions = c.padActions(st?.config?.pads);
       startPads(c);
     })
     .catch((e) => console.warn('controls not applied', e))
