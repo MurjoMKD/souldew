@@ -32,6 +32,29 @@ import { shinyThreshold } from '/shared/shiny.mjs';
 import { claimPad } from '../lib/padnav.mjs';
 import { presenceLoop, presenceBody } from '../lib/presence.mjs';
 import { resolveHotkeys, hotkeyOf, keyMatches } from '../lib/controls.mjs';
+import { hotkeyHint, comboLabel } from './guide.mjs';
+
+/**
+ * What each shortcut of Settings › Controls does (lib/controls.mjs HOTKEYS – one entry each, test/controls.test.mjs
+ * checks that none is missing and that the play view acts on no key of its own): `a` = the session's actions.
+ */
+export const HOTKEY_ACTIONS = {
+  ffHold: (a) => a.ffHold(true),
+  ffToggle: (a) => a.ffToggle(),
+  turbo: (a) => a.turbo(),
+  faster: (a) => a.faster(),
+  slower: (a) => a.slower(),
+  pause: (a) => a.pause(),
+  reset: (a) => a.reset(),
+  quicksave: (a) => a.quicksave(), // the selected slot (last saved / loaded one)
+  quickload: (a) => a.quickload(),
+  ...Object.fromEntries([1, 2, 3, 4].flatMap((n) => [[`save${n}`, (a) => a.quicksave(n)], [`load${n}`, (a) => a.quickload(n)]])),
+  screenshot: (a) => a.screenshot(),
+  mute: (a) => a.mute(),
+  louder: (a) => a.louder(),
+  quieter: (a) => a.quieter(),
+  fullscreen: (a) => a.fullscreen(),
+};
 
 let TABLES = null;
 async function liveTables() {
@@ -318,6 +341,7 @@ export function GameSession({ session, mode }) {
   // the fast-forward hotkeys (Settings › Controls; Tab held / Shift+Tab unless re-bound, lib/controls.mjs)
   const hotRef = useRef(null);
   hotRef.current = resolveHotkeys(status?.config?.controls);
+  const hint = (id) => hotkeyHint(hotRef.current[id]); // " (P)" after a button's name – nothing when it has no key
   const speedRef = useRef(1);
   speedRef.current = speed;
   const isDs = target.system === 'nds';
@@ -631,42 +655,24 @@ export function GameSession({ session, mode }) {
   const onKey = useCallback((k, fromGame) => {
     const hot = hotRef.current;
     // Releasing the hold key – or focus leaving the game (`blur`) – always ends a held fast-forward (focus may have left
-    // the game in between).
+    // the game in between; Shift may be let go first).
     if (!k.down) {
       if (turboHeld.current && (k.blur || keyMatches(k, hot?.ffHold))) act.current.ffHold(false);
       return false;
     }
-    const ff = hotkeyOf(k, hot);
-    if (ff) {
-      // On Tab only while playing – on the page Tab keeps moving focus between controls. Another key works like the
-      // other shortcuts.
-      if (k.ctrl || k.alt || k.meta || !(fromGame || (hot[ff].keyCode !== 9 && modeRef.current === 'full'))) return false;
-      if (ff === 'ffHold') act.current.ffHold(true);
-      else if (!k.repeat) act.current.ffToggle();
+    // the "Load state?" prompt over the game: Escape says no (as in every prompt – no shortcut of its own)
+    if (k.key === 'Escape' && pendingRef.current && !k.ctrl && !k.alt && !k.meta) {
+      act.current.cancelLoad();
       return true;
     }
-    if (k.key === 'Tab') return false;
-    // Ctrl/Alt/Cmd combos belong to the browser / the app menu (Ctrl+R, Cmd+1 …), not to the game.
-    if (!k.down || k.repeat || k.ctrl || k.alt || k.meta) return false;
-    if (!fromGame && modeRef.current !== 'full') return false;
-    const a = act.current;
-    const key = (k.key || '').toLowerCase();
-    if (key === 'p') a.pause();
-    else if (key === 't') a.turbo();
-    else if (k.key === 'F5') a.quicksave(); // the selected slot (last saved / loaded one)
-    else if (k.key === 'F8') a.quickload();
-    else if (k.key === 'F12') a.screenshot();
-    else if (key === 'm') a.mute();
-    else if (k.key === '+' || k.key === '=') a.louder();
-    else if (k.key === '-') a.quieter();
-    else if (key === 'f') a.fullscreen();
-    else if (key === 'r') a.reset();
-    else if (k.key === 'Escape' && pendingRef.current) a.cancelLoad();
-    else if (/^[1-4]$/.test(k.key) || /^Digit[1-4]$/.test(k.code || '')) {
-      const n = Number((k.code || '').slice(-1)) || Number(k.key);
-      if (k.shift) a.quicksave(n);
-      else a.quickload(n);
-    } else return false;
+    // every other key: a shortcut of Settings › Controls (lib/controls.mjs HOTKEYS) – exactly its key and modifiers
+    const id = hotkeyOf(k, hot);
+    if (!id) return false;
+    // from inside the game always; from the page only while the game is shown big (in the mini player the page's keys
+    // belong to the page) – and never Tab there, which keeps moving the focus between controls
+    if (!fromGame && (modeRef.current !== 'full' || k.key === 'Tab')) return false;
+    if (id === 'ffHold') act.current.ffHold(true);
+    else if (!k.repeat) HOTKEY_ACTIONS[id](act.current);
     return true;
   }, []);
 
@@ -1349,7 +1355,9 @@ export function GameSession({ session, mode }) {
               class=${screenShown ? 'ci-shown' : 'ci-wait'} onLoad=${focusGame}></iframe>
             ${osd && html`<div class="osd">${osd}</div>`}
             ${pendingLoad && html`<div class="screen-confirm" role="alertdialog" aria-live="assertive">
-              <span class="grow">${pendingLoad.slot <= 4 ? t('play.loadConfirm', 'Load state {n}? Progress since then is lost. Press {n} again or click Load.', { n: pendingLoad.slot })
+              <span class="grow">${pendingLoad.slot <= 4 ? (hotRef.current[`load${pendingLoad.slot}`]?.length
+                ? t('play.loadConfirmKey', 'Load state {n}? Progress since then is lost. Press {key} again or click Load.', { n: pendingLoad.slot, key: comboLabel(hotRef.current[`load${pendingLoad.slot}`][0]) })
+                : t('play.loadConfirmClick', 'Load state {n}? Progress since then is lost.', { n: pendingLoad.slot }))
                 : t('states.loadConfirm', 'Load “{name}”? Progress since then is lost.', { name: slotName(pendingLoad.slot) })}</span>
               <button class="btn small primary" onClick=${() => { actions.confirmLoad(); focusGame(); }}>${t('play.loadConfirmYes', 'Load')}</button>
               <button class="btn small ghost" data-pad-back onClick=${() => { actions.cancelLoad(); focusGame(); }}>${t('common.cancel', 'Cancel')}</button>
@@ -1369,15 +1377,15 @@ export function GameSession({ session, mode }) {
           </div>
         </div>
         <div class="session-bar" role="toolbar" aria-label=${t('play.controls', 'Game controls')}>
-          ${btn(paused ? 'resume' : 'pause', t('keys.pause', 'Pause / resume') + ' (P)', actions.pause, { 'data-pad-first': '' })}
-          ${btn('reset', t('keys.reset', 'Reset the game (asks first)') + ' (R)', actions.reset)}
+          ${btn(paused ? 'resume' : 'pause', t('keys.pause', 'Pause / resume') + hint('pause'), actions.pause, { 'data-pad-first': '' })}
+          ${btn('reset', t('keys.reset', 'Reset the game (asks first)') + hint('reset'), actions.reset)}
           <span class="sep"></span>
-          <button class="btn icon" title=${t('play.slower', 'Slower')} aria-label=${t('play.slower', 'Slower')} onClick=${actions.slower}><span aria-hidden="true">–</span></button>
+          <button class="btn icon" title=${t('play.slower', 'Slower') + hint('slower')} aria-label=${t('play.slower', 'Slower')} onClick=${actions.slower}><span aria-hidden="true">–</span></button>
           <span class=${`speed ${realSpeed ? 'behind' : ''}`} aria-live="polite"
             title=${realSpeed ? t('play.realSpeedOf', 'Set to {set} – your computer manages about {n}× in this scene', { set: speedText(speed), n: realSpeed }) : ''}>${realSpeed ? `≈${realSpeed}×` : speedText(speed)}${realSpeed ? html`<small class="speed-real">${t('play.speedSet', 'set: {set}', { set: speedText(speed) })}</small>` : ''}</span>
-          ${btn('fast', t('play.faster', 'Faster') + ' (T)', actions.faster)}
+          ${btn('fast', t('play.faster', 'Faster') + hint('faster'), actions.faster)}
           <span class="sep"></span>
-          ${btn('save', t('states.quicksave', 'Quick save to slot {n}', { n: sel }) + ' (F5)', () => actions.quicksave())}
+          ${btn('save', t('states.quicksave', 'Quick save to slot {n}', { n: sel }) + hint('quicksave'), () => actions.quicksave())}
           <button class=${`btn small ghost states-btn ${statesOpen ? 'on' : ''}`} aria-expanded=${statesOpen} aria-haspopup="dialog"
             title=${t('states.openHint', 'All save states – load, overwrite, delete')} onClick=${() => setStatesOpen(!statesOpen)}>
             <${Icon} name="load" size=${14} />${t('states.title', 'Save states')}<span class="px slot-no" aria-hidden="true">${sel}</span></button>
@@ -1394,7 +1402,7 @@ export function GameSession({ session, mode }) {
             </div>`}
           </span>`}
           ${isDs && btn(layout === 'lr' ? 'layoutTb' : 'layoutLr', layout === 'lr' ? t('play.layoutTb', 'Screens on top of each other') : t('play.layoutLr', 'Screens side by side'), actions.layout)}
-          ${btn('camera', t('keys.screenshot', 'Screenshot') + ' (F12)', actions.screenshot)}
+          ${btn('camera', t('keys.screenshot', 'Screenshot') + hint('screenshot'), actions.screenshot)}
           <span class="cheat-wrap">
             ${btn('candy', t('cheat.title', 'Cheats'), () => setCheatOpen(!cheatOpen), { 'aria-expanded': cheatOpen, 'aria-haspopup': 'dialog' })}
             ${cheatOpen && html`<div class="cheat-pop" role="dialog" aria-label=${t('cheat.title', 'Cheats')}>
@@ -1410,12 +1418,12 @@ export function GameSession({ session, mode }) {
             ${btn(muted || volume === 0 ? 'mute' : 'sound', t('play.volume', 'Volume'), () => setSoundOpen(!soundOpen), { 'aria-expanded': soundOpen })}
             ${soundOpen && html`<div class="sound-pop" role="group" aria-label=${t('play.volume', 'Volume')}>
               <div class="sound-row">
-              <button class="btn icon" aria-label=${t('play.quieter', 'Quieter')} title=${t('play.quieter', 'Quieter') + ' (–)'} onClick=${actions.quieter}><span aria-hidden="true">–</span></button>
+              <button class="btn icon" aria-label=${t('play.quieter', 'Quieter')} title=${t('play.quieter', 'Quieter') + hint('quieter')} onClick=${actions.quieter}><span aria-hidden="true">–</span></button>
               <input type="range" min="0" max="100" step="5" value=${muted ? 0 : Math.round(volume * 100)} aria-label=${t('play.volume', 'Volume')}
                 onInput=${(e) => actions.volume(Number(e.target.value) / 100)} />
-              <button class="btn icon" aria-label=${t('play.louder', 'Louder')} title=${t('play.louder', 'Louder') + ' (+)'} onClick=${actions.louder}><span aria-hidden="true">+</span></button>
+              <button class="btn icon" aria-label=${t('play.louder', 'Louder')} title=${t('play.louder', 'Louder') + hint('louder')} onClick=${actions.louder}><span aria-hidden="true">+</span></button>
               <span class="mono tiny vol">${muted ? t('play.mutedShort', 'off') : `${Math.round(volume * 100)} %`}</span>
-              ${btn(muted ? 'sound' : 'mute', muted ? t('play.unmute', 'Sound on') : t('play.mute', 'Mute') + ' (M)', actions.mute)}
+              ${btn(muted ? 'sound' : 'mute', muted ? t('play.unmute', 'Sound on') : t('play.mute', 'Mute') + hint('mute'), actions.mute)}
               </div>
               <label class="turbo-audio" title=${t('play.turboAudioHint', 'What you hear while fast-forwarding. “Music continues” keeps the music at its normal speed and pitch – sound effects stay silent. “Sped-up original” plays the game’s own sound, faster and higher.')}>
                 <span class="tiny">${t('play.turboAudio', 'Turbo audio')}</span>
@@ -1430,7 +1438,7 @@ export function GameSession({ session, mode }) {
                 onClick=${() => saveDiagnostics({ turboAudio, speed: speed === MAX ? 'max' : speed, reach, steps: steps.map((x) => (x === MAX ? 'max' : x)), volume, perf: emu()?.perf?.() ?? null, audioGraph: emu()?.audioGraph?.() ?? null, pad: emu()?.padInfo?.() ?? null })}><${Icon} name="save" size=${14} />${t('play.diag', 'Save diagnostics')}</button>
             </div>`}
           </span>
-          ${btn(fs ? 'shrink' : 'full', (fs ? t('play.exitFullscreen', 'Leave fullscreen') : t('keys.fullscreen', 'Fullscreen game')) + ' (F)', actions.fullscreen)}
+          ${btn(fs ? 'shrink' : 'full', (fs ? t('play.exitFullscreen', 'Leave fullscreen') : t('keys.fullscreen', 'Fullscreen game')) + hint('fullscreen'), actions.fullscreen)}
         </div>
         ${slow && mode === 'full' && html`<${SlowNotice} slow=${slow} isDs=${isDs} native=${nativeOn} onClose=${() => { setSlow(null); focusGame(); }} />`}
         ${statesOpen && mode === 'full' && html`<${StatePanel} id=${target.stateId} core=${core} gen=${gameGen} version=${statesVer} selected=${sel}

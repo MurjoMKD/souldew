@@ -2,6 +2,19 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## 2.8.2
+
+- **Every shortcut can be changed – and any key can be a game button** (thanks to a player on Discord). Keys like R
+  (reset), P (pause), T (turbo), M, F, F5 / F8 / F12, + / – and 1–4 used to be locked to their shortcuts, so they could
+  never become a game button – a problem if R has been your B button for ten years. Now Settings › Controls lists every
+  shortcut you can use while playing under “Shortcuts while playing”: change its key like a game button's, give it a key
+  with Shift, Ctrl, Alt or ⌘, or switch it off with “No key”. Give a game button a key a shortcut has and it simply
+  takes it over – a short note says which shortcut lost its key, and you can swap the two keys or undo it. Keys the
+  system needs (⌘Q, Alt+F4 and so on) are refused with a note. Reset, pause and the save states always stay in the bar
+  under the game, also without a key. The controller works the same way: ZR (turbo) and ZL (pause) can be changed,
+  switched off or used for a game button, and the Home button always pauses. Your current keys stay as they are, and
+  Help › Controls & shortcuts and the Emulator menu show the keys you use.
+
 ## 2.8.1
 
 - **Fast-forward on a key, like in mGBA** (thanks to a player for the idea). Hold Tab to fast-forward while it is held,

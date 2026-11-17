@@ -141,6 +141,10 @@
     // own (applySkip below).
     desmume_advanced_timing: 'disabled',
     lockMouse: 'disabled', // melonDS/DeSmuME report supportsMouse → EmulatorJS would pointer-lock on every click
+    // the keyboard stays EmulatorJS' 12 game buttons only: with direct input the core's own RetroArch hotkeys (F1 menu,
+    // Space fast-forward, P pause, H reset …) would act on keys the player gave to a game button or a shortcut
+    keyboardInput: 'disabled',
+    altKeyboardInput: 'disabled',
     'save-save-interval': '15',
   };
   // No pointer lock at all in here (EmulatorJS' canvas click handler, RetroArch's mouse grab): the mouse must
@@ -1377,12 +1381,17 @@
     type: 'emu-key', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down, repeat: e.repeat,
     blur: e.blur || undefined,
   }, location.origin);
-  let hotkeys = null; // the fast-forward keys (Tab, Shift+Tab – lib/controls.mjs resolveHotkeys), handled by the play view
+  let hotkeys = null; // the shortcuts' keys (Settings › Controls – lib/controls.mjs resolveHotkeys), handled by the play view
+  // (capture: before EmulatorJS' own key listener, which presses the game buttons)
   window.addEventListener('keydown', (e) => {
     forwardKey(e, true);
-    // Tab fast-forwards here, it doesn't move the focus out of the game (before the controls are read: Tab)
-    if (controlsLib ? controlsLib.isHotkeyKey(e, hotkeys) : e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) e.preventDefault();
-  });
+    // a shortcut's exact key belongs to the play view: EmulatorJS never sees it (Shift+R as reset while R is the B
+    // button), and Tab fast-forwards here instead of moving the focus out of the game (before the controls are read: Tab)
+    if (controlsLib ? controlsLib.isHotkeyKey(e, hotkeys) : e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
   window.addEventListener('keyup', (e) => forwardKey(e, false));
   // Focus left the game while keys were held (alt-tab, a click outside): the keyups never come. End the turbo and
   // let go of every game button – otherwise the player keeps walking in one direction when they come back.
@@ -1399,7 +1408,7 @@
   // USB microphone (issue #2), and the real controller then pressed nothing. So its gamepad events go through here:
   // only the chosen device's reach the game, always as player 1.
   let padWanted = null; // config.pads.device – Settings › Controller › "Controller to use"
-  let padActions = { 7: 'turbo', 6: 'pause', 16: 'pause' }; // controller hotkeys (lib/controls.mjs padActions)
+  let padActions = {}; // controller shortcuts: standard button index → action (lib/controls.mjs padActions, set with the controls)
   function startPads(c) {
     const idx = Object.fromEntries(c.BUTTONS.map((b) => [b.id, b.ejs]));
     const stick = { up: false, down: false, left: false, right: false };

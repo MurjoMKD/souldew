@@ -445,13 +445,15 @@ function sendInput() {
 }
 
 let keyMap = {}; // keyCode → button
-let hotkeys = controls.resolveHotkeys(null); // the fast-forward keys (Tab, Shift+Tab) – handled by the play view
+let hotkeys = controls.resolveHotkeys(null); // the shortcuts' keys (Settings › Controls) – handled by the play view
 function forwardKey(e, down) {
   post({ type: 'emu-key', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down, repeat: e.repeat, blur: e.blur || undefined });
 }
 addEventListener('keydown', (e) => {
   forwardKey(e, true);
-  if (controls.isHotkeyKey(e, hotkeys)) e.preventDefault(); // Tab fast-forwards here, it doesn't move the focus
+  // a shortcut's exact key: the play view's, never also the game's (Shift+R as reset while R is B) – and Tab
+  // fast-forwards here instead of moving the focus
+  if (controls.isHotkeyKey(e, hotkeys)) return e.preventDefault();
   const b = keyMap[e.keyCode];
   if (b === undefined) return;
   e.preventDefault();

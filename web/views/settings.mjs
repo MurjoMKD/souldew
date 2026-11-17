@@ -1,14 +1,15 @@
-import { html, useState, useEffect, useRef } from '/vendor/htm-preact.mjs';
+import { html, useState, useEffect, useLayoutEffect, useRef } from '/vendor/htm-preact.mjs';
 import { useApp, openExternal, copy } from '../lib/ui.mjs';
 import { LINKS } from '../lib/links.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, LANGS, setLang, currentLang } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
 import { applyTheme } from '../lib/theme.mjs';
-import { BUTTONS, RESERVED, PRESETS, bindable, keyLabel, resolve as resolveControls, presetMap, activePreset, detectLayout, currentLayout,
-  PAD_LABELS, PAD_PRESETS, PAD_HOTKEYS, padMap, padFamily, padLabel, pickPad, padKey, looksLikePad,
-  HOTKEYS, resolveHotkeys, hotkeyBindable, sameCombo, padHotkeys } from '../lib/controls.mjs';
-import { SHORTCUTS, buttonLabel, comboLabel } from './guide.mjs';
+import { BUTTONS, PRESETS, bindable, keyLabel, keyFor, resolve as resolveControls, presetMap, activePreset, detectLayout, currentLayout,
+  PAD_LABELS, PAD_PRESETS, PAD_HOTKEY_IDS, PAD_HOTKEY_DEFAULTS, padMap, padFamily, padLabel, pickPad, padKey, looksLikePad,
+  HOTKEY_IDS, HOTKEY_ROWS, isHotkeyId, resolveHotkeys, hotkeyBindable, sameCombo, plainCombo, combo, reservedCombo, assignKey, clearKey, changedBindings,
+  padHotkeys, assignPad, PAD_NONE } from '../lib/controls.mjs';
+import { buttonLabel, comboLabel, hotkeyLabel } from './guide.mjs';
 import { UpdateSection } from './update.mjs';
 import { PLATFORM } from '../lib/platform.mjs';
 import { gpuBackends } from '/shared/gpu.mjs';
@@ -20,90 +21,113 @@ const SYSTEMS = [['gb', 'Game Boy'], ['gbc', 'Game Boy Color'], ['gba', 'Game Bo
 const externalOnly = (sys, status) => sys === '3ds' && !status?.ctr?.ok;
 const SYS_SHORT = { nds: 'DS', gba: 'GBA', gb: 'GB' };
 
-function shortcutAction(code, controls) {
-  const k = RESERVED[code];
-  if (k === 'Esc') return t('ctl.escape', 'Cancel / leave fullscreen');
-  const all = SHORTCUTS(controls);
-  const hit = all.find(([s]) => s === k) || (/\d$/.test(k) && all.find(([s]) => s === '1–4'));
-  return hit ? hit[1] : '';
-}
-
-/** The fast-forward hotkeys' names (lib/controls.mjs HOTKEYS) – rows below the game buttons, here and in Controller. */
-const hotkeyLabel = (id) => (id === 'ffHold' ? t('ctl.ffHold', 'Fast-forward (hold)') : t('ctl.ffToggle', 'Fast-forward on / off'));
-const isHotkey = (id) => HOTKEYS.some((h) => h.id === id);
-/** The hotkeys a stored mapping sets itself – kept when the game buttons change (a preset, a new key). */
-const savedHotkeys = (saved) => Object.fromEntries(HOTKEYS.filter((h) => saved?.[h.id]).map((h) => [h.id, saved[h.id]]));
-
 // "WASD" is printed as the layout prints those keys (ZQSD on AZERTY)
 const presetLabel = (id) => (id === 'arrows' ? t('ctl.presetArrows', 'Arrow keys')
   : ['up', 'left', 'down', 'right'].map((b) => keyLabel(presetMap(id)[b])).join(''));
+
+const rowLabel = (r) => (r.id === 'save' ? t('keys.saveSlot', 'Save to slot 1–4') : r.id === 'load' ? t('keys.loadSlot', 'Load slot 1–4') : hotkeyLabel(r.id));
+const rowOf = (id) => HOTKEY_ROWS.find((r) => r.ids.includes(id))?.id || id;
+const SYS_ALL = ['nds', 'gba', 'gb'];
+
+/** A shortcut's other keys besides the first, for the row ("also Num +") – not the same key with Shift ("+" on US keyboards). */
+function alsoKeys(keys) {
+  return keys.slice(1).filter((c) => c.keyCode !== keys[0].keyCode).map((c) => comboLabel(c)).filter((l, i, a) => a.indexOf(l) === i);
+}
 
 function ControlsSection({ saved, save }) {
   const [, setLayoutTick] = useState(0);
   const lang = currentLang();
   useEffect(() => { detectLayout(lang).then(() => setLayoutTick((x) => x + 1)); }, [lang]);
   const map = resolveControls(saved);
-  const hot = resolveHotkeys(saved); // the fast-forward keys – rows of their own below the game buttons
-  const active = activePreset(saved); // null = custom (the game buttons; the hotkeys don't count)
-  const [listen, setListen] = useState(null); // button or hotkey waiting for its new key
-  const [msg, setMsg] = useState(null); // { text, swap?: { id, other, k } }
+  const hot = resolveHotkeys(saved); // every shortcut's keys – rows of their own below the game buttons
+  const active = activePreset(saved); // null = custom (the game buttons; the shortcuts don't count)
+  const [listen, setListen] = useState(null); // button or shortcut waiting for its new key
+  const [msg, setMsg] = useState(null); // { at (row), text, swap?, undo? } – the note under that row
   const bound = useRef(0);
-  const store = (next) => { setMsg(null); save({ controls: next }); };
-  const keyOf = (id) => (isHotkey(id) ? hot[id] : map[id]);
-  const nameOf = (id) => (isHotkey(id) ? hotkeyLabel(id) : buttonLabel(id));
-  // what a row may take over from another in a swap: a game button takes no Tab and no Shift
-  const fits = (id, k) => !!k && (isHotkey(id) ? hotkeyBindable(k.keyCode) : bindable(k.keyCode) && !(k.keyCode in RESERVED));
-  const plain = (id, k) => (isHotkey(id) || !k ? k : { keyCode: k.keyCode, key: k.key, ...(k.code ? { code: k.code } : {}) });
-  useEffect(() => {
+  const store = (next) => save({ controls: next });
+  const nameOf = (id) => (isHotkeyId(id) ? hotkeyLabel(id) : buttonLabel(id));
+  // what happened to the others, in a sentence each: "R was the key for Reset – Reset has no key now."
+  const lostText = (lost) => lost.map((l) => (l.left.length
+    ? t('ctl.tookOverAlso2', '{key} was also a key for “{action}” – it keeps {keys}.', { key: comboLabel(l.key), action: nameOf(l.id), keys: l.left.map((c) => comboLabel(c)).join(', ') })
+    : t('ctl.tookOver2', '{key} was the key for “{action}” – it has no key now.', { key: comboLabel(l.key), action: nameOf(l.id) }))).join(' ');
+  // (a layout effect: listening starts with the render that says "Press a key …", not a frame later)
+  useLayoutEffect(() => {
     if (!listen) return;
     const onKey = (e) => {
-      if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn'].includes(e.key)) return;
+      if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn', 'AltGraph', 'OS'].includes(e.key)) return;
       e.preventDefault();
       e.stopPropagation();
-      if (e.key === 'Escape') { setListen(null); setMsg(null); return; }
-      const hk = isHotkey(listen);
-      // a hotkey may have Shift (Shift+Tab), the game buttons are keys of their own
-      const k = { keyCode: e.keyCode, key: e.key, code: e.code, ...(hk && e.shiftKey ? { shift: true } : {}) };
-      if (hk && (e.ctrlKey || e.altKey || e.metaKey)) return setMsg({ text: t('ctl.hotkeyUnbindable', 'This key can’t be used for this shortcut. Press another key.') });
-      if (e.keyCode in RESERVED && !(hk && hotkeyBindable(e.keyCode))) {
-        if (!shortcutAction(e.keyCode, saved)) return setMsg({ text: t('ctl.unbindable', 'This key can’t be used for the game. Press another key.') });
-        return setMsg({ text: t('ctl.reserved', '{key} is already a shortcut while playing ({action}). Press another key.', { key: keyLabel(k), action: shortcutAction(e.keyCode, saved) }) });
-      }
+      if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) { setListen(null); setMsg(null); return; }
+      const hk = isHotkeyId(listen);
+      const at = rowOf(listen);
+      // a shortcut may have modifiers (Shift+Tab, Ctrl+R), a game button is a key of its own; the key's name as the
+      // layout prints it without modifiers (Shift+1, not "!"; ⌥R, not "®")
+      const name = keyFor(e.code, currentLayout())?.key;
+      const k = { keyCode: e.keyCode, key: hk && name ? name : e.key, code: e.code,
+        ...(hk ? Object.fromEntries([['shift', e.shiftKey], ['ctrl', e.ctrlKey], ['alt', e.altKey], ['meta', e.metaKey]].filter(([, v]) => v)) : {}) };
       if (hk ? !hotkeyBindable(e.keyCode) : !bindable(e.keyCode)) {
-        return setMsg({ text: hk ? t('ctl.hotkeyUnbindable', 'This key can’t be used for this shortcut. Press another key.') : t('ctl.unbindable', 'This key can’t be used for the game. Press another key.') });
+        return setMsg({ at, text: hk ? t('ctl.hotkeyUnbindable', 'This key can’t be used for this shortcut. Press another key.') : t('ctl.unbindable', 'This key can’t be used for the game. Press another key.') });
       }
+      const why = reservedCombo(hk ? k : { keyCode: k.keyCode });
+      if (why === 'system') return setMsg({ at, text: t('ctl.system', '{key} belongs to the system. Press another key.', { key: comboLabel(k) }) });
+      if (why === 'menu') return setMsg({ at, text: t('ctl.menu', '{key} is a shortcut of souldew’s menu. Press another key.', { key: comboLabel(k) }) });
       bound.current = Date.now();
       setListen(null);
-      // taken: a game button with this key – or, for a hotkey, the other hotkey with this key and Shift
-      const other = [...BUTTONS.map((b) => b.id), ...HOTKEYS.map((h) => h.id)].find((id) => id !== listen && keyOf(id)
-        && (isHotkey(id) && hk ? sameCombo(keyOf(id), k) : keyOf(id).keyCode === e.keyCode));
-      if (other) {
-        return setMsg({ text: t('ctl.taken', '{key} is already used for {button}.', { key: comboLabel(k), button: nameOf(other) }),
-          ...(fits(other, keyOf(listen)) ? { swap: { id: listen, other, k } } : {}) });
-      }
-      // (a new hotkey leaves the game buttons as they are stored – the default preset keeps following the layout)
-      if (!(hk ? sameCombo(hot[listen], k) : map[listen]?.keyCode === e.keyCode)) store(hk ? { ...(saved || {}), [listen]: k } : { ...savedHotkeys(saved), ...map, [listen]: k });
-      else setMsg(null);
+      const mine = hk ? hot[listen] : map[listen] ? [map[listen]] : [];
+      if (mine.length === 1 && (hk ? sameCombo(mine[0], combo(k)) : mine[0].keyCode === k.keyCode)) return setMsg(null); // the key it has
+      const { next, lost, swap } = assignKey(saved, listen, k);
+      store(next);
+      setMsg(lost.length ? { at, text: lostText(lost), swap, undo: saved } : null);
     };
     addEventListener('keydown', onKey, true);
     return () => removeEventListener('keydown', onKey, true);
   }, [listen, saved]);
-  const swap = () => {
-    const { id, other, k } = msg.swap;
-    const base = isHotkey(id) && isHotkey(other) ? saved || {} : { ...savedHotkeys(saved), ...map };
-    store({ ...base, [id]: k, [other]: plain(other, keyOf(id)) });
-  };
-  // the default preset is stored as "nothing saved", so it keeps following the keyboard layout (own hotkeys stay)
+  // the default preset is stored as "nothing saved", so it keeps following the keyboard layout (own shortcuts stay)
   const pick = (id) => {
     setListen(null);
     if (id === active) return;
-    const own = savedHotkeys(saved);
-    store(id === PRESETS[0].id ? (Object.keys(own).length ? own : null) : { ...presetMap(id), ...own });
+    const own = Object.fromEntries(HOTKEY_IDS.filter((h) => saved?.[h] != null).map((h) => [h, saved[h]]));
+    const next = id === PRESETS[0].id ? (Object.keys(own).length ? own : null) : { ...presetMap(id), ...own };
+    store(next);
+    // a preset's key that a shortcut had: the shortcut gives way – say so
+    const moved = changedBindings(saved, next).filter((c) => isHotkeyId(c.id));
+    setMsg(moved.length ? { at: 'preset', text: moved.map((c) => (c.after.length
+      ? t('ctl.movedTo', '“{action}” is now on {key}.', { action: nameOf(c.id), key: comboLabel(c.after[0]) })
+      : t('ctl.noKeyNow', '“{action}” has no key now.', { action: nameOf(c.id) }))).join(' '), undo: saved } : null);
+  };
+  const clear = (id) => {
+    bound.current = Date.now();
+    setListen(null);
+    store(clearKey(saved, id));
+    setMsg(null);
+  };
+  const click = (id) => { if (Date.now() - bound.current < 400) return; setMsg(null); setListen(listen === id ? null : id); };
+  const blur = (id) => setListen((l) => (l === id ? null : l));
+  // the note under a row: while listening "press a key" with "No key" (shortcuts), else what the last change did
+  const note = (at) => {
+    const listening = listen && rowOf(listen) === at;
+    if (!listening && msg?.at !== at) return null;
+    const text = msg?.at === at ? msg.text : t('ctl.pressFor', 'Press the new key for “{action}” – Esc cancels.', { action: nameOf(listen) });
+    // (mousedown: the key cap keeps the focus, so it is still listening when the click arrives)
+    const keep = (e) => e.preventDefault();
+    return html`<tr class="ctl-note"><td colspan="3"><div class="note row" role="status"><span class="grow">${text}</span>
+      ${listening && isHotkeyId(listen) && hot[listen].length > 0 && html`<button class="btn small" onMouseDown=${keep} onClick=${() => clear(listen)}>${t('ctl.noKey', 'No key')}</button>`}
+      ${!listening && msg.swap && html`<button class="btn small" onClick=${() => { store(msg.swap); setMsg(null); }}>${t('ctl.swap', 'Swap keys')}</button>`}
+      ${!listening && msg.undo !== undefined && html`<button class="btn small ghost" onClick=${() => { store(msg.undo); setMsg(null); }}>${t('ctl.undo', 'Undo')}</button>`}
+      ${(listening || msg.undo === undefined) && html`<button class="btn small ghost" onMouseDown=${keep} onClick=${() => { setListen(null); setMsg(null); }}>${t('common.cancel', 'Cancel')}</button>`}
+    </div></td></tr>`;
+  };
+  // a key cap; without a key it says "none" (a dash would read as the minus key)
+  const cap = (id, label, text, extra = '') => {
+    const none = text === '–';
+    const shown = none ? t('ctl.none', 'none') : text;
+    return html`<button type="button" class=${`kbd ctl-key${extra}${none ? ' ctl-none' : ''}${listen === id ? ' on' : ''}`} aria-label=${`${label}: ${shown}`}
+      onClick=${() => click(id)} onBlur=${() => blur(id)}>${listen === id ? t('ctl.press', 'Press a key …') : shown}</button>`;
   };
   const lay = currentLayout();
   return html`<section class="panel stack">
     <h2>${t('set.controls', 'Controls')}</h2>
-    <p class="small muted">${t('set.controlsText', 'Keyboard keys for the built-in emulator. Click a key, then press the new one. Changes apply right away, also to a game that is running.')}</p>
+    <p class="small muted">${t('set.controlsText2', 'Keyboard keys for the built-in emulator and its shortcuts. Click a key, then press the new one – any key can go to any button or shortcut, and shortcuts can also be switched off. Changes apply right away, also to a game that is running.')}</p>
     <div class="row">
       <div class="seg" role="group" aria-label=${t('ctl.presets', 'Key presets')}>
         ${PRESETS.map((p) => html`<button type="button" class=${active === p.id ? 'on' : ''} aria-pressed=${active === p.id} onClick=${() => pick(p.id)}>${presetLabel(p.id)}</button>`)}
@@ -112,23 +136,23 @@ function ControlsSection({ saved, save }) {
       <span class="small faint">${lay.real ? t('ctl.layoutSystem', 'Key names follow your keyboard layout.')
         : t('ctl.layoutGuess', 'Key names assume a {layout} keyboard (from the app language).', { layout: lay.id.toUpperCase() })}</span>
     </div>
-    <table class="data"><thead><tr><th>${t('keys.button', 'Console button')}</th><th>${t('keys.key', 'Key')}</th><th>${t('set.system', 'System')}</th></tr></thead><tbody>
-      ${BUTTONS.map((b) => html`<tr><td>${buttonLabel(b.id)}</td><td>
-        <button type="button" class=${`kbd ctl-key${listen === b.id ? ' on' : ''}`} aria-label=${`${buttonLabel(b.id)}: ${keyLabel(map[b.id])}`}
-          onClick=${() => { if (Date.now() - bound.current < 400) return; setMsg(null); setListen(listen === b.id ? null : b.id); }}
-          onBlur=${() => setListen((l) => (l === b.id ? null : l))}>${listen === b.id ? t('ctl.press', 'Press a key …') : keyLabel(map[b.id])}</button></td>
-        <td class="small faint">${(b.systems || ['nds', 'gba', 'gb']).map((s) => SYS_SHORT[s]).join(' · ')}</td></tr>`)}
+    ${msg?.at === 'preset' && html`<div class="note row" role="status"><span class="grow">${msg.text}</span>
+      <button class="btn small ghost" onClick=${() => { store(msg.undo); setMsg(null); }}>${t('ctl.undo', 'Undo')}</button></div>`}
+    <table class="data ctl-table"><thead><tr><th>${t('keys.button', 'Console button')}</th><th>${t('keys.key', 'Key')}</th><th>${t('set.system', 'System')}</th></tr></thead><tbody>
+      ${BUTTONS.map((b) => html`<tr><td>${buttonLabel(b.id)}</td><td>${cap(b.id, buttonLabel(b.id), keyLabel(map[b.id]))}</td>
+        <td class="small faint">${(b.systems || SYS_ALL).map((s) => SYS_SHORT[s]).join(' · ')}</td></tr>${note(b.id)}`)}
       <tr><th colspan="3">${t('guide.shortcuts', 'Shortcuts while playing')}</th></tr>
-      ${HOTKEYS.map((h) => html`<tr><td>${hotkeyLabel(h.id)}</td><td>
-        <button type="button" class=${`kbd ctl-key${listen === h.id ? ' on' : ''}`} aria-label=${`${hotkeyLabel(h.id)}: ${comboLabel(hot[h.id])}`}
-          onClick=${() => { if (Date.now() - bound.current < 400) return; setMsg(null); setListen(listen === h.id ? null : h.id); }}
-          onBlur=${() => setListen((l) => (l === h.id ? null : l))}>${listen === h.id ? t('ctl.press', 'Press a key …') : comboLabel(hot[h.id])}</button></td>
-        <td class="small faint">${['nds', 'gba', 'gb'].map((s) => SYS_SHORT[s]).join(' · ')}</td></tr>`)}
+      ${HOTKEY_ROWS.map((r) => {
+        const also = r.ids.length > 1
+          ? (r.ids.every((id, i) => hot[id][1]?.keyCode === 97 + i && plainCombo(hot[id][1])) ? ['Num 1–4'] : [])
+          : alsoKeys(hot[r.id]);
+        return html`<tr><td>${rowLabel(r)}</td><td>${r.ids.length > 1
+          ? html`<span class="ctl-slots">${r.ids.map((id) => cap(id, hotkeyLabel(id), comboLabel(hot[id]), ' ctl-slot'))}</span>`
+          : cap(r.id, hotkeyLabel(r.id), comboLabel(hot[r.id]))}</td>
+          <td class="small faint">${also.length ? t('ctl.alsoKey', 'also {key}', { key: also.join(', ') }) : ''}</td></tr>${note(r.id)}`;
+      })}
     </tbody></table>
-    ${msg && html`<div class="note row" role="status"><span class="grow">${msg.text}</span>
-      ${msg.swap && html`<button class="btn small" onClick=${swap}>${t('ctl.swap', 'Swap keys')}</button>`}
-      <button class="btn small ghost" onClick=${() => setMsg(null)}>${t('common.cancel', 'Cancel')}</button></div>`}
-    <div class="row"><span class="small faint">${t('ctl.touch', 'Touch screen (DS): mouse click.')}</span></div>
+    <div class="row"><span class="small faint">${t('ctl.touch', 'Touch screen (DS): mouse click.')} ${t('ctl.resetBar', 'Reset, pause and the save states are always in the bar under the game too – also without a key.')}</span></div>
   </section>`;
 }
 
@@ -273,14 +297,15 @@ function PadSection({ saved, save, nav, saveNav }) {
   const keep = saved?.device ? { device: saved.device } : {};
   const family = pad?.family || 'generic';
   const map = padMap(saved);
-  const hot = padHotkeys(saved); // the fast-forward buttons – none unless picked here
+  const hot = padHotkeys(saved); // the shortcuts' buttons – ZR turbo, ZL pause, fast-forward none unless picked here
+  const all = { ...map, ...hot };
   const preset = PAD_PRESETS.find((p) => p.id === saved?.preset) || PAD_PRESETS[0];
-  const custom = !!saved?.map && (BUTTONS.some((b) => map[b.id] !== preset.map[b.id]) || HOTKEYS.some((h) => hot[h.id]));
-  // what is stored: every game button, the hotkeys only when they have a button (the config takes no empty labels)
-  const stored = (m) => Object.fromEntries(Object.entries(m).filter(([, v]) => v));
+  const custom = !!saved?.map && (BUTTONS.some((b) => map[b.id] !== preset.map[b.id]) || PAD_HOTKEY_IDS.some((h) => hot[h] !== PAD_HOTKEY_DEFAULTS[h]));
   const [listen, setListen] = useState(null);
-  const [msg, setMsg] = useState(null);
+  const [msg, setMsg] = useState(null); // { at (row), text, swap?, undo? }
   const before = useRef(null);
+  const nameOf = (id) => (isHotkeyId(id) ? hotkeyLabel(id) : buttonLabel(id));
+  const show = (label) => padLabel(label, family, PAD_POS());
   // waiting for a button: the first one that goes down (and wasn't down when we started listening) is the new one
   useEffect(() => {
     if (!listen || !pad) return;
@@ -289,22 +314,14 @@ function PadSection({ saved, save, nav, saveNav }) {
     if (i < 0) return;
     const label = PAD_LABELS[i];
     before.current = null;
-    if (label in PAD_HOTKEYS) {
-      setMsg(t('pad.hotkey', '{button} is already used while playing ({action}). Press another button.', { button: padLabel(label, family, PAD_POS()), action: PAD_HOTKEYS[label] === 'turbo' ? t('keys.turbo', 'Turbo') : t('keys.pause', 'Pause / resume') }));
-      return;
-    }
-    const all = { ...map, ...hot };
-    const hk = isHotkey(listen);
-    const other = Object.keys(all).find((id) => id !== listen && all[id] === label);
-    // a hotkey doesn't push a game button off its button (that one would be left without any) – press another one
-    if (hk && other && !isHotkey(other)) {
-      setMsg(t('ctl.taken', '{key} is already used for {button}.', { key: padLabel(label, family, PAD_POS()), button: buttonLabel(other) }));
-      return;
-    }
-    const next = { ...all, [listen]: label, ...(other ? { [other]: all[listen] } : {}) };
+    const id = listen;
     setListen(null);
-    setMsg(other ? t('pad.swapped', '{button} was on {other} – the two swapped.', { button: padLabel(label, family, PAD_POS()), other: isHotkey(other) ? hotkeyLabel(other) : buttonLabel(other) }) : null);
-    save({ pads: { preset: preset.id, map: stored(next), ...keep } });
+    if (all[id] === label) return setMsg(null);
+    // it takes the button over – whatever had it is left without one (or swaps, if the player wants)
+    const { next, lost, swap } = assignPad(saved, id, label);
+    save({ pads: { ...next, ...keep } });
+    setMsg(lost.length ? { at: id, undo: saved, swap: swap && { ...swap, ...keep },
+      text: lost.map((l) => t('ctl.tookOver2', '{key} was the key for “{action}” – it has no key now.', { key: show(label), action: nameOf(l.id) })).join(' ') } : null);
   }, [pad?.pressed?.join(), listen]);
   useEffect(() => {
     if (!listen) return undefined;
@@ -323,6 +340,32 @@ function PadSection({ saved, save, nav, saveNav }) {
     setMsg(null);
     save({ pads: { ...(saved?.preset ? { preset: saved.preset } : {}), ...(saved?.map ? { map: saved.map } : {}), ...(device ? { device } : {}) } });
   };
+  const off = (id) => {
+    setListen(null);
+    setMsg(null);
+    save({ pads: { preset: preset.id, ...keep, map: { ...Object.fromEntries(Object.entries(all).map(([k, v]) => [k, v || PAD_NONE])), [id]: PAD_NONE } } });
+  };
+  const note = (id) => {
+    const listening = listen === id;
+    if (!listening && msg?.at !== id) return null;
+    const keepFocus = (e) => e.preventDefault();
+    return html`<tr class="ctl-note"><td colspan="2"><div class="note row" role="status"><span class="grow">${listening
+      ? t('pad.pressFor', 'Press the new button for “{action}” on the controller – Esc cancels.', { action: nameOf(id) }) : msg.text}</span>
+      ${listening && isHotkeyId(id) && all[id] && html`<button class="btn small" onMouseDown=${keepFocus} onClick=${() => off(id)}>${t('ctl.noKey', 'No key')}</button>`}
+      ${!listening && msg.swap && html`<button class="btn small" onClick=${() => { save({ pads: msg.swap }); setMsg(null); }}>${t('ctl.swap', 'Swap keys')}</button>`}
+      ${!listening && html`<button class="btn small ghost" onClick=${() => { save({ pads: msg.undo }); setMsg(null); }}>${t('ctl.undo', 'Undo')}</button>`}
+      ${listening && html`<button class="btn small ghost" onMouseDown=${keepFocus} onClick=${() => { setListen(null); before.current = null; }}>${t('common.cancel', 'Cancel')}</button>`}
+    </div></td></tr>`;
+  };
+  const row = (id) => {
+    const lit = pad && all[id] && pad.pressed[PAD_LABELS.indexOf(all[id])];
+    return html`<tr class=${lit ? 'pad-lit' : ''}><td>${nameOf(id)}</td><td>
+      <button type="button" class=${`kbd ctl-key${all[id] ? '' : ' ctl-none'}${listen === id ? ' on' : ''}`} disabled=${!pad}
+        title=${pad ? '' : t('pad.connectFirst', 'Connect a controller first')}
+        onClick=${() => { before.current = null; setMsg(null); setListen(listen === id ? null : id); }}>
+        ${listen === id ? t('pad.press', 'Press a button …') : all[id] ? show(all[id]) : t('ctl.none', 'none')}</button></td></tr>${note(id)}`;
+  };
+  const pause = hot.pause ? show(hot.pause) : null;
   return html`<section class="panel stack">
     <h2>${t('pad.title', 'Controller')}</h2>
     <p class="small muted">${t('pad.text', 'PlayStation, Xbox, Switch and other controllers work over USB or Bluetooth. Click a button in the table, then press the new one on the controller. Changes apply right away, also to a game that is running.')}</p>
@@ -334,7 +377,8 @@ function PadSection({ saved, save, nav, saveNav }) {
     </div>
     <${PadPicker} pads=${pads} saved=${saved} pad=${pad} onPick=${choose} />
     <label class="check"><input type="checkbox" checked=${nav} onChange=${(e) => saveNav(e.target.checked)} /><span>${t('pad.nav', 'Navigate the app with a controller')}
-      <span class="hint">${t('pad.navHint', 'D-pad or left stick moves between buttons, A presses, B goes back, L and R switch sections or tabs, Start jumps to the sidebar, the right stick scrolls. While a game runs, the controller belongs to the game – pause it ({button} or Home) to use the menus.', { button: padLabel('LEFT_BOTTOM_SHOULDER', family) })}</span></span></label>
+      <span class="hint">${pause ? t('pad.navHint', 'D-pad or left stick moves between buttons, A presses, B goes back, L and R switch sections or tabs, Start jumps to the sidebar, the right stick scrolls. While a game runs, the controller belongs to the game – pause it ({button} or Home) to use the menus.', { button: pause })
+        : t('pad.navHintHome', 'D-pad or left stick moves between buttons, A presses, B goes back, L and R switch sections or tabs, Start jumps to the sidebar, the right stick scrolls. While a game runs, the controller belongs to the game – pause it (Home) to use the menus.')}</span></span></label>
     <div class="row">
       <div class="seg" role="group" aria-label=${t('pad.layouts', 'Button layout')}>
         ${PAD_PRESETS.map((p) => html`<button type="button" class=${!custom && preset.id === p.id ? 'on' : ''} aria-pressed=${!custom && preset.id === p.id} onClick=${() => pick(p.id)}>${p.id === 'nintendo' ? t('pad.nintendo', 'Nintendo layout (A right)') : t('pad.xbox', 'Xbox layout (A bottom)')}</button>`)}
@@ -342,29 +386,13 @@ function PadSection({ saved, save, nav, saveNav }) {
       </div>
     </div>
     <table class="data"><thead><tr><th>${t('keys.button', 'Console button')}</th><th>${t('pad.button', 'Controller button')}</th></tr></thead><tbody>
-      ${BUTTONS.map((b) => {
-        const lit = pad && map[b.id] && pad.pressed[PAD_LABELS.indexOf(map[b.id])];
-        return html`<tr class=${lit ? 'pad-lit' : ''}><td>${buttonLabel(b.id)}</td><td>
-          <button type="button" class=${`kbd ctl-key${listen === b.id ? ' on' : ''}`} disabled=${!pad}
-            title=${pad ? '' : t('pad.connectFirst', 'Connect a controller first')}
-            onClick=${() => { before.current = null; setMsg(null); setListen(listen === b.id ? null : b.id); }}>
-            ${listen === b.id ? t('pad.press', 'Press a button …') : padLabel(map[b.id], family, PAD_POS())}</button></td></tr>`;
-      })}
+      ${BUTTONS.map((b) => row(b.id))}
       <tr><th colspan="2">${t('guide.shortcuts', 'Shortcuts while playing')}</th></tr>
-      ${HOTKEYS.map((h) => {
-        const lit = pad && hot[h.id] && pad.pressed[PAD_LABELS.indexOf(hot[h.id])];
-        return html`<tr class=${lit ? 'pad-lit' : ''}><td>${hotkeyLabel(h.id)}</td><td>
-          <button type="button" class=${`kbd ctl-key${listen === h.id ? ' on' : ''}`} disabled=${!pad}
-            title=${pad ? '' : t('pad.connectFirst', 'Connect a controller first')}
-            onClick=${() => { before.current = null; setMsg(null); setListen(listen === h.id ? null : h.id); }}>
-            ${listen === h.id ? t('pad.press', 'Press a button …') : padLabel(hot[h.id], family, PAD_POS())}</button></td></tr>`;
-      })}
+      ${PAD_HOTKEY_IDS.map(row)}
     </tbody></table>
-    ${msg && html`<div class="note" role="status">${msg}</div>`}
     <ul class="small muted pad-hints">
       <li>${t('pad.stick', 'Left stick: moves like the D-pad.')}</li>
-      <li>${t('pad.turbo', '{button}: turbo on / off.', { button: padLabel('RIGHT_BOTTOM_SHOULDER', family) })}</li>
-      <li>${t('pad.pause', '{button} or the Home button: pause.', { button: padLabel('LEFT_BOTTOM_SHOULDER', family) })}</li>
+      <li>${t('pad.home', 'The Home button always pauses – also when no other button does.')}</li>
     </ul>
   </section>`;
 }

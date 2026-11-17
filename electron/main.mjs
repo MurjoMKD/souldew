@@ -299,6 +299,14 @@ function buildMenu(labels = {}) {
   const t = mainTexts();
   const nav = (route) => () => send('navigate', route);
   const emu = (action) => () => send('emu', action);
+  // The emulator's shortcuts are the player's (Settings › Controls – any key, or none): the page sends them as
+  // accelerators and handles the keys itself, so the menu only shows them – it never takes a key from the game.
+  const keys = labels.keys && typeof labels.keys === 'object' ? labels.keys : {};
+  const shown = (id, fallback) => {
+    const k = Object.hasOwn(keys, id) ? keys[id] : fallback;
+    return typeof k === 'string' && /^(?:(?:Cmd|Ctrl|Alt|Shift)\+){0,4}(?:[A-Z0-9]|F(?:[1-9]|1[0-2])|Tab|Return|Space|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Up|Down|Left|Right|Plus|num[0-9]|numadd|numsub|nummult|numdiv|numdec|[;=,\-./`[\]\\'])$/.test(k)
+      ? { accelerator: k, registerAccelerator: false } : {};
+  };
   const settings = { label: l('settings', t('menu.settings', 'Settings …')), accelerator: 'CmdOrCtrl+,', click: nav('settings') };
   const template = [
     ...(MAC ? [{
@@ -338,15 +346,15 @@ function buildMenu(labels = {}) {
     {
       label: l('emulator', t('menu.emulator', 'Emulator')),
       submenu: [
-        { label: l('pause', t('keys.pause', 'Pause / resume')), accelerator: 'P', registerAccelerator: false, click: emu('pause') },
-        { label: l('turbo', t('menu.turbo', 'Toggle turbo')), accelerator: 'T', registerAccelerator: false, click: emu('turbo') },
-        { label: l('faster', t('menu.faster', 'Faster')), accelerator: 'CmdOrCtrl+Plus', click: emu('faster') },
-        { label: l('slower', t('menu.slower', 'Slower')), accelerator: 'CmdOrCtrl+-', click: emu('slower') },
+        { label: l('pause', t('keys.pause', 'Pause / resume')), ...shown('pause', 'P'), click: emu('pause') },
+        { label: l('turbo', t('menu.turbo', 'Toggle turbo')), ...shown('turbo', 'T'), click: emu('turbo') },
+        { label: l('faster', t('menu.faster', 'Faster')), ...shown('faster', MAC ? 'Cmd+Plus' : 'Ctrl+Plus'), click: emu('faster') },
+        { label: l('slower', t('menu.slower', 'Slower')), ...shown('slower', MAC ? 'Cmd+-' : 'Ctrl+-'), click: emu('slower') },
         { type: 'separator' },
-        { label: l('quicksave', t('menu.quicksave', 'Quick save')), accelerator: 'F5', registerAccelerator: false, click: emu('quicksave') },
-        { label: l('quickload', t('menu.quickload', 'Quick load')), accelerator: 'F8', registerAccelerator: false, click: emu('quickload') },
-        { label: l('screenshot', t('keys.screenshot', 'Screenshot')), accelerator: 'F12', registerAccelerator: false, click: emu('screenshot') },
-        { label: l('mute', t('keys.mute', 'Sound on/off')), accelerator: 'M', registerAccelerator: false, click: emu('mute') },
+        { label: l('quicksave', t('menu.quicksave', 'Quick save')), ...shown('quicksave', 'F5'), click: emu('quicksave') },
+        { label: l('quickload', t('menu.quickload', 'Quick load')), ...shown('quickload', 'F8'), click: emu('quickload') },
+        { label: l('screenshot', t('keys.screenshot', 'Screenshot')), ...shown('screenshot', 'F12'), click: emu('screenshot') },
+        { label: l('mute', t('keys.mute', 'Sound on/off')), ...shown('mute', 'M'), click: emu('mute') },
         { type: 'separator' },
         { label: l('fullscreen', t('menu.fullscreen', 'Fullscreen')), accelerator: MAC ? 'Ctrl+Cmd+F' : 'F11', role: 'togglefullscreen' },
       ],
