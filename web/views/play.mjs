@@ -1317,7 +1317,7 @@ export function GameSession({ session, mode }) {
   const panelSide = panelPrefs.side === 'right' ? 'right' : 'left';
   const gameGen = liveGen || GEN[target.system] || null;
   const battlePanel = html`<${BattlePanel} battle=${battle} mine=${myParty} gen=${gameGen} game=${liveGame} isRun=${isRun}
-    side=${panelSide} collapsed=${panelPrefs.collapsed} onPrefs=${setPanelPrefs} noMoves=${features?.moves === 'no'} />`;
+    side=${panelSide} collapsed=${panelPrefs.collapsed} onPrefs=${setPanelPrefs} hitsOpen=${panelPrefs.hits} noMoves=${features?.moves === 'no'} />`;
   const hasLeft = !!(isRun || here || (battle?.enemy && panelSide === 'left'));
   return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${isDs ? 'ds' : ''}`} data-v=${docVersion}>
     <div class="mini-head">

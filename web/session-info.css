@@ -69,6 +69,12 @@
 .bt-rule.clash { display: flex; flex-direction: column; gap: 5px; border: 1px solid color-mix(in srgb, var(--cir) 45%, transparent); }
 .bt-clash { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .bt-block h4 { margin: 0 0 4px; font-size: 11.5px; font-weight: 500; color: var(--ink-3); }
+/* "What hits …" folds in under its head line (the opponent's moves – folded in by default, no spoiler) */
+.bt-fold { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 20px; margin: -2px 0; padding: 0; border: 0; background: none; color: inherit; font-weight: inherit; text-align: left; cursor: pointer; }
+.bt-fold-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-fold svg { flex: none; width: 14px; height: 14px; margin-left: auto; }
+.bt-fold:hover, .bt-fold:focus-visible { color: var(--ink); }
+.bt-hits.folded h4 { margin-bottom: 0; }
 .bt-moves { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
 .bt-moves li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
 .bt-moves .type { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

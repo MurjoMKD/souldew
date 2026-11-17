@@ -259,18 +259,20 @@ function TeamList({ mine, gen, compact }) {
 }
 
 // The battle helper's place, per player on this computer: next to the game on the left (default) or on the right,
-// and folded in to its head line. (A run whose host switched the matchup help off keeps it off either way.)
+// and folded in to its head line. (A run whose host switched the matchup help off keeps it off either way.) `hits`:
+// the opponent's moves ("What hits …") shown – folded in by default, they'd tell what the opponent knows before it
+// uses it.
 const PANEL_KEY = 'sl-battle-panel';
-const PANEL_DEFAULT = { side: 'left', collapsed: false };
+const PANEL_DEFAULT = { side: 'left', collapsed: false, hits: false };
 function readPanelPrefs() {
   try {
     const v = JSON.parse(localStorage.getItem(PANEL_KEY) || 'null');
-    return { side: v?.side === 'right' ? 'right' : 'left', collapsed: v?.collapsed === true };
+    return { side: v?.side === 'right' ? 'right' : 'left', collapsed: v?.collapsed === true, hits: v?.hits === true };
   } catch {
     return PANEL_DEFAULT;
   }
 }
-/** [prefs, update] – { side: 'left'|'right', collapsed } for the battle helper, remembered in this profile. */
+/** [prefs, update] – { side: 'left'|'right', collapsed, hits } for the battle helper, remembered in this profile. */
 export function useBattlePanelPrefs() {
   const [p, setP] = useState(readPanelPrefs);
   const update = (patch) => setP((prev) => {
@@ -290,10 +292,11 @@ const monName = (m) => (m ? m.nickname || speciesName(m.species) : '');
 
 /**
  * Battle helper: who is out there, how your moves land, what hits you, how the rest of your team would fare, and
- * whether you may catch it – and how likely one ball does. `side` / `collapsed` / `onPrefs`: where the player put it
- * (useBattlePanelPrefs). `game`: the running game's memory-table id (a formula quirk of Ruby/Sapphire).
+ * whether you may catch it – and how likely one ball does. `side` / `collapsed` / `hitsOpen` / `onPrefs`: where the
+ * player put it and what they unfolded (useBattlePanelPrefs). `game`: the running game's memory-table id (a formula
+ * quirk of Ruby/Sapphire).
  */
-export function BattlePanel({ battle, mine, gen, game = '', isRun, side = 'left', collapsed = false, onPrefs, noMoves = false }) {
+export function BattlePanel({ battle, mine, gen, game = '', isRun, side = 'left', collapsed = false, hitsOpen = false, onPrefs, noMoves = false }) {
   const { doc, manifest, me, runData } = useApp();
   const moves = useMoves();
   const foe = battle?.enemy;
@@ -406,7 +409,8 @@ export function BattlePanel({ battle, mine, gen, game = '', isRun, side = 'left'
     ${notes.length > 0 && html`<div class="bt-notes">${notes.map((x) => html`<span class="rs-chip honour" title=${t('nz.honourHint', 'The app can’t check this – it only reminds you. Keep it yourself.')}>${x}</span>`)}</div>`}
     ${!help && html`<p class="tiny faint bt-nohelp">${t('battle.helpOff', 'Type matchup help is off in this run.')}</p>`}
     ${help && !matchups && html`<p class="tiny faint bt-nohelp">${t('battle.noChart', 'souldew couldn’t read this ROM hack’s type chart – it shows the types, but no matchups rather than wrong ones.')}</p>`}
-    ${help && matchups && outs.map((m) => html`<${OutHelp} key=${m.key || m.species} mon=${m} foes=${foeData} typesOf=${typesOf} movesOf=${movesOf} gen=${gen} />`)}
+    ${help && matchups && outs.map((m) => html`<${OutHelp} key=${m.key || m.species} mon=${m} foes=${foeData} typesOf=${typesOf} movesOf=${movesOf} gen=${gen}
+      hits=${onPrefs ? { open: hitsOpen, toggle: () => onPrefs({ hits: !hitsOpen }) } : null} />`)}
     ${help && matchups && html`<${TeamCheck} team=${team} out=${new Set(outs)} foe=${foeData.find(({ f }) => !(f.maxHp > 0 && f.hp === 0)) || foeData[0]} typesOf=${typesOf} movesOf=${movesOf} gen=${gen} />`}
     ${help && matchups && foeData.map(({ f, types }) => types.length > 0 && html`<${TypeChart} key=${`c${f.species}`} title=${t('battle.chart', '{mon} against types', { mon: speciesName(f.species) })} chart=${defenseChart(types, gen, { fairy })} />`)}
     ${help && matchups && outs.map((m) => typesOf(m.species, m).length > 0 && html`<${TypeChart} key=${`m${m.key || m.species}`} title=${t('battle.myChart', 'Your {mon} against types', { mon: monName(m) })} chart=${defenseChart(typesOf(m.species, m), gen, { fairy })} mine />`)}
@@ -456,11 +460,18 @@ function CatchChance({ foe, foes, types, gen, game, balls }) {
   </div>`;
 }
 
-/** One of your Pokémon that is out: how its moves land on every opponent, and what hits it. */
-function OutHelp({ mon, foes, typesOf, movesOf, gen }) {
+/**
+ * One of your Pokémon that is out: how its moves land on every opponent, and what hits it. `hits` ({ open, toggle }):
+ * the opponents' moves fold in under their head line (the player's choice, remembered with the panel) – they'd tell
+ * what an opponent knows before it uses a move.
+ */
+function OutHelp({ mon, foes, typesOf, movesOf, gen, hits = null }) {
   const monTypes = typesOf(mon.species, mon);
   const myMoves = movesOf(mon.moves, false);
   const many = foes.length > 1;
+  const title = t('battle.danger', 'What hits {mon}', { mon: monName(mon) });
+  const open = !hits || hits.open;
+  const listId = `bt-hits-${String(mon.key ?? mon.species).replace(/[^\w-]/g, '')}`;
   // incoming: the opponents' known damaging moves, else what their own types would do (STAB)
   const incoming = foes.flatMap(({ f, types, moves: fm }) => (fm.length
     ? fm.map(({ id, info }) => ({ key: `${f.species}:${id}`, by: f, label: moveName(id), type: info.type, m: effectiveness(info.type, monTypes, gen) }))
@@ -473,10 +484,12 @@ function OutHelp({ mon, foes, typesOf, movesOf, gen }) {
           const vs = many ? t('battle.vsMon', 'against {mon}', { mon: speciesName(f.species) }) : undefined;
           return m === null ? html`<span class="mult x1" title=${vs}>${t('fx.status', 'status')}</span>` : html`<span class=${`mult ${multClass(m)}`} title=${vs}>${multText(m)}${many ? '' : ` ${multLabel(m)}`}</span>`;
         })}</span></li>`)}</ul></div>`}
-    <div class="bt-block">
-      <h4>${t('battle.danger', 'What hits {mon}', { mon: monName(mon) })}</h4>
-      <ul class="bt-moves">
-        ${incoming.map((x) => html`<li key=${x.key}><span class=${`type t-${x.type}`}>${many ? `${speciesName(x.by.species)}: ` : ''}${x.label}</span><span class=${`mult ${multClass(x.m)} foe`}>${multText(x.m)} ${multLabel(x.m)}</span></li>`)}
+    <div class=${`bt-block bt-hits ${open ? '' : 'folded'}`}>
+      ${hits ? html`<h4><button type="button" class="bt-fold" aria-expanded=${open} aria-controls=${listId} onClick=${hits.toggle}>
+          <span class="bt-fold-title">${title}</span><${Icon} name=${open ? 'chevUp' : 'chevDown'} size=${14} /></button></h4>`
+        : html`<h4>${title}</h4>`}
+      <ul class="bt-moves" id=${listId} hidden=${!open}>
+        ${open && incoming.map((x) => html`<li key=${x.key}><span class=${`type t-${x.type}`}>${many ? `${speciesName(x.by.species)}: ` : ''}${x.label}</span><span class=${`mult ${multClass(x.m)} foe`}>${multText(x.m)} ${multLabel(x.m)}</span></li>`)}
       </ul>
     </div>`;
 }
