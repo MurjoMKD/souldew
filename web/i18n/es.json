@@ -2741,5 +2741,6 @@
   "ext.saveError": "No se puede leer {file}: {error}",
   "ext.saveWaiting": "Esperando {file}: guarda una vez en el juego.",
   "ext.saveRead": "Lee {file} · última lectura {when}",
-  "ext.saveWatching": "Lee {file}"
+  "ext.saveWatching": "Lee {file}",
+  "play.missedDupe": "{species} salvaje escapó – cláusula de duplicados, no cuenta."
 }

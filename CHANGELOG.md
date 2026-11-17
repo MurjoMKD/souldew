@@ -4,6 +4,16 @@
 
 ## 2.8.2
 
+- **“Got away?” after every wild Pokémon that got away** (thanks to a player on Discord). In a SoulLink or Nuzlocke,
+  souldew asks after a wild battle without a catch whether the area is spent – but only when no other battle began in
+  the next ten seconds, and the question disappeared as soon as the next battle started. On a route full of grass
+  (Platinum's Route 204) or with fast-forward on, the next Pokémon nearly always came first, so the question never
+  showed up and the next catch there was filed as the area's encounter. Now every wild battle that ends without a catch
+  gets its question, however soon the next battle comes, and the question waits (out of the way while you battle)
+  until you answer it – one per area, the first encounter first. When a wild Pokémon doesn't count because of the dupes
+  clause, souldew says so briefly instead of staying silent. In Diamond, Pearl, Platinum, HeartGold and SoulSilver one
+  odd reading no longer turns a wild battle into a trainer battle, and in the games' other languages souldew no longer
+  trusts a battle signal it hasn't seen working in that language, which could hide battles altogether.
 - **melonDS: your team updates after every in-game save in every DS game** (thanks to a player on Discord). When you
   play with the melonDS app, souldew reads the save file it writes – but it only ever did that for HeartGold and
   SoulSilver. In Diamond, Pearl, Platinum, Black, White, Black 2 and White 2 nothing changed after saving. souldew now

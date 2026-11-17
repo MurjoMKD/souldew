@@ -1580,6 +1580,11 @@ function battleFlag(entry, read, state = {}) {
     seen.add(on);
     state.flagOn = on;
     state.otherStreak = 0;
+    // The game's other languages (scanOnly) keep their static data elsewhere: the English address counts once this
+    // session has seen both its battle and its overworld value there. Before, whatever sat at it decided – a word that
+    // happened to read 0x2800 hid every battle, a random one ended battles at random (Gen 4: no question after a wild
+    // Pokémon got away). Until then the copies decide, as for a game without a flag.
+    if (entry.scanOnly && seen.size < 2) return null;
     return on;
   }
   // Black/White, Black 2/White 2: the flag has its battle values in every battle and any other value means none

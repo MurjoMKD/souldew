@@ -1761,6 +1761,7 @@
   "play.missedArea": "Area",
   "play.missedAria": "Missed encounter",
   "play.missedAsk": "Wild {species} not caught – mark an area as spent?",
+  "play.missedDupe": "Wild {species} got away – dupes clause, it doesn’t count.",
   "play.missedMark": "Mark as spent",
   "play.missedName": "Name of the area",
   "play.missedNew": "Another area…",

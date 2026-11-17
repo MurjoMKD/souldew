@@ -2741,5 +2741,6 @@
   "ext.saveError": "Impossibile leggere {file}: {error}",
   "ext.saveWaiting": "In attesa di {file} – salva una volta nel gioco.",
   "ext.saveRead": "Legge {file} · ultima lettura {when}",
-  "ext.saveWatching": "Legge {file}"
+  "ext.saveWatching": "Legge {file}",
+  "play.missedDupe": "{species} selvatico è fuggito – clausola dei doppioni, non conta."
 }
