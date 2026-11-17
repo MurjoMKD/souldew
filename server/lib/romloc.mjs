@@ -25,7 +25,9 @@ import { identifyCtr } from '../../shared/ctr.mjs';
 import { ctrZonePlaces } from '../../shared/live/ctrzones.mjs';
 
 const VERSION = 21; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header, 16: Gen 3 hacks with moved RAM, badge flags by the leaders' order, 17: Black/White zone headers, 18: catch rates with the types, the Game Boy enemy's status / catch rate / battle type moved with a hack's RAM, 19: the Game Boy map headers, Gen 3 map headers, Black 2/White 2 zone headers – the place sign checks the game's copy of the current map's header against them, 20: Yellow's map headers (249 maps) and its memory table entry found from its ROM header, 21: Gen 5 forms' types)
-const memo = new Map();
+const memo = new Map(); // ROM id → { result, failedAt? }
+/** A scan that failed is tried again after this long (a file a scanner held, a drive that slept). */
+const RETRY_FAILED_MS = (process.env.NODE_TEST_CONTEXT && Number(process.env.SLS_ROMDATA_RETRY_MS)) || 30000;
 let tables = null;
 
 function opts(sharedDir) {
@@ -140,20 +142,34 @@ function gbShift(u8, o) {
  */
 export function ctrData(file) {
   let fd;
+  let ioError = null;
   try {
-    fd = openSync(file, 'r');
+    // (a file that's there but can't be opened – EBUSY, EPERM – throws: a failed scan isn't remembered on disk, see
+    // romDataFor; no file at all is simply no data)
+    try {
+      fd = openSync(file, 'r');
+    } catch (e) {
+      if (e.code === 'ENOENT') return { ...ROMDATA_NONE };
+      throw e;
+    }
     const readAt = (o, n) => {
       const b = Buffer.alloc(n);
-      const got = readSync(fd, b, 0, n, o);
-      return new Uint8Array(b.buffer, b.byteOffset, got);
+      try {
+        return new Uint8Array(b.buffer, b.byteOffset, readSync(fd, b, 0, n, o));
+      } catch (e) {
+        ioError = e;
+        throw e;
+      }
     };
     const info = identifyCtr(readAt, extname(file).slice(1));
     const z = info ? ctrZonePlaces(readAt, info) : null;
+    // identifyCtr and ctrZonePlaces never throw – a read that failed on the way (a virus scanner or backup holding the
+    // 3 GB file for a moment, a drive that went to sleep) read as "no zone table" and was cached on disk for good: the
+    // place sign was gone in every later session of that game. It throws instead, so the next request reads again.
+    if (ioError) throw ioError;
     // the header: which memory table entry reads it (shared/live/features.mjs) – the game code, else the title ID
     const header = info ? { system: '3ds', code: info.code || '', title: '', titleId: info.titleId || null } : null;
     return { ...ROMDATA_NONE, data: z ? { gen: z.gen, ctr: { family: z.family, places: z.places } } : null, header };
-  } catch {
-    return { ...ROMDATA_NONE };
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -252,6 +268,8 @@ export async function romDataFor(src, { sharedDir, cacheDir, timeoutMs = TIMEOUT
       msg = { file: src.file };
     } else if (src.lib) {
       const { abs, entry } = resolveId(src.lib.id, src.lib.config);
+      // a 3DS game still inside its zip (1–4 GB): never inflated into memory to be read – it is played unpacked
+      if (entry && isCtrFile(entry)) return none;
       const st = statSync(abs);
       id = `${abs}::${entry || ''}|${st.size}|${st.mtimeMs}`;
       msg = { lib: { id: src.lib.id, config: src.lib.config } };
@@ -272,7 +290,8 @@ export async function romDataFor(src, { sharedDir, cacheDir, timeoutMs = TIMEOUT
   } catch {
     return none;
   }
-  if (memo.has(id)) return memo.get(id);
+  const known = memo.get(id);
+  if (known && !(known.failedAt && Date.now() - known.failedAt > RETRY_FAILED_MS)) return known.result;
   const hash = createHash('sha1').update(`${VERSION}|${id}`).digest('hex');
   const cached = cacheDir && join(cacheDir, 'romloc', `${hash}.json`);
   if (cached && existsSync(cached)) {
@@ -280,7 +299,7 @@ export async function romDataFor(src, { sharedDir, cacheDir, timeoutMs = TIMEOUT
       const v = JSON.parse(readFileSync(cached, 'utf8'));
       if (v.version === VERSION) {
         const r = fromRomCache(v);
-        memo.set(id, r);
+        memo.set(id, { result: r });
         return r;
       }
     } catch {
@@ -290,7 +309,7 @@ export async function romDataFor(src, { sharedDir, cacheDir, timeoutMs = TIMEOUT
   if (pending.has(id)) return pending.get(id);
   const p = runJob({ ...msg, sharedDir }, timeoutMs).then((result) => {
     const r = fromRomCache(result || {});
-    memo.set(id, r);
+    memo.set(id, { result: r });
     if (cached) {
       try {
         mkdirSync(join(cacheDir, 'romloc'), { recursive: true });
@@ -301,9 +320,9 @@ export async function romDataFor(src, { sharedDir, cacheDir, timeoutMs = TIMEOUT
     }
     return r;
   }, () => {
-    // (remembered in memory only: the same damaged file isn't scanned again on every click until it changes or the app
-    // restarts – and nothing about it lands in the disk cache)
-    memo.set(id, none);
+    // (remembered in memory only, and only for a while: the same damaged file isn't scanned again on every click – a
+    // file that couldn't be read for a moment is read again later – and nothing about it lands in the disk cache)
+    memo.set(id, { result: none, failedAt: Date.now() });
     return none;
   }).finally(() => pending.delete(id));
   pending.set(id, p);

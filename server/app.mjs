@@ -12,7 +12,7 @@ import { detectJava, uprStatus, installUpr, runBridge, inspectRom } from './lib/
 import { preparePatchedRom, KNOWN_PATCHES } from './lib/roms.mjs';
 import { ROM_EXTENSIONS, PATCH_EXTENSIONS, isCtrExt, matchCatalog } from '../shared/romid.mjs';
 import { ALL_SLOTS, slotsOf, runMode } from '../shared/slots.mjs';
-import { scanLibrary, catalog, loadFile, importFiles, uploadTarget, resolveId, discoverRoms, approvedFolder, placeUploadedZip, unpackLibraryZip, MAX_CTR_BYTES, setRomHack } from './lib/library.mjs';
+import { scanLibrary, catalog, loadFile, importFiles, removeStaleParts, uploadTarget, resolveId, discoverRoms, approvedFolder, placeUploadedZip, unpackLibraryZip, MAX_CTR_BYTES, setRomHack } from './lib/library.mjs';
 import { freeBytes } from './lib/zip.mjs';
 import { saveCover, deleteCover, coverFile, customCovers, coverUrl, COVER_LIMIT } from './lib/covers.mjs';
 import { inspectCtr, ncchSizeOf } from './lib/ctrrando.mjs';
@@ -24,7 +24,7 @@ import { SaveWatcher } from './lib/savewatch.mjs';
 import { EMULATORS, detectEmulator, installEmulator, launchRom, revealInFileManager, emulatorRunning } from './lib/emulator.mjs';
 import { LiveBridge } from './lib/livebridge.mjs';
 import { AzaharBridge, enableRpc } from './lib/azahar.mjs';
-import { CtrSessions, ctrTools, saveStamp, ctrInventory, redactHome, ctrEncrypted } from './lib/ctr.mjs';
+import { CtrSessions, ctrTools, saveStamp, ctrInventory, redactHome, ctrEncrypted, ctrFileReport } from './lib/ctr.mjs';
 import { pickRenderer, validRenderer, gpuKey, remember, validScale, scaleFor } from './lib/ctrrenderer.mjs';
 import { NativeSessions, nativeTools, NATIVE_CORES } from './lib/native.mjs';
 import { moveToGraveyard, parseHgssSave } from '../shared/gen4save.mjs';
@@ -973,7 +973,9 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
   const onUnpack = (p) => emit('unpack', p);
   route('POST', /^\/api\/library\/import$/, async (req) => {
     const { paths } = await readBody(req);
-    return { added: await importFiles(paths || [], loadConfig(), { onUnpack }) };
+    // (skipped: files souldew can't take – a .7z / .rar archive – the page says so instead of "0 files added")
+    const skipped = [];
+    return { added: await importFiles(paths || [], loadConfig(), { onUnpack, skipped }), skipped };
   });
   // a zipped 3DS game in a library folder (scanLibrary().zipped): unpacked into the library folder, the zip stays
   route('POST', /^\/api\/library\/unpack$/, async (req) => {
@@ -1087,6 +1089,8 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const patched = preparePatchedRom(romId, patchId || null, (l) => log.push(l), loadConfig());
     let info = null;
     if (patched.system === '3ds') {
+      // a cut-off copy can't be randomized or played (server/lib/ctrcheck.mjs)
+      if (ctrFileReport(patched.path).integrity?.state === 'damaged') throw httpError(409, 'This 3DS game file is incomplete', 'ctrIncomplete');
       // UPR ZX randomizes X/Y, ORAS, Sun/Moon and USUM (decrypted dumps only – server/lib/ctrrando.mjs); the generation
       // for the rest of the form comes from the catalog when UPR can't read the game
       const game = (catalog().games || []).find((g) => g.system === '3ds' && (g.serial === patched.header?.code || g.productCode === patched.header?.code || (g.titleIds || []).includes(patched.header?.titleId)));
@@ -1447,13 +1451,22 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     if (!tools.ok) throw httpError(409, 'The 3DS part of souldew is missing', 'ctrMissing');
     if (typeof key !== 'string' || !key || key.length > 600) throw httpError(400, 'Invalid save key', 'badKey');
     const romPath = romPathFromUrl(rom);
+    // what the file is (size, header, its own hashes – server/lib/ctrcheck.mjs): checked before the game starts, and
+    // kept for "Save diagnostics"
+    const file = ctrFileReport(romPath);
     // an encrypted cartridge dump: Azahar's core plays decrypted games only – say so instead of "couldn't load the game"
-    if (ctrEncrypted(romPath)) throw httpError(409, 'This 3DS game file is encrypted', 'ctrEncrypted');
+    if (file.encrypted || (file.encrypted == null && ctrEncrypted(romPath))) throw httpError(409, 'This 3DS game file is encrypted', 'ctrEncrypted');
+    // a copy that was cut off (souldew closed while copying, a download that stopped): the header is there, the game
+    // isn't – it would start to a black screen (ticket #19)
+    if (file.integrity?.state === 'damaged') {
+      ctr.last = { at: new Date().toISOString(), error: 'game file incomplete', file };
+      throw httpError(409, 'This 3DS game file is incomplete', 'ctrIncomplete');
+    }
     const cfg = loadConfig();
     const { mode, auto } = ctrRendererNow(cfg);
     // the resolution: Settings › Emulators › "3DS resolution" unless the page asks for one (tests, diagnostics)
     const sc = scaleFor(Number.isInteger(scale) ? scale : cfg.ctrScale, mode);
-    const id = ctr.start({ rom: romPath, key, tools, scale: sc, renderer: mode, auto });
+    const id = ctr.start({ rom: romPath, key, tools, scale: sc, renderer: mode, auto, file });
     return { id, liveMemory: tools.souldewCore, renderer: mode, auto, scale: sc };
   });
   // the game's own saves changed? (a fingerprint – see saveStamp)
@@ -1777,6 +1790,8 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
         pokelinkApply().catch(() => {});
         live.start().catch((e) => console.warn('live bridge unavailable:', e.message));
         prefetchSprites().catch(() => {});
+        // what an interrupted copy / unpack / upload left in the library folder (souldew closed meanwhile)
+        setTimeout(() => removeStaleParts(), 2000).unref?.();
       }
       resolvePromise({ server, port: actual, url: `http://localhost:${actual}` });
     });

@@ -8,7 +8,7 @@ import { setLang, guessLang, t } from '/lib/i18n.mjs';
 import { serverErrorText } from '/lib/errors.mjs';
 import { findEntry, regionsFor } from '/shared/live/parse.mjs';
 import { cheatRegions } from '/shared/live/cheats.mjs';
-import { CTR_LAYOUTS, ctrLayout, ctrTouchAt } from '/shared/ctrlayout.mjs';
+import { CTR_LAYOUTS, ctrLayout, ctrTouchAt, blackPicture } from '/shared/ctrlayout.mjs';
 
 const q = new URLSearchParams(location.search);
 const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7, FFSOUND: 8 };
@@ -185,6 +185,7 @@ function onVideo(p) {
   if (!pendingFrame) requestAnimationFrame(drawFrame);
   pendingFrame = { w, h, bgra, px: p.subarray(8, 8 + w * h * 4) };
   st.frames++;
+  watchBlack(pendingFrame.px, w, h);
   st.width = w;
   st.height = h;
   if (!st.ready) {
@@ -194,6 +195,29 @@ function onVideo(p) {
     layout();
     post({ type: 'emu-started', core: 'azahar', system: '3ds' });
   }
+}
+
+// A game that never draws anything (ticket #19: a cut-off copy of the game, or a driver that can't draw it): the
+// host runs, pictures come – all black. Once a second a few hundred pixels are looked at; after BLACK_MS of running
+// game without a single lit picture the play view hears it once (it says so and records it for "Save diagnostics").
+const BLACK_MS = 45000;
+const black = { lit: false, ms: 0, last: 0, told: false };
+function watchBlack(px, w, h) {
+  if (black.lit || black.told) return;
+  const now = performance.now();
+  if (now - black.last < 1000) return;
+  const dt = black.last ? Math.min(now - black.last, 2000) : 0;
+  black.last = now;
+  if (!blackPicture(px, w, h)) {
+    black.lit = true;
+    return;
+  }
+  if (st.paused) return;
+  black.ms += dt;
+  if (black.ms < BLACK_MS) return;
+  black.told = true;
+  st.log.push(`black picture for ${Math.round(black.ms / 1000)} s`);
+  post({ type: 'emu-black', seconds: Math.round(black.ms / 1000), renderer: st.renderer, title: st.title, frames: st.hostFrame || st.frames, liveMemory: st.liveMemory });
 }
 
 // keep the picture's proportions in the frame (the page decides the frame's size)
@@ -791,6 +815,7 @@ window.__emu = {
   },
   perf: () => ({
     fps: st.fps, speed: st.hostSpeed, frames: st.hostFrame, shown: st.frames, title: st.title, liveMemory: st.liveMemory, error: st.error, renderer: st.renderer, log: st.log.slice(-20),
+    picture: { lit: black.lit, blackSeconds: Math.round(black.ms / 1000) }, // (a game that only ever showed black)
     sound: audio.ctx ? { contextRate: audio.ctx.sampleRate, state: audio.ctx.state, baseLatencyMs: +(audio.ctx.baseLatency * 1000).toFixed(1), outputLatencyMs: +((audio.ctx.outputLatency || 0) * 1000).toFixed(1) } : null,
     last: audio.last,
   }),

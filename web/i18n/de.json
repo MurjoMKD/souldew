@@ -2735,5 +2735,12 @@
   "lives.usedUpNamed": "{name}: Die bisherigen Tode verbrauchen diese Leben schon. Der Run geht weiter – das nächste Pokémon, das {name} verliert, beendet ihn.",
   "ctl.ffHold": "Vorspulen (halten)",
   "ctl.ffToggle": "Vorspulen an / aus",
-  "ctl.hotkeyUnbindable": "Diese Taste kann nicht für dieses Kürzel belegt werden. Drück eine andere Taste."
+  "ctl.hotkeyUnbindable": "Diese Taste kann nicht für dieses Kürzel belegt werden. Drück eine andere Taste.",
+  "ctr.blackTitle": "Das 3DS-Spiel zeigt nur einen schwarzen Bildschirm",
+  "ctr.blackText": "Bleibt er schwarz, ist die Spieldatei vielleicht unvollständig – entferne sie aus der Bibliothek und füge das Spiel noch einmal hinzu – oder dein Grafiktreiber kann es nicht zeichnen: Probiere Einstellungen › Emulatoren › 3DS-Renderer › Software. „Diagnose speichern“ im Ton-Menü hält fest, was souldew sieht.",
+  "err.ctrIncomplete": "Diese 3DS-Spieldatei ist unvollständig – ein Teil des Spiels fehlt, deshalb würde es nur einen schwarzen Bildschirm zeigen. Das passiert, wenn das Kopieren unterbrochen wurde (souldew oder der Computer wurde dabei geschlossen) oder ein Download abgebrochen ist. Entferne die Datei aus der Bibliothek und füge das Spiel noch einmal hinzu.",
+  "err.importFailed": "{name} konnte nicht in die Bibliothek kopiert werden ({why}). Vielleicht benutzt ein anderes Programm die Datei – schließe es (oder warte, bis der Virenscan fertig ist) und versuche es noch einmal.",
+  "err.importVerify": "Die Kopie von {name} stimmt nicht mit dem Original überein, deshalb wurde sie nicht hinzugefügt. Versuche es noch einmal – passiert es wieder, hat das Laufwerk vielleicht ein Problem.",
+  "lib.skipArchive": "souldew kann .7z- und .rar-Archive nicht öffnen – entpacke das Spiel zuerst (zum Beispiel mit 7-Zip) und füge dann die .3ds-, .cci- oder .cxi-Datei hinzu.",
+  "lib.skipType": "keine Spiel- oder Patch-Datei, die souldew kennt"
 }

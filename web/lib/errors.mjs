@@ -64,6 +64,7 @@ const TEXTS = {
   shinyUnsupported: () => t('err.shinyUnsupported', 'This run changes the shiny rate, and souldew can’t build that into this copy of the game – it needs an original Gen 3–5 game (Game Boy Advance or DS).'),
 // (one text for playing and randomizing: the player, the randomizer and Azahar all need a decrypted dump)
   ctrEncrypted: () => t('err.ctrEncrypted', 'This 3DS game file is encrypted. souldew and Azahar only play decrypted games, and the randomizer needs a decrypted copy too (.3ds, .cci or .cxi) – souldew doesn’t decrypt games. Dump your cartridge decrypted (for example with GodMode9 on your 3DS) and add that file.'),
+  ctrIncomplete: () => t('err.ctrIncomplete', 'This 3DS game file is incomplete – part of the game is missing, so it would only show a black screen. This happens when copying it was interrupted (souldew or the computer closed meanwhile) or a download stopped. Remove it from the library and add the game again.'),
   notCtr: () => t('err.notCtr', 'Not a Nintendo 3DS game'),
   ctrNoSpace: (v) => t('err.ctrNoSpace', 'Not enough disk space: the randomized 3DS games need about {need} GB, {free} GB are free.', v),
   ctrMemory: () => t('err.ctrMemory', 'Not enough memory for the 3DS randomizer (it needs up to 4.5 GB). Close other programs and try again.'),
@@ -93,6 +94,9 @@ const TEXTS = {
   unpackFailed: (v) => t('err.unpackFailed', '{name} couldn’t be unpacked: {why}', v),
   badRomHack: () => t('err.badRomHack', 'This ROM hack choice isn’t valid'),
   uploadType: () => t('err.uploadType', 'Only ROMs (.gb/.gbc/.gba/.nds), patches or .zip'),
+  archiveUnsupported: () => t('lib.skipArchive', 'souldew can’t open .7z or .rar archives – unpack the game first (with 7-Zip, for example), then add the .3ds, .cci or .cxi file.'),
+  importFailed: (v) => t('err.importFailed', '{name} couldn’t be copied into the library ({why}). Another program may be using the file – close it (or wait for the virus scan) and try again.', v),
+  importVerify: (v) => t('err.importVerify', 'The copy of {name} doesn’t match the original, so it wasn’t added. Try again – if it happens again, the drive may have a problem.', v),
   notRom: () => t('err.notRom', 'Not a ROM file'),
   notPatch: () => t('err.notPatch', 'Not a patch file'),
   badCoverId: () => t('err.badCoverId', 'Invalid picture ID'),

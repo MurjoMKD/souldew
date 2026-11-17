@@ -1,13 +1,14 @@
 // Game library: scans the library folder(s) for ROMs and patches (also inside .zip files),
 // identifies them by header + CRC32 and matches them to the catalog. Results are cached.
-import { readdirSync, statSync, readFileSync, existsSync, mkdirSync, copyFileSync, openSync, readSync, closeSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { readdirSync, statSync, readFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, realpathSync, renameSync, rmSync } from 'node:fs';
+import { copyFile, open } from 'node:fs/promises';
 import { join, extname, basename, resolve, dirname, isAbsolute, posix, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { listZip, readZipEntry, extractZipEntry, entryFileName, freeBytes, inflateRatioTooHigh } from './zip.mjs';
 import { APP_ROOT, DATA_DIR, DEV, LIBRARY_DIR, SHARED_DIR } from './paths.mjs';
 import { crc32Hex } from '../../shared/checksum.mjs';
-import { writeFileAtomic, httpError, safeFileName, isInside, samePath } from './fsutil.mjs';
+import { writeFileAtomic, httpError, safeFileName, isInside, samePath, renameRetry } from './fsutil.mjs';
 import { identifyRom, matchCatalog, ROM_EXTENSIONS, PATCH_EXTENSIONS, CTR_EXTENSIONS, isCtrExt } from '../../shared/romid.mjs';
 import { identifyCtr, identifyCtrBytes } from '../../shared/ctr.mjs';
 import { wasPicked, insideAny } from './grants.mjs';
@@ -97,22 +98,30 @@ function headOf(path, len = 0x200) {
 /**
  * A 3DS file: identified from a few header reads (shared/ctr.mjs) – no CRC32, these files are 1–4 GB. null for
  * anything that isn't a playable 3DS game file: no 3DS header, or an update / DLC / system title (those are installed
- * in Azahar, not played from the library).
+ * in Azahar, not played from the library); undefined when the file can't be read right now.
  */
 export function ctrInfo(path, ext) {
   let fd;
+  let ioError = null;
   try {
     fd = openSync(path, 'r');
     const readAt = (o, n) => {
       const b = Buffer.alloc(n);
-      const got = readSync(fd, b, 0, n, o);
-      return new Uint8Array(b.buffer, b.byteOffset, got);
+      try {
+        return new Uint8Array(b.buffer, b.byteOffset, readSync(fd, b, 0, n, o));
+      } catch (e) {
+        ioError = e;
+        throw e;
+      }
     };
     const info = identifyCtr(readAt, ext);
+    // (a file that couldn't be read – a scanner holding it, a copy still running: undefined, not "no game" – the index
+    // must not remember that, or the game stays missing from the library until the file changes)
+    if (ioError) return undefined;
     if (!info || notPlayable(info)) return null;
     return { ...info, crc: null };
   } catch {
-    return null;
+    return undefined;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -693,8 +702,9 @@ export function approvedFolder(p, config = {}) {
  * (approvedImportPath) – checked for all of them before the first one is copied: a refused batch throws right away.
  * A zip with a 3DS game in it isn't copied: the game is unpacked into the library instead (unpackZipGames, `onUnpack`
  * follows it) – the zip itself only when it holds other ROMs or patches too. → a Promise of the library files added.
+ * `skipped` collects the files it didn't take: { name, why: 'archive' (a .7z / .rar – souldew can't unpack them) | 'type' }.
  */
-export function importFiles(paths, config = {}, { roots, onUnpack = null } = {}) {
+export function importFiles(paths, config = {}, { roots, onUnpack = null, skipped = [] } = {}) {
   if (!Array.isArray(paths)) throw httpError(400, 'Invalid path', 'badPath');
   const allowedRoots = roots || importRoots(config);
   const files = paths.map((p) => approvedImportPath(p, config, { roots: allowedRoots }));
@@ -703,7 +713,10 @@ export function importFiles(paths, config = {}, { roots, onUnpack = null } = {})
     const added = [];
     for (const p of files) {
       const ext = extname(p).slice(1).toLowerCase();
-      if (![...ROM_EXTENSIONS, ...CTR_EXTENSIONS, ...PATCH_EXTENSIONS, 'zip'].includes(ext)) continue;
+      if (![...ROM_EXTENSIONS, ...CTR_EXTENSIONS, ...PATCH_EXTENSIONS, 'zip'].includes(ext)) {
+        skipped.push({ name: basename(p), why: OTHER_ARCHIVES.includes(ext) ? 'archive' : 'type' });
+        continue;
+      }
       if (ext === 'zip') {
         let entries = [];
         try {
@@ -718,11 +731,104 @@ export function importFiles(paths, config = {}, { roots, onUnpack = null } = {})
         }
       }
       const target = join(LIBRARY_DIR, basename(p));
-      if (resolve(p) !== resolve(target)) copyFileSync(p, target);
+      if (resolve(p) !== resolve(target)) await copyIntoLibrary(p, target);
       added.push(target);
     }
     return added;
   })();
+}
+
+/** Archives souldew can't unpack (a 3DS game often comes in one): said so instead of skipped without a word. */
+export const OTHER_ARCHIVES = ['7z', 'rar'];
+
+/** Bytes compared between a copy and its original: this many pieces spread over the file, the end always. */
+const VERIFY_PIECES = 64;
+const VERIFY_PIECE = 64 * 1024;
+
+/**
+ * Copy `src` to `target` so that `target` is never a half file (ticket #19): a 3DS game is 1–4 GB, and the copy used to
+ * run on the app's main thread right into the library – the window froze for its whole length, and closing souldew
+ * meanwhile left a cut-off game under its real name (on Windows even at its full size, the rest never written), which the
+ * next start listed as ready and which played as a black screen. Now: off the main thread into a hidden part file
+ * next to the target (the scan skips names starting with a dot), the part compared with the original (size and pieces
+ * spread over the whole file), then renamed. A failure leaves nothing behind. (`copy`: tests stand in for the copy.)
+ */
+export async function copyIntoLibrary(src, target, { pieces = VERIFY_PIECES, copy = copyFile } = {}) {
+  const dir = dirname(target);
+  const name = basename(target);
+  const part = join(dir, `.${name}.${process.pid}.import`);
+  const size = statSync(src).size;
+  const free = freeBytes(dir);
+  if (free !== null && free < size + SPACE_MARGIN) {
+    throw httpError(507, `Not enough free disk space for ${name}: it needs ${gb(size)}, ${gb(free)} are free`, 'diskFull', { name, need: gb(size), free: gb(free) });
+  }
+  rmSync(part, { force: true });
+  try {
+    await copy(src, part);
+    await sameBytes(src, part, size, pieces);
+    renameRetry(part, target);
+  } catch (e) {
+    rmSync(part, { force: true });
+    if (e.status) throw e;
+    if (e.code === 'ENOSPC') throw httpError(507, `Not enough free disk space for ${name}`, 'diskFull', { name, need: gb(size), free: gb(freeBytes(dir) || 0) });
+    throw httpError(500, `${name} couldn’t be copied (${e.code || e.message})`, 'importFailed', { name, why: e.code || e.message });
+  }
+}
+
+/** Does `copy` hold what `src` holds? Its size, and `pieces` pieces spread over the file (the end always). Throws. */
+async function sameBytes(src, copy, size, pieces) {
+  const [a, b] = await Promise.all([open(src, 'r'), open(copy, 'r')]);
+  try {
+    if ((await b.stat()).size !== size) throw httpError(500, 'The copy is incomplete', 'importVerify', { name: basename(copy) });
+    const len = Math.min(VERIFY_PIECE, size);
+    const at = new Set([0, Math.max(0, size - len)]);
+    for (let i = 1; i < pieces - 1; i++) at.add(Math.floor(((size - len) * i) / (pieces - 1)));
+    const ba = Buffer.alloc(len);
+    const bb = Buffer.alloc(len);
+    for (const o of at) {
+      const [ra, rb] = await Promise.all([a.read(ba, 0, len, o), b.read(bb, 0, len, o)]);
+      if (ra.bytesRead !== rb.bytesRead || !ba.subarray(0, ra.bytesRead).equals(bb.subarray(0, rb.bytesRead))) {
+        throw httpError(500, 'The copy differs from the original', 'importVerify', { name: basename(copy) });
+      }
+    }
+  } finally {
+    await Promise.all([a.close(), b.close()]);
+  }
+}
+
+/** Does process `pid` still run? (the souldew that is copying it right now) */
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM'; // (runs, as another user)
+  }
+}
+
+/**
+ * What a copy, an unpack or an upload that never finished left in a folder (souldew closed meanwhile): the hidden
+ * `.name.<pid>.import` / `.name.<pid>.part` and `name.<pid>.upload` of another (ended) souldew. → the names removed.
+ */
+export function removeStaleParts(dir = LIBRARY_DIR, pid = process.pid) {
+  const removed = [];
+  let names = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return removed;
+  }
+  for (const n of names) {
+    const m = /^\..+\.(\d+)\.(?:import|part)$/.exec(n) || /^.+\.(\d+)\.upload$/.exec(n) || /^\.upload-(\d+)-[0-9a-f]+\.zip$/.exec(n);
+    if (!m || Number(m[1]) === pid || alive(Number(m[1]))) continue;
+    try {
+      rmSync(join(dir, n), { force: true });
+      removed.push(n);
+    } catch {
+      // still held (another souldew copying right now) – the next start tries again
+    }
+  }
+  return removed;
 }
 
 /**
@@ -769,6 +875,7 @@ export async function unpackLibraryZip(id, config = {}, { onUnpack = null } = {}
 export function uploadTarget(name) {
   let safe = safeFileName(name, { fallback: '', maxBytes: 200 }); // file systems allow 255 bytes per name
   const ext = extname(safe).slice(1).toLowerCase();
+  if (OTHER_ARCHIVES.includes(ext)) throw httpError(400, 'souldew can’t unpack .7z / .rar archives', 'archiveUnsupported', { name: safe });
   if (![...ROM_EXTENSIONS, ...CTR_EXTENSIONS, ...PATCH_EXTENSIONS, 'zip'].includes(ext)) throw httpError(400, 'Only ROMs (.gb/.gbc/.gba/.nds/.3ds/.cci/.cxi/.cia/.3dsx), patches or .zip', 'uploadType');
   if (safe.startsWith('.')) safe = `_${safe.slice(1)}`; // hidden files are skipped by the library scan
   mkdirSync(LIBRARY_DIR, { recursive: true });

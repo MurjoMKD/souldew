@@ -2735,5 +2735,12 @@
   "lives.usedUpNamed": "{name}: le morti finora consumano già queste vite. La run continua – il prossimo Pokémon che {name} perde la termina.",
   "ctl.ffHold": "Avanti veloce (tieni premuto)",
   "ctl.ffToggle": "Avanti veloce sì / no",
-  "ctl.hotkeyUnbindable": "Questo tasto non si può usare per questa scorciatoia. Premi un altro tasto."
+  "ctl.hotkeyUnbindable": "Questo tasto non si può usare per questa scorciatoia. Premi un altro tasto.",
+  "ctr.blackTitle": "Il gioco 3DS mostra solo uno schermo nero",
+  "ctr.blackText": "Se resta nero, forse il file del gioco è incompleto – rimuovilo dalla libreria e aggiungi di nuovo il gioco – oppure il tuo driver grafico non riesce a disegnarlo: prova Impostazioni › Emulatori › Renderer 3DS › Software. «Salva diagnostica» nel menu dell’audio registra quello che vede souldew.",
+  "err.ctrIncomplete": "Questo file di gioco 3DS è incompleto – manca una parte del gioco, quindi mostrerebbe solo uno schermo nero. Succede quando la copia è stata interrotta (souldew o il computer è stato chiuso nel frattempo) o un download si è fermato. Rimuovilo dalla libreria e aggiungi di nuovo il gioco.",
+  "err.importFailed": "Non è stato possibile copiare {name} nella libreria ({why}). Forse un altro programma sta usando il file – chiudilo (o attendi la fine della scansione antivirus) e riprova.",
+  "err.importVerify": "La copia di {name} non corrisponde all’originale, quindi non è stata aggiunta. Riprova – se succede di nuovo, forse l’unità ha un problema.",
+  "lib.skipArchive": "souldew non può aprire archivi .7z o .rar – estrai prima il gioco (con 7-Zip, per esempio), poi aggiungi il file .3ds, .cci o .cxi.",
+  "lib.skipType": "non è un file di gioco o patch che souldew conosce"
 }
