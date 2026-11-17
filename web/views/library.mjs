@@ -148,7 +148,7 @@ export async function addGamesFlow({ reloadLibrary, folder = false, toast } = {}
       const input = document.createElement('input');
       input.type = 'file';
       input.multiple = true;
-      input.accept = '.gb,.gbc,.gba,.nds,.3ds,.cci,.cxi,.cia,.3dsx,.zcci,.zcxi,.z3dsx,.zip,.xdelta,.vcdiff,.bps,.ups,.ips';
+      input.accept = '.gb,.gbc,.sgb,.gba,.nds,.3ds,.cci,.cxi,.cia,.3dsx,.zcci,.zcxi,.z3dsx,.zip,.xdelta,.vcdiff,.bps,.ups,.ips';
       const files = await new Promise((resolve) => {
         input.onchange = () => resolve([...input.files]);
         input.addEventListener('cancel', () => resolve([]));

@@ -302,9 +302,9 @@ export function scanLibrary(config = {}) {
         patches.push(p);
       } else if (ext === 'zip') {
         let cached = index[cacheKey];
-        // (indexes before 2.7.0 didn't look for 3DS games: no `ctr`)
-        if (!cached || !cached.ctr || cached.patches?.some((x) => !('resultCrc' in x))) {
-          cached = { roms: [], patches: [], notes: [], ctr: [] };
+        // (indexes before 2.7.0 didn't look for 3DS games: no `ctr`; before 2.8.1 they skipped .sgb ROMs: no `sgb`)
+        if (!cached || !cached.ctr || !cached.sgb || cached.patches?.some((x) => !('resultCrc' in x))) {
+          cached = { roms: [], patches: [], notes: [], ctr: [], sgb: true };
           let entries = [];
           try {
             entries = listZip(path);

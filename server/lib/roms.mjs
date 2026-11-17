@@ -28,6 +28,9 @@ const fileNameOf = (id) => String(id).split('::').pop().split(/[\\/]/).pop();
 function extFor(id, rom) {
   const fromName = extname(String(id).split('::').pop()).slice(1).toLowerCase();
   if (['gb', 'gbc', 'gba', 'nds'].includes(fromName)) return fromName;
+  // a Super Game Boy dump (.sgb) is a Game Boy ROM: cached and built as .gb (.gbc for a Color game) – the emulators,
+  // the randomizer and the run's file names know those
+  if (fromName === 'sgb') return identifyRom(rom.subarray(0, 0x200), 'gb')?.system || 'gb';
   return identifyRom(rom.subarray(0, 0x200))?.system || 'bin';
 }
 
