@@ -187,8 +187,8 @@ img.pixel, .sprite img { image-rendering: pixelated; }
 .btn[disabled] { opacity: 0.4; cursor: not-allowed; transform: none; }
 .btn svg { width: 16px; height: 16px; }
 /* next to a label the 16px pixel icons sat 1.5px above its centre (measured: plus, folder) – optically centred; an
-   icon-only button centres the icon in its own box, so it keeps it unmoved */
-.btn:not(.icon) > svg { transform: translateY(1.5px); }
+   icon-only button (.icon, or .solo for a plain one) centres the icon in its own box, so it keeps it unmoved */
+.btn:not(.icon):not(.solo) > svg { transform: translateY(1.5px); }
 .btn.primary { background: var(--ink); color: #1b1a1f; font-weight: 600; }
 .btn.primary:hover { background: #fff8ea; }
 .btn.go { background: #3f6b5d; color: #f0fbf6; }
