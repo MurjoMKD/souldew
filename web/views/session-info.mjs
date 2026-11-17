@@ -584,7 +584,7 @@ export function RulesDrawer({ open, onClose, RulesTab }) {
   return html`<div class="rules-drawer-wrap" onClick=${(e) => e.target === e.currentTarget && onClose()}>
     <aside class="rules-drawer" role="dialog" aria-modal="true" aria-label=${t('session.rules', 'Rules')} ref=${ref} tabIndex="-1">
       <div class="row rules-drawer-head"><h2 class="grow">${t('session.rules', 'Rules')}</h2>
-        <button class="btn small ghost solo" onClick=${onClose} aria-label=${t('common.close', 'Close')}><${Icon} name="close" size=${12} /></button></div>
+        <button class="btn small ghost" onClick=${onClose} aria-label=${t('common.close', 'Close')}><${Icon} name="close" size=${12} /></button></div>
       <div class="rules-drawer-body"><${RulesTab} /></div>
     </aside>
   </div>`;
