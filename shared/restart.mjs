@@ -122,6 +122,8 @@ export function restartRequest(old, { library, runs, rules, mySlot = 'p1', gameT
     name: numberedName(baseName(old.name) || defaultRunName(players, mode), runs),
     rules: rules ?? old.rules ?? null,
     ...(old.shiny ? { shiny: old.shiny } : {}),
+    // whoever starts the new attempt creates it – the host of the new run, who signs its rules (shared/hostrules.mjs)
+    ...(mode === 'soullink' ? { host: slots.includes(mySlot) ? mySlot : slots[0] } : {}),
   };
 }
 

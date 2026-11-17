@@ -7,15 +7,16 @@ import { speciesName, gameById, hackById, gameTitle } from '../lib/data.mjs';
 import { play } from '../lib/sound.mjs';
 import {
   progression, pairState, setEncounter, markDead, revive, markExtraDead, party, live, counts, checks, feedList, feed, feedText, causeText, msg, areaName, joinNames,
-  players as getPlayers, rules as getRules, levelCap, dupeOf, resumeRun, slotsOf, encounter, openAreas, runStats, isNuzlocke, logCheatRule,
-  logTypeHelpRule, logLivesRule, stampLivesChange, allowedRulesPatch, isHost, HOST_SLOT, lives as getLives, livesFor, lastWildAt, genOfRun, shinyNote,
+  players as getPlayers, rules as getRules, levelCap, dupeOf, resumeRun, slotsOf, encounter, openAreas, runStats, isNuzlocke, logRulesChange,
+  stampLivesChange, allowedRulesPatch, hostSlotOf, canEditRules, lives as getLives, livesFor, lastWildAt, genOfRun, shinyNote,
 } from '../lib/run.mjs';
+import { writeHostRules } from '../lib/hostrules.mjs';
 import { PartyPanel, PartyGrid, TeamColumns, unhatched } from './party.mjs';
 import { HostCode, PackVersionNote } from './invitecode.mjs';
 import { RestartModal } from './restart.mjs';
 import { KeepIntroItem } from './introsave.mjs';
 import { useStreamer } from '../lib/streamer.mjs';
-import { NuzlockeRules, Choice, TypeHelpRule, LivesRule, MissedDupesRule } from './nuzrules.mjs';
+import { NuzlockeRules, Choice, TypeHelpRule, LivesRule, SoulLinkRules, SoulLinkAuto, HostRulesNote } from './nuzrules.mjs';
 import { ShareButton, HallOfFame } from './liveshare.mjs';
 import { deathEvent } from '../lib/liveshare.mjs';
 
@@ -864,6 +865,10 @@ export function RulesTab() {
   const r = getRules(doc, manifest);
   const n = slotsOf(manifest).length;
   const solo = isNuzlocke(manifest);
+  // a SoulLink's rules are the host's (shared/hostrules.mjs): set on the computer that created the run, read-only elsewhere
+  const mine = canEditRules(manifest);
+  const locked = !mine;
+  const hostName = getPlayers(doc, manifest)[hostSlotOf(manifest)]?.name;
   // The webhook is a secret of this computer: kept in the local config, never in the shared rules.
   const [hook, setHook] = useState('');
   useEffect(() => {
@@ -881,24 +886,31 @@ export function RulesTab() {
       toast({ kind: 'death', title: 'Discord', text: e.message });
     }
   };
-  // Only what was set is stored – the mode's defaults (rules(doc, manifest)) fill in the rest.
-  const set = (asked) => {
-    const patch = allowedRulesPatch(asked, me); // the type matchup help is the host's call
+  // Only what was set is stored – the mode's defaults (rules(doc, manifest)) fill in the rest. Every change goes to the
+  // log for everyone (cheats, lives, … – lib/run.mjs logRulesChange).
+  const set = async (asked) => {
+    const patch = allowedRulesPatch(asked, manifest); // the host's call (null on another player's computer)
+    if (!patch) return;
     const next = stampLivesChange(doc, doc.get('rules'), { ...(doc.get('rules') || {}), ...patch });
     delete next.discordWebhook;
     if (next.preset === null) delete next.preset;
-    // switching cheats on or off is everyone's business: it goes to the log like the cheats themselves
-    const cheatsWere = !!r.cheats;
-    doc.set('rules', next);
-    api.post(`/api/runs/${manifest.id}/meta`, { rules: next }).catch(() => {});
-    if ('cheats' in patch && !!patch.cheats !== cheatsWere) logCheatRule(doc, manifest, me, !!patch.cheats);
-    if ('typeHelp' in patch && (patch.typeHelp !== false) !== (r.typeHelp !== false)) logTypeHelpRule(doc, manifest, me, patch.typeHelp !== false);
-    // so are the lives: how many, and whose
-    const now = getRules(doc, manifest);
-    if (('lives' in patch || 'livesPool' in patch) && ((now.lives || 0) !== (r.lives || 0) || (now.lives > 0 && now.livesPool !== r.livesPool))) logLivesRule(doc, manifest, me, now);
+    if (solo) {
+      doc.set('rules', next);
+      api.post(`/api/runs/${manifest.id}/meta`, { rules: next }).catch(() => {});
+    } else {
+      // signed by this computer's server, then written – every other app takes it only with that signature
+      try {
+        await writeHostRules(doc, manifest, next, me);
+      } catch (e) {
+        toast({ kind: 'death', title: t('rules.notSaved', 'Rules not changed'), text: e.code === 'notHost' ? t('rules.notHostHere', 'Only the computer that created this run can change its rules.') : e.message });
+        return;
+      }
+    }
+    logRulesChange(doc, manifest, me, r, getRules(doc, manifest));
   };
   const blackoutText = { party: t('rules.b4Solo', 'If your whole team faints (blackout), the run is over.'), box: t('rules.b4SoloBox', 'The run is over once no living Pokémon is left – in the team or in the box.'), off: t('rules.b4SoloOff', 'A blackout doesn’t end the run – you decide when it’s over.') }[r.blackout];
   return html`<div class="stack-l">
+    ${!solo && html`<${HostRulesNote} host=${hostName} mine=${mine} players=${n} />`}
     <section class="panel stack">
       <h2>${t('rules.basics', 'The basics')}</h2>
       <ul class="small muted">${solo
@@ -920,41 +932,20 @@ export function RulesTab() {
       ? html`<${NuzlockeRules} value=${r} onChange=${set} />`
       : html`<section class="panel stack">
       <h2>${t('rules.options', 'Options')}</h2>
-      <div class="stack-s"><h3>${t('rules.type', 'Type rule')}</h3><p class="small muted">${t('rules.typeHint', 'Primary types may not repeat in the team.')}</p>
-        <${Choice} label=${t('rules.type', 'Type rule')} value=${r.typeClause} onChange=${(v) => set({ typeClause: v })} options=${[['off', t('rules.off', 'Off')], ['party', t('rules.perPlayer', 'Per player')], ['global', n > 2 ? t('rules.acrossAll', 'Across all teams') : t('rules.acrossBoth', 'Across both teams')]]} /></div>
-      <div class="stack-s"><h3>${t('rules.dupes', 'Dupes clause')}</h3><p class="small muted">${t('rules.dupesHint', 'Already own the evolution line? Keep looking.')}
-        ${' '}${{
-          // what the choice means exactly (lib/run.mjs dupeOf) – "Per player" was read as "for one of us" (ticket #18)
-          off: t('rules.dupesOffHint', 'Off: every first encounter counts, even one of a line you already caught.'),
-          player: t('rules.dupesPlayerHint', 'Per player: a line you caught yourself doesn’t count again for you – the others’ catches don’t matter for you.'),
-          both: n > 2 ? t('rules.dupesAllHint', 'For everyone: a line one of you caught doesn’t count again for any of you.') : t('rules.dupesBothHint', 'For both: a line one of you caught doesn’t count again for either of you.'),
-        }[r.dupes] || ''}
-        ${r.dupes === 'off' ? '' : r.missedDupes
-          ? ` ${n > 2 ? t('rules.dupesWhichGroupMissed', 'Every catch counts, also one whose group failed or died.') : t('rules.dupesWhichMissed', 'Every catch counts, also one whose pair failed or died.')}`
-          : ` ${n > 2 ? t('rules.dupesWhichGroup', 'Every catch counts, also one whose group failed or died – a Pokémon that fled or was knocked out doesn’t.') : t('rules.dupesWhich', 'Every catch counts, also one whose pair failed or died – a Pokémon that fled or was knocked out doesn’t.')}`}</p>
-        <${Choice} label=${t('rules.dupes', 'Dupes clause')} value=${r.dupes} onChange=${(v) => set({ dupes: v })} options=${[['off', t('rules.off', 'Off')], ['player', t('rules.perPlayer', 'Per player')], ['both', n > 2 ? t('rules.forAll', 'For everyone') : t('rules.forBoth', 'For both')]]} />
-        ${r.dupes !== 'off' && html`<${MissedDupesRule} value=${r.missedDupes} onChange=${(v) => set({ missedDupes: v })} />`}</div>
-      <label class="check"><input type="checkbox" checked=${r.failKillsPair} onChange=${(e) => set({ failKillsPair: e.target.checked })} /><span>${n > 2 ? t('rules.failGroup', 'A missed encounter costs the whole group') : t('rules.fail', 'A missed encounter costs the whole pair')}</span></label>
-      <label class="check"><input type="checkbox" checked=${r.shinyClause} onChange=${(e) => set({ shinyClause: e.target.checked })} /><span>${t('rules.shiny', 'Shiny clause: shinies may always be caught and stay unlinked')}</span></label>
-      <label class="check"><input type="checkbox" checked=${!!r.levelCaps} onChange=${(e) => set({ levelCaps: e.target.checked })} /><span>${t('rules.caps', 'Check level caps')}</span></label>
-      <label class="check"><input type="checkbox" checked=${!!r.cheats} onChange=${(e) => set({ cheats: e.target.checked })} /><span>${t('rules.cheats', 'Allow cheats (Rare Candies)')}<span class="hint">${n > 2
-        ? t('rules.cheatsHintGroup', 'From the play screen. Every use shows up in the log for all of you.')
-        : t('rules.cheatsHint', 'From the play screen. Every use shows up in the log for both of you.')}</span></span></label>
+      <${SoulLinkRules} value=${r} onChange=${set} players=${n} disabled=${locked} />
     </section>`}
     <section class="panel stack">
       <h2>${t('lives.title', 'Lives')}</h2>
-      <${LivesRule} value=${r.lives} pool=${r.livesPool} players=${n} onChange=${set} left=${getLives(doc, manifest)} ended=${!!doc.get('run:status')}
+      <${LivesRule} value=${r.lives} pool=${r.livesPool} players=${n} onChange=${set} left=${getLives(doc, manifest)} ended=${!!doc.get('run:status')} disabled=${locked}
         names=${Object.fromEntries(Object.entries(getPlayers(doc, manifest)).map(([s, p]) => [s, p.name]))} />
     </section>
     <section class="panel stack">
       <h2>${t('rules.battleHelp', 'Battle help')}</h2>
-      <${TypeHelpRule} value=${r.typeHelp} solo=${solo} locked=${!isHost(me)} hostName=${getPlayers(doc, manifest)[HOST_SLOT]?.name}
-        onChange=${(v) => set({ typeHelp: v })} />
+      <${TypeHelpRule} value=${r.typeHelp} solo=${solo} locked=${locked} hostName=${hostName} note=${false} onChange=${(v) => set({ typeHelp: v })} />
     </section>
     <section class="panel stack">
       <h2>${t('rules.auto', 'Automatic')}</h2>
-      <label class="check"><input type="checkbox" checked=${r.autoAssign} onChange=${(e) => set({ autoAssign: e.target.checked })} /><span>${t('rules.autoAssign', 'Enter new catches automatically')}<span class="hint">${t('rules.autoAssignHint', 'Based on where they were caught. Unclear cases land in the inbox.')}</span></span></label>
-      ${!solo && html`<label class="check"><input type="checkbox" checked=${r.autoDeath} onChange=${(e) => set({ autoDeath: e.target.checked })} /><span>${n > 2 ? t('rules.autoDeathGroup', 'A linked Pokémon that faints (live) kills its whole group automatically') : t('rules.autoDeath', 'A linked Pokémon that faints (live) kills the pair automatically')}</span></label>`}
+      <${SoulLinkAuto} value=${r} onChange=${set} players=${n} solo=${solo} disabled=${locked} />
       <div class="stack-s"><h3>Discord</h3><p class="small muted">${t('rules.discordHint', 'Optional: post catches and deaths to your Discord channel (Channel › Integrations › Webhook).')}</p>
         <div class="row"><input type="url" class="grow sm-secret" value=${hook} placeholder="https://discord.com/api/webhooks/…" onInput=${(e) => setHook(e.target.value)} />
           <button class="btn" onClick=${saveHook}>${t('common.save', 'Save')}</button></div>

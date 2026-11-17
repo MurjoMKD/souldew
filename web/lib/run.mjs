@@ -8,8 +8,9 @@ import { ALL_SLOTS, slotsOf, runMode, isNuzlocke, othersOf } from '/shared/slots
 import { DEFAULT_RULES, RULE_PRESETS, NUZLOCKE_RULES, rulesWithDefaults } from '/shared/rules.mjs';
 import { placeName } from '/shared/live/location.mjs';
 import { livesLeft, livesOf, deathsIn, poolOf } from '/shared/lives.mjs';
+import { hostSlotOf, canEditRules, SOULLINK_RULE_KEYS } from '/shared/hostrules.mjs';
 
-export { ALL_SLOTS, slotsOf, runMode, isNuzlocke, othersOf, DEFAULT_RULES, RULE_PRESETS, NUZLOCKE_RULES };
+export { ALL_SLOTS, slotsOf, runMode, isNuzlocke, othersOf, DEFAULT_RULES, RULE_PRESETS, NUZLOCKE_RULES, hostSlotOf, canEditRules };
 // Runs from before 1–4 players were always a pair – the default where no slots/manifest are passed.
 const PAIR = ['p1', 'p2'];
 
@@ -426,9 +427,12 @@ export function logCheatRule(doc, manifest, by, allowed) {
     : solo ? msg('feed.cheatsOffSolo', 'Cheats turned off for this run') : msg('feed.cheatsOff', 'turned cheats off for this run') });
 }
 
-/** The run's host: the player who created it (P1 – the one who sends the invite). */
+/**
+ * The run's host: the player who created it (shared/hostrules.mjs) – the run names them (`host`); older runs and a
+ * run without a manifest at hand: P1, the one who sent the invite.
+ */
 export const HOST_SLOT = 'p1';
-export const isHost = (me) => (me || HOST_SLOT) === HOST_SLOT;
+export const isHost = (me, manifest) => (me || hostSlotOf(manifest)) === hostSlotOf(manifest);
 
 /** Is the type matchup help shown in this run? On unless the host switched it off (older runs: on). */
 export const typeHelpOn = (doc, manifest) => !doc || rules(doc, manifest).typeHelp !== false;
@@ -444,13 +448,12 @@ export function shinyNote(manifest) {
 }
 
 /**
- * Only the host may switch the type matchup help. Returns the rules patch a player may apply: a non-host's
- * `typeHelp` is dropped (their app doesn't offer the switch either).
+ * Only the host sets a SoulLink's rules (shared/hostrules.mjs) – on the computer that created the run. Returns the
+ * rules patch this computer may apply: all of it there (and in a solo run), else null (the board shows the rules
+ * read-only; every other app drops a change that isn't signed by the host anyway).
  */
-export function allowedRulesPatch(patch, me) {
-  if (!patch || isHost(me) || !('typeHelp' in patch)) return patch;
-  const { typeHelp, ...rest } = patch; // eslint-disable-line no-unused-vars
-  return rest;
+export function allowedRulesPatch(patch, manifest) {
+  return patch && canEditRules(manifest) ? patch : null;
 }
 
 /** Switching the type matchup help is logged for everyone, like the cheats rule. */
@@ -481,6 +484,51 @@ export function logLivesRule(doc, manifest, by, r) {
     : solo ? msg('feed.livesSolo', '{n} life for this run|{n} lives for this run', { n, count: n })
       : r.livesPool === 'player' ? msg('feed.livesPlayer', 'set the lives to {n} per player', { n })
         : msg('feed.livesShared', 'set {n} shared life for the run|set {n} shared lives for the run', { n, count: n }) });
+}
+
+/** The labels of a SoulLink's switches (n players), for the log: the board's texts. */
+const switchLabels = (n) => ({
+  missedDupes: msg('rules.missedDupes', 'Fled or knocked-out encounters count as dupes'),
+  failKillsPair: n > 2 ? msg('rules.failGroup', 'A missed encounter costs the whole group') : msg('rules.fail', 'A missed encounter costs the whole pair'),
+  shinyClause: msg('rules.shiny', 'Shiny clause: shinies may always be caught and stay unlinked'),
+  levelCaps: msg('rules.caps', 'Check level caps'),
+  autoAssign: msg('rules.autoAssign', 'Enter new catches automatically'),
+  autoDeath: n > 2 ? msg('rules.autoDeathGroup', 'A linked Pokémon that faints (live) kills its whole group automatically')
+    : msg('rules.autoDeath', 'A linked Pokémon that faints (live) kills the pair automatically'),
+});
+
+/** A SoulLink's choices (n players): their label and the label of each value, for the log – the board's texts. */
+const choiceLabels = (n) => ({
+  typeClause: [msg('rules.type', 'Type rule'), { off: msg('rules.off', 'Off'), party: msg('rules.perPlayer', 'Per player'),
+    global: n > 2 ? msg('rules.acrossAll', 'Across all teams') : msg('rules.acrossBoth', 'Across both teams') }],
+  dupes: [msg('rules.dupes', 'Dupes clause'), { off: msg('rules.off', 'Off'), player: msg('rules.perPlayer', 'Per player'),
+    both: n > 2 ? msg('rules.forAll', 'For everyone') : msg('rules.forBoth', 'For both') }],
+  gifts: [msg('nzr.gifts', 'Gifts & eggs'), { area: msg('nzr.optArea', 'Count as the area'), free: msg('nzr.optFree', 'Free extra'), banned: msg('nzr.optBanned', 'Not allowed') }],
+});
+
+/**
+ * The rules went from `before` to `after` (both with the defaults filled in – rules()): every change goes to the log
+ * for everyone (`by` = the slot that changed them – in a SoulLink the host). The cheats, the type matchup help and the
+ * lives keep their own lines (also in a solo run); a SoulLink logs every other rule too.
+ */
+export function logRulesChange(doc, manifest, by, before, after) {
+  if (!!after.cheats !== !!before.cheats) logCheatRule(doc, manifest, by, !!after.cheats);
+  if ((after.typeHelp !== false) !== (before.typeHelp !== false)) logTypeHelpRule(doc, manifest, by, after.typeHelp !== false);
+  if ((after.lives || 0) !== (before.lives || 0) || (after.lives > 0 && after.livesPool !== before.livesPool)) logLivesRule(doc, manifest, by, after);
+  if (isNuzlocke(manifest)) return;
+  const n = slotsOf(manifest).length;
+  const switches = switchLabels(n);
+  const choices = choiceLabels(n);
+  for (const key of SOULLINK_RULE_KEYS) {
+    if (switches[key] && !!after[key] !== !!before[key]) {
+      feedMsg(doc, manifest, { type: 'rule', slot: by, msg: after[key]
+        ? msg('feed.ruleOn', 'turned on “{rule}” for everyone', { rule: switches[key] })
+        : msg('feed.ruleOff', 'turned off “{rule}” for everyone', { rule: switches[key] }) });
+    } else if (choices[key] && after[key] !== before[key]) {
+      const [rule, values] = choices[key];
+      feedMsg(doc, manifest, { type: 'rule', slot: by, msg: msg('feed.ruleSet', 'set “{rule}” to {value} for everyone', { rule, value: values[after[key]] || String(after[key]) }) });
+    }
+  }
 }
 
 /** `slot` let the area's encounter get away (fled, knocked out, ball missed): the area is spent. */

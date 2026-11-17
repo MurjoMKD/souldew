@@ -54,5 +54,8 @@ export function rulesWithDefaults(stored, mode) {
   // `giftsCount` (true/false) came first; `gifts` is the same rule with a third option
   if (s.gifts === undefined && s.giftsCount !== undefined) r.gifts = s.giftsCount ? 'area' : 'free';
   r.giftsCount = r.gifts !== 'free';
+  // the host's signature of a SoulLink's rules (shared/hostrules.mjs) is no rule
+  delete r.rev;
+  delete r.sig;
   return r;
 }

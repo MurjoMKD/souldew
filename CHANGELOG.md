@@ -70,6 +70,14 @@
   SoulSilver. In Diamond, Pearl, Platinum, Black, White, Black 2 and White 2 nothing changed after saving. souldew now
   reads the saves of all of them, in every language, also when melonDS saves into its own save folder (set in melonDS's
   settings) instead of next to the game. The melonDS page shows which save file souldew reads and when it last read it.
+- **SoulLink: the host sets all the rules.** Whoever creates a SoulLink now picks every rule right in the wizard – type
+  rule, dupes clause, missed encounters, shiny clause, gifts & eggs, level caps, cheats, lives, the type matchup help and
+  the automatic switches – instead of setting most of them later on the board. The rules come with the invite, and the
+  join page shows them before you join. Afterwards only the host can change them: the others see them on the board's
+  Rules tab (and in the rules drawer while playing) with “Set by the host”, and every change the host makes shows up in
+  the log for everyone. A change from anyone else doesn't count on the other players' computers – not even from an
+  older or modified souldew. A new attempt keeps the rules. In runs you already have, the player who created the run is
+  the host, and the rules stay as they are. Players on 2.8.1 can still join – they just don't see the rules as locked.
 
 ## 2.8.1
 

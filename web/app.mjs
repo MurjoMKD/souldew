@@ -34,6 +34,7 @@ import { useCoffeeFx, CoffeeFx } from './views/coffee.mjs';
 import { LicenseNag } from './views/nag.mjs';
 import { countLaunch, shouldNag } from './lib/nag.mjs';
 import { mySlotIn } from './lib/restart.mjs';
+import { initRules, setupHostRules } from './lib/hostrules.mjs';
 import { IS_MAC, IS_WIN, PLATFORM, shortcut } from './lib/platform.mjs';
 import { TrophiesView, TrophyToasts } from './views/trophies.mjs';
 import { syncTrophies, rememberSlots, watchRun, onTrophyUnlock } from './lib/trophies.mjs';
@@ -366,6 +367,7 @@ function App() {
     if (!runId) return;
     let cancelled = false;
     let unsub = null;
+    let stopHost = () => {};
     (async () => {
       const m = await reloadManifest(runId);
       if (!m || cancelled) return;
@@ -377,7 +379,7 @@ function App() {
       setMeState(mySlotIn(m));
       for (const s of slotsOf(m)) if (!d.get(`player:${s}`) && m.players?.[s]) d.set(`player:${s}`, m.players[s]);
       applyJoinName(d, m);
-      if (!d.get('rules') && m.rules) d.set('rules', m.rules);
+      initRules(d, m);
       // Older versions kept the Discord webhook in the shared rules: hand it to the server once (it moves it into
       // this computer's config) and drop it from the doc, so it no longer syncs to the partner.
       const legacy = d.get('rules');
@@ -387,7 +389,13 @@ function App() {
         api.post(`/api/runs/${runId}/meta`, { rules: legacy }).catch(() => {});
         d.set('rules', clean);
       }
-      unsub = d.subscribe(() => setDocVersion((v) => v + 1));
+      // a SoulLink's rules are the host's: signed by its computer, checked when they come in (lib/hostrules.mjs)
+      stopHost = setupHostRules(d, m, { me: mySlotIn(m), reload: () => !cancelled && reloadManifest(runId) });
+      const unsubDoc = d.subscribe(() => setDocVersion((v) => v + 1));
+      unsub = () => {
+        unsubDoc();
+        stopHost();
+      };
       setDoc(d);
       setRunData(rd);
       setDocVersion((v) => v + 1);

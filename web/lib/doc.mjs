@@ -49,6 +49,9 @@ export class RunDoc {
     this.listeners = new Set();
     this.localListeners = new Set(); // called with entries changed locally (to broadcast)
     this.saveTimer = null;
+    // guard(key, entry) for entries from the link: true (take it), false (drop it) or a Promise of either – merged
+    // again once it settles. For keys only one player may write (lib/hostrules.mjs: the host's rules).
+    this.guard = null;
   }
 
   tick() {
@@ -88,6 +91,20 @@ export class RunDoc {
     if (keys.length) this._changed(keys, changed);
   }
 
+  /**
+   * Write `value` at the timestamp `t` it was made for (the host's signed rules carry theirs – lib/hostrules.mjs), if
+   * that is newer than what the key holds. true when it was written.
+   */
+  setAt(key, value, t) {
+    if (!Number.isFinite(t)) return false;
+    const entry = { v: value === undefined ? null : value, t, by: this.by };
+    if (!newer(entry, Object.hasOwn(this.entries, key) ? this.entries[key] : undefined)) return false;
+    this.entries[key] = entry;
+    if (t > this.clock) this.clock = t;
+    this._changed([key], { [key]: entry });
+    return true;
+  }
+
   del(key) {
     this.set(key, null);
   }
@@ -102,7 +119,15 @@ export class RunDoc {
       // future (one would win every later edit of that key forever).
       if (UNSAFE_KEYS.has(k) || !raw || typeof raw !== 'object' || typeof raw.t !== 'number' || !Number.isFinite(raw.t)) continue;
       const e = { v: raw.v === undefined ? null : raw.v, t: Math.min(raw.t, maxT), by: typeof raw.by === 'string' ? raw.by.slice(0, 64) : '' };
-      if (newer(e, Object.hasOwn(this.entries, k) ? this.entries[k] : undefined)) {
+      const known = Object.hasOwn(this.entries, k) ? this.entries[k] : undefined;
+      if (this.guard && newer(e, known)) {
+        const ok = this.guard(k, e);
+        if (ok !== true) {
+          if (ok && typeof ok.then === 'function') ok.then((yes) => yes && this.merge({ [k]: e }, info), () => {});
+          continue;
+        }
+      }
+      if (newer(e, known)) {
         this.entries[k] = e;
         changed.push(k);
       }
