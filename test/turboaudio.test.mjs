@@ -247,7 +247,7 @@ test('a long silence (area change) drops the old music', () => {
   assert.ok(streamed(m, jumps, c0, during, f, Math.round(0.5 * SR), SR, { ahead: 2 * SR }).corr > 0.95, 'the new music, not the old loop');
 });
 
-test('the music changes during fast-forward → the old loop stops, the new song plays and becomes the loop', () => {
+test('the music changes during fast-forward → the old loop stops, the new song plays on as the game plays it', () => {
   const A = tune({ seed: 1, period: 6.4 });
   const B = tune({ seed: 7, period: 4 });
   const m = new TurboMixer(SR, { seconds: 60 });
@@ -267,8 +267,9 @@ test('the music changes during fast-forward → the old loop stops, the new song
   // (it starts a few hundred samples late: song B is noticed once its first analysis frame is complete)
   assert.ok(streamed(m, jumps, c0, b, B, Math.round(0.2 * SR), Math.round(1.2 * SR), { back: 2048, ahead: 2 * SR }).corr > 0.95, 'song B at normal speed right away');
   assert.ok(Math.abs(corr(b, A, tB, Math.round(0.2 * SR), Math.round(2 * SR))) < 0.3, 'not song A any more');
-  assert.ok(m.carry && !m.carry.stream, 'B got its own loop');
-  assert.ok(Math.abs(m.carry.lag - 4 * SR) < 0.01 * SR, `loop ${m.carry.lag / SR} s`);
+  // (until 2.8.1 B's loop was then searched in the slowed-down recording and took over – a few seconds of raced-through
+  // sound on repeat, its effects too; the game's own sound now plays on until B is heard at 1×)
+  assert.ok(m.carry?.stream, 'B plays on as the game plays it');
   assert.ok(maxJump(b) < 0.2, 'no clicks');
 });
 
