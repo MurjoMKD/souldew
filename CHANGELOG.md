@@ -25,6 +25,10 @@
   With a full team, a new catch only showed up once you took it out of the PC – and a wild Pokémon that got away was
   never asked about, since souldew couldn't tell whether it had been caught. souldew now reads the PC live in these games
   too, so both work like in the other games.
+- **HeartGold and SoulSilver: the level caps** (thanks to a player on Discord). Falkner's cap was 9 – his Pidgey – instead
+  of 13, his Pidgeotto, and the rival at Azalea Town's 20 instead of 18. Marking a gym leader as defeated on the board
+  now also moves the cap on to the next one, even before the badge has been read from the game – for every player of a
+  SoulLink.
 
 ## 2.8.0
 
