@@ -186,14 +186,16 @@
       <p class="sec-lead" data-reveal>Emulator, tracker, rules, randomizer and sync live in the same place – and they talk to each other.</p>
     </div>
     <ol class="findex" data-findex>
-      <li><button type="button" aria-expanded="true"><span class="fx-n">01</span><span class="fx-t">Built-in emulator</span></button><p>3DS, DS, GBA, Game Boy and Game Boy Color – 3DS games with both screens and the touch screen under your mouse. Fast-forward, eight save states, PlayStation, Xbox and Switch pads – and the game keeps running in a mini window while you check the board.</p></li>
+      <li><button type="button" aria-expanded="true"><span class="fx-n">01</span><span class="fx-t">Built-in emulator</span></button><p>3DS, DS, GBA, Game Boy and Game Boy Color – 3DS games with both screens and the touch screen under your mouse. Fast-forward (hold Tab), eight save states, PlayStation, Xbox and Switch pads – and the game keeps running in a mini window while you check the board.</p></li>
       <li><button type="button" aria-expanded="false"><span class="fx-n">02</span><span class="fx-t">Live tracking</span></button><p>Species, nickname, level, HP, status and where it was caught – read from the running game’s memory. New catches file themselves under their route.</p></li>
-      <li><button type="button" aria-expanded="false"><span class="fx-n">03</span><span class="fx-t">Battle panel</span></button><p>The opponent’s types and weaknesses, how your moves land – and whether your rules even allow the catch, including type clashes with your partners.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="fx-n">03</span><span class="fx-t">Battle help</span></button><p>The opponent’s types and weaknesses, how your moves land and your chance to catch it with a Poké, Great or Ultra Ball – worked out live with each generation’s own formula. Whether your rules even allow the catch, type clashes with your partners included.</p></li>
       <li><button type="button" aria-expanded="false"><span class="fx-n">04</span><span class="fx-t">Real-time sync</span></button><p>Up to four players, directly over WebRTC or through an encrypted relay. Your partner’s game shows up as a small live picture next to yours.</p></li>
       <li><button type="button" aria-expanded="false"><span class="fx-n">05</span><span class="fx-t">Randomizer &amp; ROM hacks</span></button><p>Universal Pokémon Randomizer ZX is built in, Java included. xdelta, BPS, UPS and IPS patches are applied for you, with 31 known hacks ready to go.</p></li>
-      <li><button type="button" aria-expanded="false"><span class="fx-n">06</span><span class="fx-t">Turbo without chipmunk music</span></button><p>Fast-forward through the grind while the music keeps its normal speed. For DS games souldew plays the current song from your ROM’s own sound archive.</p></li>
-      <li><button type="button" aria-expanded="false"><span class="fx-n">07</span><span class="fx-t">“You are here”</span></button><p>A sign next to the game shows each player’s area, read live – and what it means for them: first encounter open, caught, used up or dead.</p></li>
-      <li><button type="button" aria-expanded="false"><span class="fx-n">08</span><span class="fx-t">Made for everyone</span></button><p>English, German, French, Spanish and Italian. Colour-blind safe schemes, full keyboard control and reduced motion.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="fx-n">06</span><span class="fx-t">Lives &amp; shiny rates</span></button><p>Give a run 20 lives, and every Pokémon that falls costs one. In the original Gen 3–5 games shinies can be 1 in 512, 1 in 100 or any rate you like – the same for every player.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="fx-n">07</span><span class="fx-t">Turbo without chipmunk music</span></button><p>Fast-forward through the grind while the music keeps its normal speed. For DS games souldew plays the current song from your ROM’s own sound archive.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="fx-n">08</span><span class="fx-t">“You are here”</span></button><p>A sign next to the game shows each player’s area, read live – and what it means for them: first encounter open, caught, used up or dead.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="fx-n">09</span><span class="fx-t">Trophies &amp; share cards</span></button><p>Achievements for the moments every Nuzlocker knows – and a card for every death, wipe and Hall of Fame to share on the souldew Discord.</p></li>
+      <li><button type="button" aria-expanded="false"><span class="fx-n">10</span><span class="fx-t">Made for everyone</span></button><p>English, German, French, Spanish and Italian. Colour-blind safe schemes, full keyboard control and reduced motion.</p></li>
     </ol>
   </div>
 </section>
@@ -238,12 +240,28 @@
   </div>
 </section>
 
+<!-- 7b · The 3DS player -->
+<section class="ds-sec" aria-labelledby="ds-title">
+  <div class="wrap ds-grid">
+    <div class="ds-copy">
+      <p class="chapter"><span>07</span> 3DS</p>
+      <h2 id="ds-title" class="display-2" data-reveal>Both screens.<br>Right inside.</h2>
+      <p class="sec-lead" data-reveal>X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon and Ultra Sun/Ultra Moon run in souldew’s own player – next to your team, the battle help and the place sign, all read live like in every other game.</p>
+      <ul class="ds-facts" data-reveal><li><b>Touch screen under your mouse.</b> Both screens, save states, fast-forward and screenshots.</li><li><b>Randomized from your own dump.</b> Every player rebuilds the same game, and souldew compares it byte for byte.</li><li><b>Nothing extra to install.</b> souldew brings Vulkan on macOS; on Windows and Linux the graphics driver does.</li></ul>
+    </div>
+    <figure class="ds-shot app-window" data-reveal>
+      <div class="win-bar" aria-hidden="true"><i></i><i></i><i></i></div>
+      <img src="assets/img/shots/play-3ds-1440.webp" srcset="assets/img/shots/play-3ds-1440.webp 1440w, assets/img/shots/play-3ds.webp 2880w" sizes="(max-width: 900px) 100vw, 60vw" width="1440" height="900" alt="souldew’s 3DS player: a battle on the top screen, the touch menu below, and next to it the battle help with the foe’s types and your moves." loading="lazy">
+    </figure>
+  </div>
+</section>
+
 <!-- 8 · Supported games as an index -->
 <section class="games-sec" aria-labelledby="games-title">
   <div class="wrap">
     <div class="sec-head row">
       <div>
-        <p class="chapter"><span>07</span> Supported games</p>
+        <p class="chapter"><span>08</span> Supported games</p>
         <h2 id="games-title" class="display-2" data-reveal>Red to Ultra Moon.</h2>
       </div>
       <p class="sec-lead" data-reveal>Every main-series game from Generation 1 to 7 plays in souldew – the 3DS games included. Team and HP, the battle panel and “You are here” are read live in all of them.</p>
@@ -272,7 +290,7 @@
 <section class="dl-sec" id="download" aria-labelledby="dl-title">
   <div class="wrap">
     <div class="sec-head">
-      <p class="chapter"><span>08</span> Download</p>
+      <p class="chapter"><span>09</span> Download</p>
       <h2 id="dl-title" class="display-2" data-reveal>Ready for your<br>next SoulLink?</h2>
     </div>
     <div class="platforms">
@@ -316,7 +334,7 @@
 <section class="faq-sec" aria-labelledby="faq-title">
   <div class="wrap faq-grid">
     <div>
-      <p class="chapter"><span>09</span> Questions</p>
+      <p class="chapter"><span>10</span> Questions</p>
       <h2 id="faq-title" class="display-2" data-reveal>Good<br>to know.</h2>
       <div class="support">
         <p>souldew is free and stays free. Find SoulLink partners, get help and share your runs on our Discord. If souldew made your runs more fun, you can buy me a coffee – or help build it.</p>
