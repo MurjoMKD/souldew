@@ -18,6 +18,8 @@ import { cleanShiny } from '../../shared/shiny.mjs';
 import { applyShiny } from './shiny.mjs';
 import { ctrFileReport } from './ctr.mjs';
 import { packFormatOf } from '../../shared/runpack.mjs';
+import { isHostKey } from '../../shared/hostrules.mjs';
+import { signRules, isHostComputer } from './hostkey.mjs';
 
 /** Runs from before 1–4 players were always a pair – the default where no slots are passed (shared/slots.mjs). */
 const PAIR = ['p1', 'p2'];
@@ -322,6 +324,8 @@ export function checkPack(pack) {
     ...(pack.mode ? { mode: pack.mode } : {}),
     // the host's shiny rate – every player's game is patched with it (unknown values: the games' own odds)
     shiny: cleanShiny(pack.shiny),
+    // the host and the key of their rules (shared/hostrules.mjs) – a pack without them: an older host
+    ...(pack.mode !== 'nuzlocke' && isHostKey(pack.hostKey) ? { hostKey: pack.hostKey, host: ALL_SLOTS.includes(pack.host) && players[pack.host] ? pack.host : 'p1' } : {}),
   };
 }
 
@@ -345,6 +349,8 @@ export function runPack(m) {
     outputs: Object.fromEntries(Object.entries(m.outputs || {}).map(([k, v]) => [k, { sha1: v.sha1 }])),
     rules: stripLocalRules(m.rules || null),
     game: m.game || null,
+    // who sets the rules, and the key their signature is checked with (shared/hostrules.mjs – older apps ignore both)
+    ...(m.hostKey ? { host: m.host || 'p1', hostKey: m.hostKey } : {}),
     ...(m.shiny ? { shiny: m.shiny } : {}),
   };
 }
@@ -445,6 +451,9 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       sharedSeed: !!opts.sharedSeed,
     },
     rules: stripLocalRules(opts.rules || existing?.rules || null), // the Discord webhook lives in the local config
+    // the host – the player of the computer that creates a SoulLink (a new attempt: whoever started it); it signs the
+    // rules (shared/hostrules.mjs – the key is made below, once the folder exists)
+    ...(mode === 'soullink' && !existing && slots.includes(opts.host) ? { host: opts.host } : {}),
     // another shiny rate (Gen 3–5 originals): patched into every player's game below, after the randomizer
     shiny: cleanShiny(opts.shiny !== undefined ? opts.shiny : existing?.shiny),
     // outputs of slots the run no longer has (a rebuild with fewer players) would be offered for download
@@ -586,6 +595,9 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       manifest.diff = null;
     }
   }
+  // the creator's computer signs the rules it builds the run with (a new attempt brings the old run's signature: a new
+  // one, with this run's key) – a joining player's computer keeps the host's signed rules from the pack
+  if (isHostComputer(manifest)) signRules(manifest, manifest.rules || {});
   writeManifest(manifest);
   writeFileAtomic(join(dir, 'run-pack.soullink.json'), JSON.stringify(runPack(manifest), null, 2));
   return manifest;

@@ -134,7 +134,9 @@ test('Platinum SoulLink level caps: the gym aces read from the game, by the badg
 });
 
 test('board rules: the dupes clause says what counts – whose catches, and that a failed or dead pair’s catch counts too', () => {
-  const board = readFileSync(new URL('../web/views/board.mjs', import.meta.url), 'utf8');
+  // (the SoulLink rules are one component for the board and the wizard since 2.8.2 – views/nuzrules.mjs SoulLinkRules)
+  const board = readFileSync(new URL('../web/views/nuzrules.mjs', import.meta.url), 'utf8');
+  assert.match(readFileSync(new URL('../web/views/board.mjs', import.meta.url), 'utf8'), /<\$\{SoulLinkRules\} value=\$\{r\}/);
   assert.match(board, /t\('rules\.dupesPlayerHint'/);
   assert.match(board, /t\('rules\.dupesBothHint'/);
   assert.match(board, /t\('rules\.dupesWhich'/);

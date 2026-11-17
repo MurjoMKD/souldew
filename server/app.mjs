@@ -18,6 +18,8 @@ import { saveCover, deleteCover, coverFile, customCovers, coverUrl, COVER_LIMIT 
 import { inspectCtr, ncchSizeOf } from './lib/ctrrando.mjs';
 import { shinySupport, isOriginalRom } from './lib/shiny.mjs';
 import { packFormatState, packMinVersion } from '../shared/runpack.mjs';
+import { isHostKey, unsigned } from '../shared/hostrules.mjs';
+import { signRules, isHostComputer } from './lib/hostkey.mjs';
 import { shinyThreshold } from '../shared/shiny.mjs';
 import { buildRun, listRuns, readManifest, writeManifest, runDir, runPack, runSummary, trashRun, checkPack, stripLocalRules, isDiscordWebhook, mergeDocEntries, renamePlayers } from './lib/build.mjs';
 import { SaveWatcher, saveParser, isHgssGame } from './lib/savewatch.mjs';
@@ -1248,16 +1250,41 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     const manifest = readManifest(m[1]);
     if (!manifest) throw httpError(404, 'Run not found', 'runNotFound');
     const body = await readBody(req);
-    if (body.rules && typeof body.rules === 'object' && !Array.isArray(body.rules)) {
+    // (the host's computer keeps its signed rules – they change through POST …/rules)
+    if (body.rules && typeof body.rules === 'object' && !Array.isArray(body.rules) && !(isHostComputer(manifest) && manifest.hostKey)) {
       discordWebhookFor(m[1]); // migrate a legacy webhook first, so it isn't lost
       adoptLegacyWebhook(m[1], body.rules.discordWebhook);
       manifest.rules = stripLocalRules(body.rules);
+    }
+    // a run joined before 2.8.2: the host's key as their app announced it in the doc (shared/hostrules.mjs) – taken
+    // once, never replaced (a key that came with the invite stays too)
+    if (manifest.imported && !manifest.hostKey && isHostKey(body.hostKey) && runMode(manifest) === 'soullink') {
+      manifest.hostKey = body.hostKey;
+      manifest.host = slotsOf(manifest).includes(body.host) ? body.host : 'p1';
     }
     if (body.name) manifest.name = String(body.name).slice(0, 80);
     if (body.players) manifest.players = renamePlayers(manifest, body.players);
     writeManifest(manifest);
     pushOverlay(m[1]);
     return manifest;
+  });
+
+  // The host changes a SoulLink's rules (shared/hostrules.mjs): signed here with the run's key, which only the computer
+  // that created the run has – any other computer gets a 403. body: { rules, after: the newest doc timestamp the app
+  // has seen, me: the slot that plays on this computer (a run from before 2.8.2 names its host by it) } → the signed
+  // value for the doc's `rules`, written at its `rev`.
+  route('POST', /^\/api\/runs\/([a-f0-9]{8})\/rules$/, async (req, m) => {
+    const manifest = readManifest(m[1]);
+    if (!manifest) throw httpError(404, 'Run not found', 'runNotFound');
+    const body = await readBody(req);
+    const rules = body.rules;
+    if (!rules || typeof rules !== 'object' || Array.isArray(rules) || JSON.stringify(rules).length > 4000) throw httpError(400, 'Invalid rules', 'badRules');
+    discordWebhookFor(m[1]); // a legacy webhook in the rules moves into the local config first
+    adoptLegacyWebhook(m[1], rules.discordWebhook);
+    const signed = signRules(manifest, stripLocalRules(unsigned(rules)), { after: Number(body.after) || 0, mySlot: body.me });
+    writeManifest(manifest);
+    pushOverlay(m[1]);
+    return { rules: signed, host: manifest.host, hostKey: manifest.hostKey };
   });
 
   route('GET', /^\/api\/runs\/([a-f0-9]{8})\/data\/(p[1-4])$/, (req, m) => {

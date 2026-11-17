@@ -17,7 +17,9 @@ import { NUZLOCKE_RULES, joinNames, shinyNote } from '../lib/run.mjs';
 import { suggestSlot } from '../lib/invitecode.mjs';
 import { Board, InviteBody } from './board.mjs';
 import { JoinCode } from './invitecode.mjs';
-import { NuzlockeRules, TypeHelpRule, LivesRule } from './nuzrules.mjs';
+import { NuzlockeRules, TypeHelpRule, LivesRule, SoulLinkRules, SoulLinkAuto, RulesSummary } from './nuzrules.mjs';
+import { soulLinkRulesFrom, hostSlotOf } from '/shared/hostrules.mjs';
+import { rulesWithDefaults } from '/shared/rules.mjs';
 import { FirstSteps } from './firststeps.mjs';
 import { IntroSaveOption, useIntroSave } from './introsave.mjs';
 import { SHINY_RATES, NORMAL_RATE, MIN_RATE, cleanShiny, shinyOdds, shinyNeedsHigh } from '/shared/shiny.mjs';
@@ -593,10 +595,14 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
   const slots = ALL_SLOTS.slice(0, solo ? 1 : count);
   // a restarted Nuzlocke keeps its rules; a SoulLink's rules don't fit a Nuzlocke (and the other way round)
   const [nzRules, setNzRules] = useState(() => (from && runMode(from) === 'nuzlocke' && from.rules ? { ...NUZLOCKE_RULES, ...from.rules } : { ...NUZLOCKE_RULES }));
-  // the host's call for everyone: the battle helper's type matchups (a restart keeps the old run's choice)
+  // the battle helper's type matchups (a restart keeps the old run's choice)
   const [typeHelp, setTypeHelp] = useState(() => from?.rules?.typeHelp !== false);
-  // the lives rule, for both modes (off unless switched on; a restart keeps the old run's lives)
+  // the lives rule (off unless switched on; a restart keeps the old run's lives)
   const [lives, setLives] = useState(() => ({ lives: from?.rules?.lives > 0 ? from.rules.lives : 0, livesPool: from?.rules?.livesPool === 'player' ? 'player' : 'shared' }));
+  // a SoulLink's rules – every one of them, the host's call for everyone (shared/hostrules.mjs); a new attempt starts
+  // with the old run's
+  const [slRules, setSlRules] = useState(() => soulLinkRulesFrom(from && runMode(from) === 'soullink' ? from.rules : null));
+  const patchSl = (patch) => setSlRules((v) => ({ ...v, ...patch }));
   // another shiny rate for the game (Gen 3–5 originals, patched into every player's game – a restart keeps it)
   const [shinyRate, setShinyRate] = useState(from?.shiny?.rate || NORMAL_RATE);
   const [shinyTrainers, setShinyTrainers] = useState(!!from?.shiny?.trainers);
@@ -688,7 +694,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
         gameId: game?.variantOf || game?.id || null, gameTitle: hack?.name || customHack || (game ? gameTitle(game) : rom.title), hackId: hack?.id || null,
         hackName: !hack && customHack ? customHack : undefined,
         name: numberedName(defaultRunName(players, mode), status?.runs),
-        rules: { ...(solo ? nzRules : from && runMode(from) === 'soullink' ? from.rules || {} : {}), ...lives, typeHelp },
+        rules: solo ? { ...nzRules, ...lives, typeHelp } : slRules,
         shiny,
         ...(intro && fromIntro ? { introSave: true, introSlot: 'p1' } : {}),
       });
@@ -830,11 +836,15 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
     <section class="panel stack">
       <h2>${t('new.stepRules', '{n} · Rules', { n: step.rules })}</h2>
       ${solo ? html`<p class="small muted">${t('new.rulesHint', 'You can change them later on the board (Rules tab).')}</p>
-        <${NuzlockeRules} variant="wizard" value=${nzRules} onChange=${(patch) => setNzRules((v) => ({ ...v, ...patch }))} />`
-        : html`<p class="small muted">${count > 2 ? t('new.rulesHintGroup', 'Type rule, dupes clause, level caps and the rest are set together on the board (Rules tab). This one is yours as the host – it applies to everyone, and only you can change it later.')
-          : t('new.rulesHintLink', 'Type rule, dupes clause, level caps and the rest are set together on the board (Rules tab). This one is yours as the host – it applies to both of you, and only you can change it later.')}</p>`}
-      <div class=${solo ? 'rule-sep' : ''}><${TypeHelpRule} value=${typeHelp} solo=${solo} onChange=${setTypeHelp} /></div>
-      <div class="rule-sep"><${LivesRule} variant="wizard" value=${lives.lives} pool=${lives.livesPool} players=${solo ? 1 : count} onChange=${(patch) => setLives((v) => ({ ...v, ...patch }))} /></div>
+        <${NuzlockeRules} variant="wizard" value=${nzRules} onChange=${(patch) => setNzRules((v) => ({ ...v, ...patch }))} />
+        <div class="rule-sep"><${TypeHelpRule} value=${typeHelp} solo=${true} onChange=${setTypeHelp} /></div>
+        <div class="rule-sep"><${LivesRule} variant="wizard" value=${lives.lives} pool=${lives.livesPool} players=${1} onChange=${(patch) => setLives((v) => ({ ...v, ...patch }))} /></div>`
+        : html`<p class="small muted">${count > 2 ? t('new.rulesHostGroup', 'You’re the host: these rules apply to all of you, and only you can change them later (board › Rules). Every change shows up in the log for everyone.')
+          : t('new.rulesHost', 'You’re the host: these rules apply to both of you, and only you can change them later (board › Rules). Every change shows up in the log for both of you.')}</p>
+        <${SoulLinkRules} variant="wizard" value=${slRules} onChange=${patchSl} players=${count} />
+        <div class="rule-sep"><${TypeHelpRule} value=${slRules.typeHelp} onChange=${(v) => patchSl({ typeHelp: v })} /></div>
+        <div class="rule-sep"><${LivesRule} variant="wizard" value=${slRules.lives} pool=${slRules.livesPool} players=${count} onChange=${patchSl} /></div>
+        <div class="rule-sep stack-s"><b class="small">${t('rules.auto', 'Automatic')}</b><${SoulLinkAuto} value=${slRules} onChange=${patchSl} players=${count} /></div>`}
     </section>
 
     <section class="panel stack">
@@ -892,8 +902,8 @@ function JoinRun() {
     }
   }, [manifest?.id]);
   const slots = pack ? slotsOf(pack) : [];
-  // Without a hint (invite file) the host is taken to be P1 – the first free player after them is us.
-  const mine = slots.includes(slot) ? slot : suggestSlot(pack?.players, ['p1']) || slots[0] || 'p1';
+  // Without a hint (invite file) the host's seat is taken (P1 in older invites) – the first free player after them is us.
+  const mine = slots.includes(slot) ? slot : suggestSlot(pack?.players, [hostSlotOf(pack)]) || slots[0] || 'p1';
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [log, setLog] = useState([]);
@@ -931,7 +941,7 @@ function JoinRun() {
     try {
       const m = await api.post('/api/runs/import', { pack: JSON.parse(String(text).replace(/^\uFEFF/, '').trim()) }); // an editor may have added a BOM
       const s = runMode(m) === 'nuzlocke' ? 'p1'
-        : seat?.slot ?? suggestSlot(m.players, seat ? seat.taken || [] : ['p1'], status?.config?.playerName) ?? slotsOf(m).at(-1);
+        : seat?.slot ?? suggestSlot(m.players, seat ? seat.taken || [] : [hostSlotOf(m)], status?.config?.playerName) ?? slotsOf(m).at(-1);
       await reloadStatus();
       setRunId(m.id);
       setMe(s, m.id);
@@ -988,9 +998,12 @@ function JoinRun() {
     ${error && html`<div class="warning error" role="alert">${error}</div>`}
     <section class="panel stack">
       <h2>${pack ? t('join.step1', '1 · Open the invite') : t('join.step1Code', '1 · Enter the invite code')}</h2>
-      ${pack ? html`<p class="note">${t('join.loaded', 'Invite from {name}: {run}', { name: pack.players?.p1?.name || 'P1',
+      ${pack ? html`<p class="note">${t('join.loaded', 'Invite from {name}: {run}', { name: pack.players?.[hostSlotOf(pack)]?.name || hostSlotOf(pack).toUpperCase(),
           run: runMode(pack) === 'nuzlocke' ? t('runs.modeSolo', 'Solo Nuzlocke')
-            : t('join.loadedLink', 'SoulLink with {n} players ({names})', { n: slots.length, names: joinNames(slots.map((s) => pack.players?.[s]?.name || s.toUpperCase())) }) })}</p>`
+            : t('join.loadedLink', 'SoulLink with {n} players ({names})', { n: slots.length, names: joinNames(slots.map((s) => pack.players?.[s]?.name || s.toUpperCase())) }) })}</p>
+        ${runMode(pack) === 'soullink' && html`<div class="stack-s join-rules"><b class="small">${t('join.rules', 'The rules of this run')}</b>
+          <${RulesSummary} rules=${rulesWithDefaults(pack.rules, 'soullink')} players=${slots.length} />
+          <span class="tiny faint">${t('join.rulesHost', '{name} set them as the host – they apply to everyone, and only {name} can change them later.', { name: pack.players?.[hostSlotOf(pack)]?.name || hostSlotOf(pack).toUpperCase() })}</span></div>`}`
         : html`<${JoinCode} onPack=${(p, seat) => load(JSON.stringify(p), seat)} />
           <details class="group"><summary>${t('join.fileInstead', 'Or use an invite file')}</summary><div style="padding:4px 14px 12px"><${InviteDrop} onText=${load} /></div></details>`}
     </section>
