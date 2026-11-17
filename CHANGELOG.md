@@ -41,6 +41,15 @@
   of 13, his Pidgeotto, and the rival at Azalea Town's 20 instead of 18. Marking a gym leader as defeated on the board
   now also moves the cap on to the next one, even before the badge has been read from the game – for every player of a
   SoulLink.
+- **Any shiny rate** (thanks to players on Discord). Besides 1 in 4096, 1024, 512 and 256 there is now “Custom…”:
+  enter any rate from 1 in 8192 down to 1 in 2 – 1 in 100, 1 in 50, 1 in 10, whatever your run wants. Where a game
+  can't do a rate exactly, the wizard says what it does instead (1 in 100 becomes 1 in 99.9). Everyone in a run with a
+  custom rate needs 2.8.1 – 2.8.0 refuses its invite and says to update. As before it's for the original Gen 3–5 games,
+  and shinies from a raised rate fill the Pokédex but don't count for the shiny achievements.
+- **Fast-forward sound keeps up with the game** (thanks to a player on Discord). With “Music continues”, a song souldew
+  hadn't heard at normal speed yet played at its normal pace while the game raced ahead – so the game's own sounds, menu
+  sounds too, came later and later the longer fast-forward ran, up to half a minute. Now that music skips ahead in small,
+  smooth steps and stays at most a second behind the game, at every speed and however long you fast-forward.
 
 ## 2.8.0
 

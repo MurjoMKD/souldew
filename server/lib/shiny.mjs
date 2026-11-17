@@ -5,7 +5,7 @@
 import { openSync, readSync, writeSync, closeSync, fstatSync } from 'node:fs';
 import { identifyRom, matchCatalog } from '../../shared/romid.mjs';
 import { ndsHeader, ndsArm9, blzDecompress, blzCompressTo } from '../../shared/nds.mjs';
-import { cleanShiny, shinyFamily, locateShiny, shinyEdits, trainerShiniesOk } from '../../shared/shiny.mjs';
+import { cleanShiny, shinyFamily, locateShiny, shinyEdits, trainerShiniesOk, shinyNeedsHigh } from '../../shared/shiny.mjs';
 import { catalog } from './library.mjs';
 import { httpError } from './fsutil.mjs';
 
@@ -49,9 +49,9 @@ export function isOriginalRom(patched, patchId) {
 }
 
 /**
- * Can the game at `path` get another shiny rate? → { ok, trainers, gen } or { ok: false, reason } – `game`: not a Gen
- * 3–5 GBA/DS game, `hack`: not an original game (`original` false), `code`: its shiny check isn't exactly where it
- * should be.
+ * Can the game at `path` get another shiny rate? → { ok, trainers, gen, high } or { ok: false, reason } – `game`: not a
+ * Gen 3–5 GBA/DS game, `hack`: not an original game (`original` false), `code`: its shiny check isn't exactly where it
+ * should be. `high`: rates above 1 in 257 too (thresholds above 255 – shared/shiny.mjs planHigh).
  */
 export function shinySupport(path, { original = true } = {}) {
   let fd = null;
@@ -62,7 +62,7 @@ export function shinySupport(path, { original = true } = {}) {
     if (!original) return { ok: false, reason: 'hack', gen: family.gen };
     const located = locateShiny(code, family);
     if (located.error) return { ok: false, reason: 'code', gen: family.gen };
-    return { ok: true, gen: family.gen, trainers: trainerShiniesOk(located) };
+    return { ok: true, gen: family.gen, trainers: trainerShiniesOk(located), high: !!located.high?.ok };
   } catch {
     return { ok: false, reason: 'code' }; // (a cut-off or damaged file)
   } finally {
@@ -83,7 +83,7 @@ export function applyShiny(path, shiny) {
   try {
     const { family, code, arm9 } = readCode(fd);
     const located = family ? locateShiny(code, family) : { error: 'game' };
-    if (located.error || (s.trainers && !trainerShiniesOk(located))) throw unsupported();
+    if (located.error || (s.trainers && !trainerShiniesOk(located)) || (shinyNeedsHigh(s) && !located.high?.ok)) throw unsupported();
     const edits = shinyEdits(located, s);
     for (const e of edits) code.set(e.bytes, e.at);
     if (!arm9) {

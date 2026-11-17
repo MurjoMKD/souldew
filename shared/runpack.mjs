@@ -7,17 +7,25 @@
 // file or a new attempt; a code invite ends with "The code didn't match" – their texts, which can't be changed now).
 // Runs without it keep @1, so players on older versions can still join them. A pack names the version it needs
 // (`minVersion`): an app that doesn't know the format says to update, to that version.
+// 2.8.1 takes any shiny rate. 2.8.0 reads @2 but knows only its presets – another rate it would quietly turn into the
+// normal odds – so a run with another rate travels as @3 (2.8.0 refuses it and says to update to 2.8.1). Runs with a
+// preset keep @2, so 2.8.0 players can still join them.
+import { shinyKnownTo280 } from './shiny.mjs';
 
 export const PACK_FORMAT = 'soullink-studio/run-pack@1';
 export const PACK_FORMAT_SHINY = 'soullink-studio/run-pack@2';
+export const PACK_FORMAT_SHINY_ANY = 'soullink-studio/run-pack@3';
 /** Formats this app reads. */
-export const PACK_FORMATS = [PACK_FORMAT, PACK_FORMAT_SHINY];
-/** The first version that reads a pack with a shiny rate. */
+export const PACK_FORMATS = [PACK_FORMAT, PACK_FORMAT_SHINY, PACK_FORMAT_SHINY_ANY];
+/** The first version that reads a pack with a shiny rate (one of the presets). */
 export const SHINY_MIN_VERSION = '2.8.0';
+/** The first version that reads a pack with any other shiny rate. */
+export const SHINY_ANY_MIN_VERSION = '2.8.1';
 
 /** What a run pack of manifest `m` needs: its format and, for a new format, the version that reads it. */
 export function packFormatOf(m) {
-  return m?.shiny ? { format: PACK_FORMAT_SHINY, minVersion: SHINY_MIN_VERSION } : { format: PACK_FORMAT };
+  if (!m?.shiny) return { format: PACK_FORMAT };
+  return shinyKnownTo280(m.shiny) ? { format: PACK_FORMAT_SHINY, minVersion: SHINY_MIN_VERSION } : { format: PACK_FORMAT_SHINY_ANY, minVersion: SHINY_ANY_MIN_VERSION };
 }
 
 /**
