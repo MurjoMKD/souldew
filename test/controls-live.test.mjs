@@ -198,6 +198,7 @@ test('fast player: Tab fast-forwards instead of moving the focus; the controller
     assert.equal(down({ keyCode: 71, key: 'g', code: 'KeyG' }).defaultPrevented, false, 'G is nothing');
     const k = sent.find((m) => m.type === 'emu-key' && m.key === 'Tab');
     assert.equal(k.keyCode, 9);
+    assert.equal(down({ keyCode: 82, key: 'r', code: 'KeyR' }).defaultPrevented, true, 'R (reset) is the play view’s');
     // re-bound to G: G is kept, Tab moves the focus again (the way out of the game for keyboard users)
     globalThis.__emu.setControls({ controls: { ffHold: { keyCode: 71, key: 'g', code: 'KeyG' }, ffToggle: { keyCode: 72, key: 'h', code: 'KeyH' } }, pads: null });
     assert.equal(down({ keyCode: 71, key: 'g', code: 'KeyG' }).defaultPrevented, true);
@@ -223,16 +224,52 @@ test('fast player: Tab fast-forwards instead of moving the focus; the controller
   }
 });
 
-test('every player keeps the fast-forward key and hands the controller hotkeys over', () => {
+test('fast player: R for B (Discord) – R presses B and no longer resets; Shift+R resets and presses nothing', async () => {
+  await until(() => globalThis.__emu?.ready);
+  const sent = [];
+  const parentWas = globalThis.parent;
+  globalThis.parent = { ...parentWas, postMessage: (m) => sent.push(m) };
+  const ev = (type, props) => {
+    const e = new Event(type, { cancelable: true });
+    Object.assign(e, { keyCode: 82, key: 'r', code: 'KeyR', shiftKey: false, ctrlKey: false, altKey: false, metaKey: false }, props);
+    page.dispatchEvent(e);
+    return e;
+  };
+  try {
+    // what Settings › Controls saves for "B on R, reset on Shift+R"
+    const { assignKey } = await import('../web/lib/controls.mjs');
+    const step1 = assignKey(null, 'b', { keyCode: 82, key: 'r', code: 'KeyR' }).next;
+    const controls = assignKey(step1, 'reset', { keyCode: 82, key: 'r', code: 'KeyR', shift: true }).next;
+    globalThis.__emu.setControls({ controls, pads: null });
+    ev('keydown', {});
+    await sleep(30);
+    assert.deepEqual(held(), ['b'], 'R is B');
+    ev('keyup', {});
+    await sleep(30);
+    assert.deepEqual(held(), []);
+    // Shift+R: the play view's (reset) – the game gets nothing
+    const e = ev('keydown', { key: 'R', shiftKey: true });
+    await sleep(30);
+    assert.equal(e.defaultPrevented, true);
+    assert.deepEqual(held(), [], 'Shift+R presses no game button');
+    ev('keyup', { key: 'R', shiftKey: true });
+    assert.ok(sent.some((m) => m.type === 'emu-key' && m.keyCode === 82 && m.shift === true && m.down === true), 'forwarded to the play view');
+  } finally {
+    globalThis.parent = parentWas;
+    globalThis.__emu.setControls({ controls: null, pads: null });
+  }
+});
+
+test('every player keeps the shortcuts’ keys and hands the controller hotkeys over', () => {
   for (const f of ['../web/lib/nativeplayer.mjs', '../web/lib/ctrplayer.mjs']) {
     const s = readFileSync(new URL(f, import.meta.url), 'utf8');
-    assert.match(s, /if \(controls\.isHotkeyKey\(e, hotkeys\)\) e\.preventDefault\(\);/, f);
+    assert.match(s, /if \(controls\.isHotkeyKey\(e, hotkeys\)\) return e\.preventDefault\(\);/, f);
     assert.match(s, /hotkeys = controls\.resolveHotkeys\(config\?\.controls\);/, f);
     assert.match(s, /controls\.padHotkeyPresses\(pad, padActions, held, controls\.appHasPad\(\)\)/, f);
     assert.match(s, /keyCode: e\.keyCode/, f);
   }
   const html = readFileSync(new URL('../web/player.html', import.meta.url), 'utf8');
-  assert.match(html, /controlsLib\.isHotkeyKey\(e, hotkeys\)/);
+  assert.match(html, /controlsLib\.isHotkeyKey\(e, hotkeys\)[^]*?e\.stopPropagation\(\);\n\s+\}\n\s+\}, true\);/, 'player.html: before EmulatorJS (capture), which never sees it');
   assert.match(html, /hotkeys = c\.resolveHotkeys\(config\?\.controls\);/);
   assert.match(html, /c\.padHotkeyPresses\(pad, padActions, held, muted\)/);
   assert.match(html, /keyCode: e\.keyCode/);

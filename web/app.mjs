@@ -6,7 +6,7 @@ import { loadData, RunData, speciesName } from './lib/data.mjs';
 import { SyncLink, PARTNER_TTL } from './lib/sync.mjs';
 import { setLang, guessLang, t, onLangChange } from './lib/i18n.mjs';
 import { applyTheme, applyStoredTheme } from './lib/theme.mjs';
-import { detectLayout } from './lib/controls.mjs';
+import { detectLayout, resolveHotkeys, accelerator } from './lib/controls.mjs';
 import { applySnapshot, snapshotFromSave, players as getPlayers, areaName, feedText, othersOf, slotsOf, runMode, checks, loadLocationTables, genOfRun, wipedSlot, failRun, lives as getLives, livesFor, settleLives } from './lib/run.mjs';
 import { play } from './lib/sound.mjs';
 import { Ctx, Toasts, Led, Modal, openExternal } from './lib/ui.mjs';
@@ -58,9 +58,20 @@ const pref = {
   },
 };
 
+/** The emulator's shortcuts as the menu shows them (Settings › Controls): config.controls, set once the status is known. */
+let menuControls = null;
+const menuKeys = () => {
+  const hot = resolveHotkeys(menuControls);
+  // '' = no key: the menu entry shows none
+  return Object.fromEntries(['pause', 'turbo', 'faster', 'slower', 'quicksave', 'quickload', 'screenshot', 'mute'].map((id) => [id, accelerator(hot[id][0]) || '']));
+};
+
 /** The desktop menu bar in the UI language (electron/main.mjs builds it from these). */
-function sendMenuLabels() {
-  window.sls?.setMenuLabels?.({
+function sendMenuLabels(controls = menuControls) {
+  menuControls = controls;
+  if (!window.sls?.setMenuLabels) return;
+  window.sls.setMenuLabels({
+    keys: menuKeys(),
     settings: t('menu.settings', 'Settings …'), file: t('menu.file', 'File'), addGames: t('menu.addGames', 'Add games …'),
     revealLibrary: IS_MAC ? t('menu.revealLibrary', 'Show library folder in Finder') : IS_WIN ? t('menu.revealLibraryWin', 'Show library folder in Explorer')
       : t('menu.revealLibraryLinux', 'Show library folder in the file manager'),
@@ -317,7 +328,7 @@ function App() {
       setStatus(s);
       applyTheme(s.config?.theme);
       const lang = await setLang(s.config?.lang || guessLang());
-      sendMenuLabels();
+      sendMenuLabels(s.config?.controls || null);
       await detectLayout(lang); // key names in Help / Settings › Controls
       await Promise.all([loadData(), loadLocationTables(), reloadLibrary()]);
       const id = s.config?.lastRun && s.runs?.some((r) => r.id === s.config.lastRun) ? s.config.lastRun : s.runs?.[0]?.id || null;
@@ -334,6 +345,9 @@ function App() {
     bootUp();
     return onLangChange((l) => { detectLayout(l); sendMenuLabels(); setLangTick((x) => x + 1); });
   }, []);
+  // re-bound shortcuts (Settings › Controls): the menu shows the new keys
+  const controlsSig = JSON.stringify(status?.config?.controls || null);
+  useEffect(() => { if (status) sendMenuLabels(status.config?.controls || null); }, [controlsSig]);
 
   // ---- active run ----------------------------------------------------------------
   // a name typed when joining can arrive after the run's doc is open (the build finishes later): apply it then too

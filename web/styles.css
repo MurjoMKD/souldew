@@ -821,6 +821,13 @@ details.group details.group { margin: 0 14px 8px; }
 button.ctl-key { cursor: pointer; min-width: 110px; padding: 2px 8px; line-height: 1.6; }
 button.ctl-key:hover { background: var(--shell-3); }
 button.ctl-key.on { outline: 2px solid var(--crs); outline-offset: 2px; color: var(--crs); }
+/* the four slot keys of a row (save / load slot 1–4) – each its own key cap, together as wide as two */
+.ctl-slots { display: inline-flex; flex-wrap: wrap; gap: 6px; vertical-align: middle; }
+button.ctl-key.ctl-slot { min-width: 52px; }
+button.ctl-key.ctl-none:not(.on) { color: var(--ink-3); } /* no key: "none", quieter than a key */
+table.data tr:has(> td > .ctl-slots) > td { vertical-align: middle; }
+/* the note under a row (a key taken over, "press a key"): part of that row */
+table.data tr.ctl-note > td { border-top: 0; padding-top: 0; }
 
 /* runs */
 .entry-choices .entry { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; padding: 22px 24px; }
