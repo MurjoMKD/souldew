@@ -104,7 +104,7 @@ test('tap: records what comes out and sends it with the buffer\'s numbers; the n
 });
 
 test('in-band commands take effect when the sound that came after them plays, not when they arrive', () => {
-  const { got, send, push, out } = worklet({ prime: 256, maxLag: 8000, trim: 4000 });
+  const { got, send, push, out } = worklet({ prime: 256, maxLag: 8000, trim: 4000, startGrace: 0 });
   push(1000, 1);
   send({ type: 'rate', ratio: 2.5, exact: true, inband: true });
   push(1000, 1001);
@@ -148,4 +148,79 @@ test('the 3DS host’s own fast-forward sound goes straight to the mixer’s rec
   };
   send({ type: 'ffsound', f: new Float32Array(4) });
   assert.ok(w.broken && w.posted.some((m) => m.type === 'mixer' && m.e.type === 'error'));
+});
+
+test('3DS session: 10 speed toggles, loaded states, a pause and a mode change – the delay is back at ~60 ms within a second each time, none of them counts as a gap', () => {
+  // the page's options (ctrplayer.mjs ringFor)
+  const { w, send } = worklet({ prime: Math.round(SR * 0.06), primeMax: Math.round(SR * 0.12), trim: Math.round(SR * 0.04), maxLag: Math.round(SR * 0.25) });
+  send({ type: 'paused', paused: false });
+  send({ type: 'speed', ratio: 1 });
+  let seed = 11;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  // the host: at 1× a frame's sound (547 frames) every 1/59.83 s; fast-forwarding, the sped-up sound in 180-frame pieces
+  // at real time, after the queue's start (ffsound.h: here 150 ms of nothing). Each arrives 3–9 ms late.
+  const q = [];
+  let speed = 1;
+  let next = 0; // the host's next 1× frame / fast-forward piece (s)
+  let frozen = 0; // the host stands still until then (loading a state)
+  const deliver = (at, n) => q.push([at + 0.003 + rnd() * 0.006, n]);
+  const host = (t) => {
+    if (t < frozen) return;
+    const per = speed === 1 ? 1 / 59.83 : 180 / SR;
+    for (; next <= t; next += per) deliver(next, speed === 1 ? 547 : 180);
+  };
+  // the session (s): 10 speed steps (turbo off after 1–2×, 4×), 3 loaded states, a pause, a sound-mode change
+  const steps = [2, 1, 4, 1, 'load', 4, 1, 'mode', 2, 1, 'load', 4, 'pause', 1, 2, 1, 'load'];
+  const plan = steps.map((s, i) => ({ at: 6 + i * 5, s }));
+  const end = plan.at(-1).at + 10;
+  const lags = []; // [t, lag ms]
+  const L = new Float32Array(128);
+  const R = new Float32Array(128);
+  let resumeAt = 0;
+  for (let b = 0, t = 0; t < end; b++, t = (b * 128) / SR) {
+    while (plan.length && plan[0].at <= t) {
+      const { s } = plan.shift();
+      if (s === 'load') {
+        send('clear');
+        send({ type: 'cut' });
+        frozen = t + 0.15; // unserializing; then it catches up 100 ms (ctrhost.c's limit)
+        next = t + 0.05;
+      } else if (s === 'mode') send({ type: 'mode', mode: 'original' });
+      else if (s === 'pause') {
+        send({ type: 'paused', paused: true });
+        frozen = t + 1;
+        resumeAt = t + 1;
+      } else {
+        const was = speed;
+        send({ type: 'speed', ratio: s });
+        speed = s;
+        // fast-forward starts: its queue fills first; back to 1×: the first frames come 80 ms late (the gap a Windows
+        // player's 3DS session showed on every turbo → 1× edge)
+        next = t + (s > 1 ? 0.15 : was > 1 ? 0.08 : 0);
+      }
+    }
+    if (resumeAt && t >= resumeAt) {
+      send({ type: 'paused', paused: false });
+      next = t;
+      resumeAt = 0;
+    }
+    host(t);
+    q.sort((x, y) => x[0] - y[0]);
+    while (q.length && q[0][0] <= t) send(new Float32Array(q.shift()[1] * 2).fill(0.1));
+    w.process([], [[L, R]]);
+    lags.push([t, (w.ring.lag / SR) * 1000]);
+  }
+  const mean = (a, b) => {
+    const v = lags.filter(([t]) => t >= a && t < b).map(([, x]) => x);
+    return v.reduce((x, y) => x + y, 0) / v.length;
+  };
+  for (let i = 0; i < steps.length; i++) {
+    const at = 6 + i * 5 + (steps[i] === 'pause' ? 1 : 0);
+    const after = mean(at + 1, at + 1.5);
+    assert.ok(after > 40 && after < 75, `${steps[i]} at ${at} s: ${after.toFixed(0)} ms behind a second later`);
+  }
+  assert.ok(mean(end - 5, end) < 70, 'and still there at the end');
+  assert.equal(w.ring.stats.underruns, 0, 'none of them counted as a gap');
+  assert.ok(w.ring.stats.breaks >= 8, `(they ran dry ${w.ring.stats.breaks} times, as breaks)`);
+  assert.equal(w.ring.prime, Math.round(SR * 0.06), '`prime` still at its base (until 2.8.2: 240 ms after such a session)');
 });

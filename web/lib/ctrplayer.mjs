@@ -244,13 +244,16 @@ const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most
 const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [], taps: [], rate: 0, exact: false, win: null, last: null };
 /**
  * The worklet's buffer (frames, lib/jitterring.mjs): start / restart once 60 ms are there – more after each gap, up to
- * 240 ms, for a PC whose sound arrives late now and then –, read a little faster above 200 ms (the late sound queued
- * behind a gap; ctrhost paces 1× by the core's sound, so nothing else piles up), skip ahead above 450 ms.
+ * 120 ms, for a PC whose sound arrives late now and then (back down after 6 s without one) –, read a little faster
+ * ~30 ms above that (the late sound queued behind a gap; ctrhost paces 1× by the core's sound, so nothing else piles up),
+ * skip ahead above 250 ms. Speed steps, loaded states, pauses and sound-mode changes start it over at 60 ms (rebase).
+ * Until 2.8.2: up to 240 ms, 30 s to shrink, faster only above 200 ms, and every one of those breaks counted as a gap –
+ * a Windows player's sound effects came 250–300 ms after the picture after a few speed toggles.
  */
-const ringFor = (rate) => ({ prime: Math.round(rate * 0.06), primeMax: Math.round(rate * 0.24), trim: Math.round(rate * 0.2), maxLag: Math.round(rate * 0.45) });
+const ringFor = (rate) => ({ prime: Math.round(rate * 0.06), primeMax: Math.round(rate * 0.12), trim: Math.round(rate * 0.04), maxLag: Math.round(rate * 0.25) });
 /**
  * Diagnostics (perf().last, logged by the play view every 10 s): what the sound buffer went through over the last 10 s
- * of sound – gaps, how long it was silent for them, how much it skipped, how long it read faster or slower, its fill.
+ * of sound – gaps (and breaks the player asked for), how long it was silent for them, how much it skipped, how long it read faster or slower, its fill.
  */
 function ringWindow(r) {
   const rate = audio.ctx?.sampleRate || 32728;
@@ -259,6 +262,7 @@ function ringWindow(r) {
   else if (performance.now() - w.at >= 10000) {
     audio.last = {
       soundGaps: r.underruns - w.underruns,
+      soundBreaks: (r.breaks || 0) - (w.breaks || 0), // (running dry around a speed step, a loaded state, … – no gap)
       soundSilentMs: Math.round(((r.silent - w.silent) / rate) * 1000),
       soundSkippedMs: Math.round(((r.dropped - w.dropped) / rate) * 1000),
       soundResampledPct: Math.round(((r.resampled - w.resampled) * 128 * 100) / (((performance.now() - w.at) / 1000) * rate)),

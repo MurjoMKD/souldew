@@ -55,6 +55,7 @@ int main(int argc, char **argv) {
   audio_buf = calloc(per * 2, sizeof *audio_buf);
   ff_reset(start);
   double last = 0;
+  int qlast = -1;
   while (now_t < seconds) {
     // the speed the game runs at now: a slow swing plus frame-to-frame jitter (some frames take far longer: a scene's
     // shaders, the picture going out)
@@ -68,6 +69,10 @@ int main(int argc, char **argv) {
     ff_frame(now_t - last, sr);
     audio_n = 0;
     last = now_t;
+    if ((int)(now_t * 10) != qlast) { // the queue: how late the sped-up sound comes (s), ten times a second
+      qlast = (int)(now_t * 10);
+      printf("q %.5f %.5f\n", now_t, ((double)ff.n - ff.pos) / ff.k / sr);
+    }
   }
   printf("h %u\n", ff.holes);
   return 0;
@@ -99,14 +104,16 @@ function run({ base, swing, period, jitter, seconds, start = 4, pre = '' }) {
   assert.equal(r.status, 0, r.stderr);
   const ks = [[0, start]];
   const outs = [];
+  const queue = [];
   let holes = 0;
   for (const line of r.stdout.split('\n')) {
     const p = line.split(' ');
     if (p[0] === 'e' && line.includes('"ffrate"')) ks.push([+p[1], +/"k":([\d.]+)/.exec(line)[1]]);
     else if (p[0] === 'o') outs.push([+p[1], +p[2]]);
+    else if (p[0] === 'q') queue.push([+p[1], +p[2]]);
     else if (p[0] === 'h') holes = +p[1];
   }
-  return { ks, outs, holes };
+  return { ks, outs, queue, holes };
 }
 
 /** The ratio at time t (the last one announced before it). */
@@ -208,4 +215,120 @@ test('fast player (retrohost.c, melonDS): its shallower queue keeps the pitch st
   // the sound never trails the picture by more than the queue: the output keeps pace with real time
   const late = outs.filter(([t]) => t > 5).map(([t, n]) => t - n / 32728);
   assert.ok(Math.max(...late) - Math.min(...late) < 0.35, 'the output keeps pace with real time (no lag that grows)');
+});
+
+test('the queue is only as deep as the speed makes it swing: a steady 4× keeps ~0.12 s (until 2.8.2: 0.45 s at any speed)', { skip: !cc && 'no C compiler' }, () => {
+  const late = (queue) => {
+    const v = queue.filter(([t]) => t > 25).map(([, q]) => q);
+    return v.reduce((x, y) => x + y, 0) / v.length;
+  };
+  const steady = run({ base: 3.9, swing: 0.1, period: 3, jitter: 0.1, seconds: 40 });
+  assert.ok(late(steady.queue) < 0.16, `steady 4×: the sped-up sound ${(late(steady.queue) * 1000).toFixed(0)} ms behind the picture`);
+  assert.equal(steady.holes, 0);
+  // the Pokémon Y video's swinging speed still gets a deep queue (its pitch: the first test), just not deeper than needed
+  const swinging = run({ base: 2.6, swing: 0.9, period: 1.6, jitter: 0.35, seconds: 40 });
+  const q = late(swinging.queue);
+  assert.ok(q > 0.15 && q < 0.33, `swinging: ${(q * 1000).toFixed(0)} ms`);
+});
+
+// a tone sped up at "Max" (the game at 20×, the sound at the 16× FF_MAXK) – its output, int16 stereo
+const ALIAS_DRIVER = String.raw`
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdarg.h>
+#include <math.h>
+static int16_t *audio_buf;
+static size_t audio_n;
+static FILE *outf;
+static void send_msg(uint32_t type, const void *p, uint32_t n) { if (type == 3) fwrite(p, 1, n, outf); }
+static void send_event(const char *fmt, ...) { (void)fmt; }
+@FF@
+int main(int argc, char **argv) {
+  const double sr = 32728, fps = 59.83, sp = atof(argv[1]), hz = atof(argv[2]), seconds = atof(argv[3]);
+  outf = fopen(argv[4], "wb");
+  const size_t per = (size_t)(sr / fps);
+  audio_buf = calloc(per * 2, sizeof *audio_buf);
+  ff_reset(sp > FF_MAXK ? FF_MAXK : sp);
+  double now = 0, last = 0;
+  long idx = 0;
+  while (now < seconds) {
+    now += 1 / (fps * sp);
+    for (size_t i = 0; i < per; i++, idx++) audio_buf[i * 2] = audio_buf[i * 2 + 1] = (int16_t)(16000 * sin(2 * 3.14159265358979 * hz * idx / sr));
+    audio_n = per * 2;
+    ff_frame(now - last, sr);
+    audio_n = 0;
+    last = now;
+  }
+  fclose(outf);
+  return 0;
+}
+`;
+
+/** Magnitude spectrum (Blackman-Harris, 2^15 points, re. the tone's amplitude) of the middle of an int16 stereo file. */
+function spectrum(file) {
+  const b = readFileSync(file);
+  const s = new Int16Array(b.buffer, b.byteOffset, b.length >> 1);
+  const N = 32768;
+  const from = (s.length >> 2) - N / 2;
+  const re = new Float64Array(N);
+  const im = new Float64Array(N);
+  let wsum = 0;
+  for (let i = 0; i < N; i++) {
+    const x = (2 * Math.PI * i) / (N - 1);
+    const w = 0.35875 - 0.48829 * Math.cos(x) + 0.14128 * Math.cos(2 * x) - 0.01168 * Math.cos(3 * x);
+    re[i] = (s[(from + i) * 2] / 16000) * w;
+    wsum += w;
+  }
+  for (let i = 1, j = 0; i < N; i++) {
+    let bit = N >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) [re[i], re[j]] = [re[j], re[i]];
+  }
+  for (let len = 2; len <= N; len <<= 1) {
+    for (let i = 0; i < N; i += len) {
+      for (let j = 0; j < len / 2; j++) {
+        const a = (-2 * Math.PI * j) / len;
+        const [wr, wi] = [Math.cos(a), Math.sin(a)];
+        const [p, q] = [i + j, i + j + len / 2];
+        const vr = re[q] * wr - im[q] * wi;
+        const vi = re[q] * wi + im[q] * wr;
+        [re[q], im[q]] = [re[p] - vr, im[p] - vi];
+        [re[p], im[p]] = [re[p] + vr, im[p] + vi];
+      }
+    }
+  }
+  return Array.from({ length: N / 2 }, (_, i) => (2 * Math.hypot(re[i], im[i])) / wsum);
+}
+
+test('fast-forward sound at "Max" (20×) is clean: what is sped up past the new Nyquist frequency doesn’t fold back (until 2.8.2: aliases at −28 to −49 dB)', { skip: !cc && 'no C compiler' }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'souldew-ffa-'));
+  try {
+    const c = join(dir, 'a.c');
+    writeFileSync(c, ALIAS_DRIVER.replace('@FF@', ffSection()));
+    const exe = join(dir, 'a');
+    const r = spawnSync(cc, ['-O2', '-std=c11', '-o', exe, c, '-lm'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const SR = 32728;
+    const k = 16; // (the game at 20×: the sound at FF_MAXK)
+    const peak = (hz) => {
+      const f = join(dir, 'out.raw');
+      assert.equal(spawnSync(exe, ['20', String(hz), '8', f]).status, 0);
+      const m = spectrum(f);
+      let p = 0;
+      for (let i = 4; i < m.length; i++) p = Math.max(p, m[i]);
+      return 20 * Math.log10(Math.max(p, 1e-9));
+    };
+    // in the passband: a game tone that ends up at 2 / 6 / 10 kHz comes out whole
+    for (const out of [2000, 6000, 10000]) assert.ok(peak(out / k) > -1.5, `${out} Hz sped up: ${peak(out / k).toFixed(1)} dB`);
+    // past the new Nyquist frequency (16.4 kHz): gone, not folded back down (2.8.1: −28 dB at 16 kHz, −42 at 8 kHz, −49 at 3 kHz)
+    for (const out of [1.03, 1.1, 1.25, 1.5, 1.8, 2.3, 3].map((x) => x * (SR / 2))) {
+      const db = peak(out / k);
+      assert.ok(db < -70, `a tone sped up to ${(out / 1000).toFixed(1)} kHz folds back at ${db.toFixed(1)} dB`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

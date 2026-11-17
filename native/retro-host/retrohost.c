@@ -208,7 +208,8 @@ static int audio_on = 1;
 // fast-forward sound: the queue, the ratio and the resampler (shared with ctrhost.c). A shallower queue than the 3DS
 // host's: melonDS and the other cores here mostly hold their speed, and the sped-up sound stays closer to the picture
 // (measured with the test driver, test/ctrffsound.test.mjs: 0.25 s still takes a speed swinging ±35 % every 1.6 s with
-// ~35 cents of pitch movement per half second, where 2.8.1's frame-dropping speed-up moved ~670 and left out 3 % of the frames)
+// ~35 cents of pitch movement per half second, where 2.8.1's frame-dropping speed-up moved ~670 and left out 3 % of the frames).
+// Since 2.8.2 that is the most: a core that holds its speed keeps only FF_TMIN (0.12 s) – see ffsound.h.
 #define FF_TARGET 0.25
 #include "ffsound.h"
 static void audio_push(const int16_t *d, size_t frames) {

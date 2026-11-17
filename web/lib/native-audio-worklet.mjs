@@ -12,6 +12,8 @@
 // more of it than real time. { type: 'tap', frames } records what
 // comes out and sends it back with the buffer's numbers (tests, diagnostics); the numbers also go to the page once a
 // second ({ type: 'ring' }).
+// A speed step, another sound mode, the game going on after a pause and 'clear' (a loaded state, a reset) are breaks the
+// player asked for: the buffer starts over from its base depth (JitterRing.rebase) instead of taking them for gaps.
 import { TurboMixer } from './turboaudio.mjs';
 import { JitterRing } from './jitterring.mjs';
 
@@ -26,6 +28,7 @@ class NativeAudio extends AudioWorkletProcessor {
     this.ffR = new Float32Array(2048);
     this.plain = false;
     this.broken = false;
+    this.asked = { speed: null, mode: null }; // (a break only when they change)
     // what came out over the last ~0.1 s (RMS and peak of both channels) – the probe reports it (tests, diagnostics)
     this.level = { rms: 0, peak: 0 };
     this.lvl = { sum: 0, peak: 0, n: 0 };
@@ -55,7 +58,14 @@ class NativeAudio extends AudioWorkletProcessor {
   command(m) {
     if (!m || typeof m !== 'object') return;
     if (m.type === 'mode') this.plain = m.mode === 'plain';
-    if (m.type === 'paused') this.ring.paused = !!m.paused;
+    if (m.type === 'paused') {
+      if (this.ring.paused && !m.paused) this.ring.rebase();
+      this.ring.paused = !!m.paused;
+    }
+    if ((m.type === 'speed' && m.ratio !== this.asked.speed) || (m.type === 'mode' && m.mode !== this.asked.mode)) {
+      if (this.asked[m.type] !== null) this.ring.rebase();
+      this.asked[m.type] = m.type === 'speed' ? m.ratio : m.mode;
+    }
     try {
       this.mixer.command(m.type === 'mode' && m.mode === 'plain' ? { type: 'mode', mode: 'original' } : m);
     } catch (err) {

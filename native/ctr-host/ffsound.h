@@ -14,7 +14,8 @@
 // sound go out of step with the game: its ratio jumped to the speed measured every quarter second and whole frames of
 // sound were left out whenever it came out ahead of real time.
 // Now the frames' sound goes into a queue and comes out resampled by k, exactly as many samples as wall-clock time
-// has passed – without holes. k follows the measured speed and how full the queue is (about FF_TARGET seconds); it
+// has passed – without holes. k follows the measured speed and how full the queue is (its target: FF_TMIN … FF_TARGET
+// seconds, as deep as the speed makes it swing – the queue is also how late the sped-up sound comes); it
 // glides (no jumps in pitch), and every change is announced right before the first sound made with it (event
 // "ffrate"), so souldew's turbo mixer can slow the sound back down by exactly the ratio it was sped up with.
 // Until 2.8.1 k followed the speed within 0.15 s and pulled hard on the queue (60 % faster or slower at a full target's
@@ -22,21 +23,40 @@
 // semitone, up and down every second or so – the pitch followed every swing of the speed. Now k follows the speed it
 // holds over a few seconds (FF_FOLLOW), and the queue (three times as deep) takes up the swings; it is only pulled on gently
 // (FF_PULL) – hard only near empty or full, where a hole or a skip would be worse than a short change of pitch.
-// A low-pass at the new Nyquist frequency goes first (two biquads – the plain average let the overtones fold back
-// into the audible range: harsh). Above FF_MAXK× the queue overflows and skips ahead, with a short crossfade.
+// The resampler is a windowed-sinc low-pass stretched by k (the sped-up sound's new Nyquist frequency) – every output
+// sample its own weighted sum of the queue. Until 2.8.2 a 4th-order Butterworth went first (two biquads) and a 4-point
+// Hermite read the queue: at "Max" (≈20× on a Windows player's PC, k 16) the overtones folded back down at only 28–48 dB
+// below the sound (measured: a tone sped up past the new Nyquist frequency came out as an alias at −28 dB at 16 kHz,
+// −42 dB at 8 kHz, −49 dB at 3 kHz) – aliased mush; now the aliases stay below −70 dB (test/ctrffsound.test.mjs).
+// Above FF_MAXK× the queue overflows and skips ahead, with a short crossfade.
 // That low-pass leaves a k-th of the bandwidth: slowed back down by the mixer ("Music continues" while a song has no
 // loop yet), 4× sound kept nothing above ~1.8 kHz – muffled music. So each frame's sound also goes out as it is
 // (message 8, FFSOUND), and the mixer records that one: the music at its own pace and pitch, nothing resampled.
 #define FF_MAXK 16.0
 #ifndef FF_TARGET // (a host may keep less: the fast player's cores hold their speed better than a 3DS does)
-#define FF_TARGET 0.45 // seconds of output kept in the queue (latency doesn't matter much for sped-up sound)
+#define FF_TARGET 0.45 // seconds of output kept in the queue at most (for a speed that swings hard) …
 #endif
+#ifndef FF_TMIN
+#define FF_TMIN 0.12   // … and at least (a steady speed)
+#endif
+#define FF_DEPTH 2.5   // the queue is kept this many times as deep as it swings around its target …
+#define FF_SWING 8     // … the swing being the largest of the last few seconds (fading with this time constant) …
+#define FF_SINK 0.015  // … and it gets shallower by at most this many seconds per second (deeper: within ~1 s)
 #define FF_FOLLOW 5    // seconds over which the speed the sound comes in at is averaged (time constant)
 #define FF_GLIDE 0.6   // seconds k takes to get where it is headed (time constant)
-#define FF_PULL 0.08   // how much faster / slower k goes for a queue a whole FF_TARGET too full / too empty …
-#define FF_EDGE 0.6    // … and, beyond this share of FF_TARGET off, how much more for the rest (near empty or full)
+#define FF_PULL 0.08   // how much faster / slower k goes for a queue a whole target too full / too empty …
+#define FF_EDGE 0.6    // … and, beyond this share of the target off, how much more for the rest (near empty or full)
 #define FF_XFADE 256   // output frames of crossfade where the queue skips ahead
 #define FF_PI 3.14159265358979323846
+// the resampler's kernel: a Kaiser-windowed sinc FF_ZC output samples either side (2 · FF_ZC · k taps per output
+// sample), cut off at FF_CUT of the output's Nyquist frequency, so that what lies above that Nyquist frequency is
+// ≥ 70 dB down before it can fold back (FF_BETA); a table of FF_NP steps per output sample, linear in between
+#define FF_ZC 12
+#define FF_CUT 0.78
+#define FF_BETA 8.6
+#define FF_NP 256
+#define FF_KN (FF_ZC * FF_NP)
+#define FF_HIST (FF_ZC * FF_MAXK + 4) // input frames kept before the read position (the kernel's reach at FF_MAXK)
 #define FF_CHUNK 160  // output frames sent at least at a time (~5 ms)
 static struct {
   float *q; // queue: interleaved stereo, `n` frames
@@ -47,31 +67,38 @@ static struct {
   double kin;       // the speed the sound comes in at (smoothed)
   double due;       // output frames owed to wall-clock time
   double age;       // seconds since turbo began (the speed isn't known yet at first: k follows it faster)
+  double target;    // seconds of output the queue is kept at (FF_TMIN … FF_TARGET; kept from one fast-forward to the next)
+  double swing;     // how far the queue swung around it lately (seconds)
   int primed;       // the queue was full enough to start (again)
   double xpos;      // where the queue skipped from (crossfade), and how many frames of it are left
   int xleft;
-  double b[2][5];   // the low-pass: two biquads (b0 b1 b2 a1 a2) …
-  double z[2][2][2]; // … and their state [biquad][channel][2]
-  int lp;           // low-pass on
+  float kt[FF_KN + 2]; // the kernel, from its centre out (see ff_kernel)
+  int kt_ready;
   int16_t *out;
   size_t ocap;
   uint32_t holes;   // times the queue ran dry (diagnostics: stats)
 } ff;
 
-/** The low-pass for ratio k: 4th-order Butterworth at 0.45 × the output's Nyquist frequency (none near 1×). */
-static void ff_lowpass(double k) {
-  ff.lp = k > 1.05;
-  if (!ff.lp) return;
-  static const double qs[2] = {0.5412, 1.3066};
-  const double w = 2 * FF_PI * 0.45 * 0.5 / k; // (in the input's samples: its Nyquist is π)
-  for (int s = 0; s < 2; s++) {
-    const double c = cos(w), al = sin(w) / (2 * qs[s]), a0 = 1 + al;
-    ff.b[s][0] = (1 - c) / 2 / a0;
-    ff.b[s][1] = (1 - c) / a0;
-    ff.b[s][2] = (1 - c) / 2 / a0;
-    ff.b[s][3] = -2 * c / a0;
-    ff.b[s][4] = (1 - al) / a0;
+static double ff_bessel0(double x) {
+  double sum = 1, term = 1;
+  for (int k = 1; k < 40; k++) {
+    term *= (x / (2 * k)) * (x / (2 * k));
+    sum += term;
+    if (term < 1e-12 * sum) break;
   }
+  return sum;
+}
+
+/** The kernel table: sinc(FF_CUT · x) · Kaiser(x / FF_ZC) for x = 0 … FF_ZC output samples (FF_NP steps each). */
+static void ff_kernel(void) {
+  const double norm = ff_bessel0(FF_BETA);
+  for (int j = 0; j <= FF_KN; j++) {
+    const double x = (double)j / FF_NP, t = x / FF_ZC;
+    const double w = t >= 1 ? 0 : ff_bessel0(FF_BETA * sqrt(1 - t * t)) / norm;
+    ff.kt[j] = (float)(j ? sin(FF_PI * FF_CUT * x) / (FF_PI * FF_CUT * x) * w : w);
+  }
+  ff.kt[FF_KN + 1] = 0;
+  ff.kt_ready = 1;
 }
 
 /** A fresh start: turbo began (or ended). */
@@ -83,15 +110,16 @@ static void ff_reset(double k) {
   ff.xleft = 0;
   ff.k = ff.glide = ff.kin = k;
   ff.age = 0;
-  memset(ff.z, 0, sizeof ff.z);
-  ff_lowpass(k);
+  ff.swing = 0;
+  if (!(ff.target >= FF_TMIN && ff.target <= FF_TARGET)) ff.target = FF_TARGET; // (the first time: deep, to be safe)
+  if (!ff.kt_ready) ff_kernel();
 }
 
-/** The frame's sound (n stereo frames) into the queue, low-passed. */
+/** The frame's sound (n stereo frames) into the queue. */
 static void ff_push(const int16_t *d, size_t n) {
-  // drop what was read (but keep 2 frames before the read position – and the crossfade's source – for interpolation)
-  double keep = ff.xleft && ff.xpos < ff.pos ? ff.xpos : ff.pos;
-  size_t drop = keep > 3 ? (size_t)keep - 2 : 0;
+  // drop what was read (but keep what the kernel reaches back to from the read position – and the crossfade's source)
+  double keep = (ff.xleft && ff.xpos < ff.pos ? ff.xpos : ff.pos) - FF_HIST;
+  size_t drop = keep > 0 ? (size_t)keep : 0;
   if (drop > ff.n) drop = ff.n;
   if (drop > 4096 || ff.n + n > ff.cap) {
     memmove(ff.q, ff.q + drop * 2, (ff.n - drop) * 2 * sizeof *ff.q);
@@ -107,37 +135,51 @@ static void ff_push(const int16_t *d, size_t n) {
     ff.cap = cap;
   }
   float *o = ff.q + ff.n * 2;
-  for (size_t i = 0; i < n; i++)
-    for (int c = 0; c < 2; c++) {
-      double x = d[i * 2 + c] / 32768.0;
-      if (ff.lp)
-        for (int s = 0; s < 2; s++) { // transposed direct form II
-          const double *b = ff.b[s];
-          double *z = ff.z[s][c];
-          const double y = b[0] * x + z[0];
-          z[0] = b[1] * x - b[3] * y + z[1];
-          z[1] = b[2] * x - b[4] * y;
-          x = y;
-        }
-      o[i * 2 + c] = (float)x;
-    }
+  for (size_t i = 0; i < n * 2; i++) o[i] = d[i] / 32768.0f;
   ff.n += n;
 }
 
-/** The queue at position p, channel c (4-point Hermite; p ≥ 1 and p + 2 < n). */
-static double ff_at(double p, int c) {
-  const size_t i = (size_t)p;
-  const double t = p - (double)i;
-  const float *q = ff.q + c;
-  const double xm = q[(i - 1) * 2], x0 = q[i * 2], x1 = q[(i + 1) * 2], x2 = q[(i + 2) * 2];
-  const double c1 = 0.5 * (x1 - xm), c2 = xm - 2.5 * x0 + 2 * x1 - 0.5 * x2, c3 = 0.5 * (x2 - xm) + 1.5 * (x0 - x1);
-  return ((c3 * t + c2) * t + c1) * t + x0;
+/** How far the kernel reaches either side of a read position at ratio k (input frames). */
+static double ff_reach(double k) { return FF_ZC * (k > 1 ? k : 1); }
+
+/**
+ * The queue at position p, both channels (o[0], o[1]): the windowed-sinc low-pass stretched by k – its cut-off follows
+ * the output's Nyquist frequency – summed over the input frames it reaches (p + ff_reach(k) < n), divided by the
+ * weights' sum (exactly the input's level at 0 Hz, also where the queue begins).
+ */
+static void ff_at(double p, double k, double *o) {
+  const double s = k > 1 ? k : 1, reach = FF_ZC * s, step = FF_NP / s;
+  long i = (long)ceil(p - reach), end = (long)floor(p + reach);
+  if (i < 0) i = 0;
+  if (end > (long)ff.n - 1) end = (long)ff.n - 1;
+  const float *q = ff.q, *kt = ff.kt;
+  double l = 0, r = 0, sum = 0;
+  double x = (p - (double)i) * step; // the tap's distance from p, in table steps (falls by `step` per tap)
+  for (; i <= end && x > 0; i++, x -= step) { // (the taps before p)
+    const int j = (int)x;
+    if (j >= FF_KN) continue;
+    const double c = kt[j] + (kt[j + 1] - kt[j]) * (x - j);
+    l += q[i * 2] * c;
+    r += q[i * 2 + 1] * c;
+    sum += c;
+  }
+  for (; i <= end; i++, x -= step) { // (p and after)
+    const double ax = -x;
+    const int j = (int)ax;
+    if (j >= FF_KN) break;
+    const double c = kt[j] + (kt[j + 1] - kt[j]) * (ax - j);
+    l += q[i * 2] * c;
+    r += q[i * 2 + 1] * c;
+    sum += c;
+  }
+  if (sum > 0) l /= sum, r /= sum;
+  o[0] = l;
+  o[1] = r;
 }
 
 /** Up to `want` output frames into ff.out at ratio ff.k; returns how many there were. */
 static size_t ff_make(size_t want) {
-  if (ff.pos < 1) ff.pos = 1;
-  const double avail = (double)ff.n - 3 - ff.pos;
+  const double avail = (double)ff.n - 1 - ff_reach(ff.k) - ff.pos;
   size_t m = avail > 0 ? (size_t)(avail / ff.k) : 0;
   if (m > want) m = want;
   if (ff.ocap < m) {
@@ -147,13 +189,16 @@ static size_t ff_make(size_t want) {
     ff.ocap = m;
   }
   for (size_t j = 0; j < m; j++) {
+    double v2[2], x2[2];
+    ff_at(ff.pos, ff.k, v2);
+    if (ff.xleft) { // equal-power crossfade from where the queue skipped
+      const double g = (double)ff.xleft / FF_XFADE, a = sin((1 - g) * FF_PI / 2), b = sin(g * FF_PI / 2);
+      ff_at(ff.xpos, ff.k, x2);
+      v2[0] = v2[0] * a + x2[0] * b;
+      v2[1] = v2[1] * a + x2[1] * b;
+    }
     for (int c = 0; c < 2; c++) {
-      double v = ff_at(ff.pos, c);
-      if (ff.xleft) { // equal-power crossfade from where the queue skipped
-        const double g = (double)ff.xleft / FF_XFADE;
-        v = v * sin((1 - g) * FF_PI / 2) + ff_at(ff.xpos, c) * sin(g * FF_PI / 2);
-      }
-      v *= 32768;
+      double v = v2[c] * 32768;
       ff.out[j * 2 + c] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
     }
     ff.pos += ff.k;
@@ -170,13 +215,25 @@ static void ff_frame(double dt, double sample_rate) {
   ff_push(audio_buf, audio_n / 2);
   ff.due += dt * sample_rate;
   if (ff.due > sample_rate * 0.1) ff.due = sample_rate * 0.1; // stalled (loading): the page went without meanwhile
-  double fill = ((double)ff.n - 3 - ff.pos) / ff.k / sample_rate; // seconds of output in the queue
-  if (fill > FF_TARGET * 3 && ff.k >= FF_MAXK * 0.99 && !ff.xleft) {
+  double fill = ((double)ff.n - 1 - ff_reach(ff.k) - ff.pos) / ff.k / sample_rate; // seconds of output in the queue
+  if (fill > ff.target * 3 && ff.k >= FF_MAXK * 0.99 && !ff.xleft) {
     // faster than FF_MAXK×: skip ahead to the target (crossfaded)
     ff.xpos = ff.pos;
     ff.xleft = FF_XFADE;
-    ff.pos += (fill - FF_TARGET) * ff.k * sample_rate;
-    fill = FF_TARGET;
+    ff.pos += (fill - ff.target) * ff.k * sample_rate;
+    fill = ff.target;
+  }
+  // how deep the queue needs to be: as deep as the speed makes it swing (a 3DS game whose speed swings needs the most;
+  // a steady one keeps only FF_TMIN – the sped-up sound that much closer to the picture). Until 2.8.2 it was always
+  // FF_TARGET deep: ~0.4 s behind the picture at any speed (at 4×: 1.6 s of the game).
+  if (ff.primed) {
+    const double dev = fabs(fill - ff.target);
+    ff.swing = dev > ff.swing ? dev : ff.swing * (1 - (dt < FF_SWING ? dt / FF_SWING : 1));
+    double want = FF_DEPTH * ff.swing;
+    if (want < FF_TMIN) want = FF_TMIN;
+    if (want > FF_TARGET) want = FF_TARGET;
+    if (want > ff.target) ff.target += (want - ff.target) * (dt < 1 ? dt : 1);
+    else ff.target = want > ff.target - FF_SINK * dt ? want : ff.target - FF_SINK * dt;
   }
   // the ratio: the speed the sound comes in at, nudged towards the queue's target fill, gliding there (no jumps in
   // pitch); souldew hears of every change of more than 1 %, right before the sound made with it
@@ -186,7 +243,7 @@ static void ff_frame(double dt, double sample_rate) {
   const double follow = ff.age < FF_FOLLOW ? 0.25 + ff.age * (FF_FOLLOW - 0.25) / FF_FOLLOW : FF_FOLLOW;
   const double glide = ff.age < FF_FOLLOW ? 0.15 + ff.age * (FF_GLIDE - 0.15) / FF_FOLLOW : FF_GLIDE;
   if (dt > 0) ff.kin += ((double)(audio_n / 2) / (dt * sample_rate) - ff.kin) * (dt < follow ? dt / follow : 1);
-  double e = (fill - FF_TARGET) / FF_TARGET;
+  double e = (fill - ff.target) / ff.target;
   if (e < -1) e = -1;
   if (e > 1.5) e = 1.5;
   double pull = FF_PULL * e; // gently around the target, hard near empty or full
@@ -198,13 +255,12 @@ static void ff_frame(double dt, double sample_rate) {
   ff.glide += (to - ff.glide) * (dt < glide ? dt / glide : 1);
   if (fabs(ff.glide / ff.k - 1) > 0.01) {
     ff.k = ff.glide;
-    ff_lowpass(ff.k);
     send_event("{\"event\":\"ffrate\",\"k\":%.4f}", ff.k);
-    fill = ((double)ff.n - 3 - ff.pos) / ff.k / sample_rate;
+    fill = ((double)ff.n - 1 - ff_reach(ff.k) - ff.pos) / ff.k / sample_rate;
   }
   if (!ff.primed) {
     // (re)starting: wait until the queue holds its target – one short gap instead of a crackle of small ones
-    if (fill < FF_TARGET * 0.6) {
+    if (fill < ff.target * 0.6) {
       ff.due = 0;
       return;
     }
