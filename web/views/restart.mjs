@@ -137,6 +137,7 @@ export function RestartModal({ r, rules, onClose }) {
     <${IntroSaveOption} intro=${intro} forget=${forgetIntro} on=${fromIntro} onChange=${setFromIntro} disabled=${busy} />
     <p class="small faint">${intro && fromIntro ? t('restart.noteIntro', 'Encounters and the board start empty, your game starts from your intro save. “{old}” stays in your list as it is.', { old: r.name })
       : t('restart.note', 'Saves, encounters and the board start empty. “{old}” stays in your list as it is.', { old: r.name })}</p>
+    ${intro === null && html`<p class="small faint">${t('restart.introTip', 'Tip: save in the game before you pick your starter and choose Files › “Use as my intro save” on the board – new attempts can then skip the intro.')}</p>`}
     ${busy && html`<p class="small muted" role="status">${t('restart.building', 'Building the new games – this can take a minute …')}</p>`}`}
     ${error && html`<div class="warning error" role="alert">${error}</div>`}
   <//>`;

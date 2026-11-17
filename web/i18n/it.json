@@ -2768,5 +2768,6 @@
   "err.importFailed": "Non è stato possibile copiare {name} nella libreria ({why}). Forse un altro programma sta usando il file – chiudilo (o attendi la fine della scansione antivirus) e riprova.",
   "err.importVerify": "La copia di {name} non corrisponde all’originale, quindi non è stata aggiunta. Riprova – se succede di nuovo, forse l’unità ha un problema.",
   "lib.skipArchive": "souldew non può aprire archivi .7z o .rar – estrai prima il gioco (con 7-Zip, per esempio), poi aggiungi il file .3ds, .cci o .cxi.",
-  "lib.skipType": "non è un file di gioco o patch che souldew conosce"
+  "lib.skipType": "non è un file di gioco o patch che souldew conosce",
+  "restart.introTip": "Suggerimento: salva nel gioco prima di scegliere lo starter e scegli File › «Usa come mio salvataggio dell’intro» nella bacheca – i nuovi tentativi potranno saltare l’intro."
 }

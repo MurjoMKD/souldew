@@ -1908,6 +1908,7 @@
   "restart.done": "New run started",
   "restart.edit": "Adjust settings …",
   "restart.go": "Start new attempt",
+  "restart.introTip": "Tip: save in the game before you pick your starter and choose Files › “Use as my intro save” on the board – new attempts can then skip the intro.",
   "restart.joinedText": "{name} already started the new attempt “{run}” – you joined it. Play on there, so you stay together.",
   "restart.lostText": "{name} started at the same moment. Their new run is the one to play – yours was set aside.",
   "restart.noPatch": "The ROM hack of this run isn’t in your library anymore. Add it again or pick another one under “Adjust settings …”.",
