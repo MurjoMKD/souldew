@@ -17,6 +17,10 @@
   and uses its types and sprite – Rotom, Wormadam, Shaymin's Sky Forme, Arceus with its plate, Castform and the other
   forms – from your ROM where it has them, so randomized and hacked games show theirs. In Diamond, Pearl, Platinum,
   HeartGold and SoulSilver Rotom's forms keep Electric/Ghost, as in those games.
+- **The trainer's next Pokémon is the one actually sent out** (thanks to a player on Discord). In Black, White, Black 2,
+  White 2, Diamond, Pearl and Platinum the battle helper jumped to the next Pokémon in the trainer's party as soon as one
+  went down – but trainers pick their next Pokémon themselves. souldew now follows the battle itself: the defeated
+  Pokémon stays until the trainer sends the next one, and the helper shows the one that really comes out.
 
 ## 2.8.0
 

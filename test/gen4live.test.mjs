@@ -170,3 +170,43 @@ test('Platinum, HeartGold: the catching demo (Dawn\'s starter vs. Bidoof, Lyra\'
   assert.equal(fight.enemy.species, 19);
 });
 
+test('Platinum: the trainer\'s Pokémon that is out comes from the battle\'s own BattleMon – the AI picks the next one, not the party order', () => {
+  const pt = findEntry(TABLE, { platform: 'nds', code: 'CPUE' });
+  const r = ram();
+  const base = 0x02270000;
+  r.u32(0x02101d40, base);
+  const me = { pid: 0x0a0a0001, species: 390, level: 14 };
+  saveImage(r, pt, base, { mons: [pk4(me)] });
+  r.u16(0x0224a55a, 0x2100);
+  partyAt(r, 0x02302000, [pk4({ ...me, hp: 20 })]); // the battle's copy of the player's party
+  const foes = [
+    { pid: 0x7e000001, species: 396, level: 12, tid: 9, sid: 9 },
+    { pid: 0x7e000002, species: 399, level: 12, tid: 9, sid: 9 },
+    { pid: 0x7e000003, species: 403, level: 14, tid: 9, sid: 9 },
+  ];
+  const copy = (hps) => partyAt(r, 0x02300000, foes.map((f, i) => pk4({ ...f, hp: hps[i], maxHp: 34 })));
+  // battler 1's BattleMon (0xC0 each from battler 0's, whose personality sits at saveBase + battleActive)
+  const b1 = base + parseInt(pt.battleActive.pidOffsetFromSaveBase, 16) - 0x68 + 0xc0;
+  const out = (f, hp) => {
+    r.u16(b1, f.species);
+    r.m[b1 + 0x34 - 0x02000000] = f.level;
+    r.u32(b1 + 0x4c, hp);
+    r.u32(b1 + 0x50, 34);
+    r.u32(b1 + 0x68, f.pid);
+  };
+  copy([34, 34, 34]);
+  out(foes[0], 34);
+  const state = {};
+  assert.equal(battlePolls(pt, r, state).enemy.species, 396, 'the lead');
+  // the lead is down, the trainer hasn't sent the next one yet: still the lead (at 0 HP), not a guess
+  copy([0, 34, 34]);
+  out(foes[0], 0);
+  assert.equal(battlePolls(pt, r, state, 1).enemy.species, 396);
+  // the AI sends its third Pokémon – not the second in the party
+  out(foes[2], 34);
+  assert.equal(battlePolls(pt, r, state, 1).enemy.species, 403);
+  // only one is left standing: that one is next for sure
+  copy([0, 34, 0]);
+  out(foes[2], 0);
+  assert.equal(battlePolls(pt, r, state, 1).enemy.species, 399);
+});

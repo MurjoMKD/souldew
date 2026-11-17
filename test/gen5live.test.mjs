@@ -344,6 +344,67 @@ test('a Pokémon at 0 HP counts once two reads in a row say so – one odd read 
   assert.equal(R.pairState(d, 'starter').state !== 'dead', true);
   assert.deepEqual(snap(0).deaths, ['starter'], 'the next one confirms it');
 });
+
+test('Black/White, Black 2/White 2: a trainer\'s next Pokémon is the one the battle sends out – the battle order, not the party order (2.8.1)', () => {
+  const e = findEntry(TABLE, { platform: 'nds', code: 'IREO' });
+  const tepig = { pid: 0x7e9170aa, species: 498, level: 14, hp: 40, maxHp: 40 };
+  const foes = [
+    { pid: 0x7e000001, species: 506, level: 12, hp: 30, maxHp: 30 },
+    { pid: 0x7e000002, species: 509, level: 12, hp: 30, maxHp: 30 },
+    { pid: 0x7e000003, species: 511, level: 14, hp: 33, maxHp: 33 },
+  ];
+  const m = black2({ mons: [pk5(tepig)] });
+  const MINE = 0x02257d6c;
+  const FOE = 0x0225882c;
+  m.write(MINE, [6, 0, 0, 0, 1, 0, 0, 0, ...pk5(tepig)]);
+  m.write(FOE, [6, 0, 0, 0, 3, 0, 0, 0, ...foes.flatMap((f) => [...pk5(f)])]);
+  const S = [0x0225b1f0, 0x0225b414, 0x0225b638];
+  const structs = (hps) => foes.forEach((f, i) => battleStruct(m, S[i], { pp: FOE + 8 + i * 220, ...f, hp: hps[i] }));
+  battleStruct(m, 0x0225b85c, { pp: MINE + 8, ...tepig });
+  structs([30, 30, 33]);
+  // the battle's pointer arrays of the opponent's team (struct − 0x0C): its own order and the battle order
+  const order = (at, idx) => m.write(at, idx.flatMap((i) => { const v = S[i] - 0x0c; return [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, v >>> 24]; }));
+  order(0x02256000, [0, 1, 2]);
+  order(0x02256100, [0, 1, 2]);
+  m.write(0x021b5138, [0x00, 0x21]); // in battle
+  const state = {};
+  const realNow = Date.now;
+  let t = realNow();
+  const poll = (n = 1) => {
+    let fight = null;
+    try {
+      for (let i = 0; i < n; i++) {
+        t += 2500; // (past the 2 s between two heap searches)
+        Date.now = () => t;
+        fight = readLiveBattle(e, m.read, T, state, readLiveParty(e, m.read, T, state).party);
+      }
+    } finally {
+      Date.now = realNow;
+    }
+    return fight;
+  };
+  assert.equal(poll(6).enemy.species, 506, 'the lead');
+  // the lead is down – the trainer hasn't chosen yet: the lead stays on the panel at 0 HP (not the next one in the party)
+  structs([0, 30, 33]);
+  let f = poll();
+  assert.deepEqual([f.enemy.species, f.enemy.hp], [506, 0]);
+  // the trainer sends its third Pokémon: the battle order puts it in front
+  order(0x02256100, [2, 1, 0]);
+  f = poll();
+  assert.deepEqual([f.enemy.species, f.enemy.hp], [511, 33]);
+  // down too, one left: that one is next for sure
+  structs([0, 30, 0]);
+  assert.equal(poll().enemy.species, 509);
+  // without the arrays (not found): the first one standing, as before
+  const plain = {};
+  m.write(0x02256000, new Array(12).fill(0));
+  m.write(0x02256100, new Array(12).fill(0));
+  structs([30, 30, 33]);
+  let g = null;
+  for (let i = 0; i < 6; i++) g = readLiveBattle(e, m.read, T, plain, readLiveParty(e, m.read, T, plain).party);
+  assert.equal(g.enemy.species, 506);
+});
+
 test('Black: Rotom\'s forms – the form is read, and the battle panel gets the form\'s types (2.8.1)', async () => {
   const e = findEntry(TABLE, { platform: 'nds', code: 'IREO' });
   const r = readLiveParty(e, black2({ mons: [pk5({ pid: 0x40740001, species: 479, form: 2 }), pk5({ pid: 0x40740002, species: 479 })] }).read, T, {});
