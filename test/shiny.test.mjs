@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, extname } from 'node:path';
-import { SHINY_RATES, cleanShiny, shinyThreshold, shinyChanged, shinyFamily, findShinyCompares, findShinyLiterals, locateShiny, shinyEdits, trainerShiniesOk } from '../shared/shiny.mjs';
+import { SHINY_RATES, NORMAL_RATE, MIN_RATE, cleanShiny, shinyThreshold, shinyChanged, shinyFamily, findShinyCompares, findShinyLiterals, locateShiny, shinyEdits, trainerShiniesOk, shinyOdds, shinyNeedsHigh, shinyKnownTo280, validRate } from '../shared/shiny.mjs';
+import { deadAfter, decode } from '../shared/thumb.mjs';
 import { blzCompressTo, blzDecompress, ndsArm9 } from '../shared/nds.mjs';
 import { LiveTables, parsePk3 } from '../shared/live/parse.mjs';
 import { identifyRom } from '../shared/romid.mjs';
@@ -48,6 +49,15 @@ function asm() {
       fix.push({ i: out.length, kind: 'bl', name });
       return a.h(0, 0);
     },
+    ldr(rd, name) {
+      fix.push({ i: out.length, kind: 'ldr', rd, name });
+      return a.h(0);
+    },
+    word(name, v) {
+      if (out.length & 1) out.push(0);
+      labels[name] = out.length * 2;
+      return a.h(v & 0xffff, v >>> 16);
+    },
     pad(bytes) {
       while (out.length * 2 < bytes) out.push(0x46c0);
       return a;
@@ -55,7 +65,8 @@ function asm() {
     bytes() {
       for (const f of fix) {
         const d = labels[f.name] - (f.i * 2 + 4);
-        if (f.kind === 'bcond') out[f.i] = 0xd000 | (f.cond << 8) | ((d >> 1) & 0xff);
+        if (f.kind === 'ldr') out[f.i] = 0x4800 | (f.rd << 8) | ((labels[f.name] - ((f.i * 2 + 4) & ~3)) >> 2);
+        else if (f.kind === 'bcond') out[f.i] = 0xd000 | (f.cond << 8) | ((d >> 1) & 0xff);
         else if (f.kind === 'b') out[f.i] = 0xe000 | ((d >> 1) & 0x7ff);
         else {
           out[f.i] = 0xf000 | ((d >> 12) & 0x7ff);
@@ -110,12 +121,14 @@ function gen3Code({ literals = 1 } = {}) {
 }
 const FAMILY3 = (literals = 1) => ({ gen: 3, checks: 4, loops: 1, literals: [literals, literals] });
 
-test('cleanShiny: known presets only, null for the games’ own odds; thresholds per preset', () => {
+test('cleanShiny: any whole rate from 1 in 2 to 1 in 8192, null for the games’ own odds; thresholds per preset', () => {
   assert.deepEqual(cleanShiny({ rate: 512, trainers: true }), { rate: 512, trainers: true });
   assert.deepEqual(cleanShiny({ rate: '1024' }), { rate: 1024, trainers: false });
   assert.deepEqual(cleanShiny({ rate: 8192, trainers: true }), { rate: 8192, trainers: true });
   assert.equal(cleanShiny({ rate: 8192 }), null);
-  assert.equal(cleanShiny({ rate: 100 }), null, 'not a preset: the games’ own odds');
+  assert.deepEqual(cleanShiny({ rate: 100 }), { rate: 100, trainers: false }, 'a custom rate (2.8.1)');
+  assert.deepEqual(cleanShiny({ rate: 2 }), { rate: 2, trainers: false });
+  for (const bad of [1, 0, -5, 8193, 99999, 2.5, NaN, 'x', null]) assert.equal(cleanShiny({ rate: bad }), null, `${bad}: the games’ own odds`);
   assert.equal(cleanShiny({ rate: 512, trainers: 'yes' }).trainers, false);
   for (const bad of [null, undefined, 3, 'x', [], { trainers: 1 }]) assert.equal(cleanShiny(bad), null);
   assert.deepEqual(SHINY_RATES.map((r) => shinyThreshold({ rate: r })), [8, 16, 64, 128, 255]);
@@ -259,7 +272,7 @@ test('applyShiny on a GBA file: the edits land in the file, a game without the c
   const { code } = gen3Code({ literals: 0 });
   const path = join(dir, 'Ruby.gba');
   writeFileSync(path, gbaRom(code));
-  assert.deepEqual(shinySupport(path), { ok: true, gen: 3, trainers: true });
+  assert.deepEqual({ ...shinySupport(path), high: undefined }, { ok: true, gen: 3, trainers: true, high: undefined });
   assert.deepEqual(shinySupport(path, { original: false }), { ok: false, reason: 'hack', gen: 3 });
   assert.deepEqual(applyShiny(path, { rate: 1024, trainers: true }), { changed: 5 });
   const after = new Uint8Array(readFileSync(path));
@@ -282,7 +295,7 @@ test('applyShiny on a DS game: the compressed ARM9 is compressed again into its 
   const rom = ndsRom(a.pad(0x2000).bytes());
   const path = join(dir, 'Black 2.nds');
   writeFileSync(path, rom);
-  assert.deepEqual(shinySupport(path), { ok: true, gen: 5, trainers: false });
+  assert.deepEqual(shinySupport(path), { ok: true, gen: 5, trainers: false, high: false }, '(this check’s halves are made in a way the rewrite doesn’t know)');
   assert.throws(() => applyShiny(path, { rate: 512, trainers: true }), (e) => e.code === 'shinyUnsupported');
   assert.deepEqual(applyShiny(path, { rate: 512 }), { changed: 1 });
   const after = new Uint8Array(readFileSync(path));
@@ -313,7 +326,8 @@ test('build → invite → partner: every player’s game patched alike, a game 
   const pack = runPack(m);
   assert.deepEqual(pack.shiny, { rate: 512, trainers: true });
   assert.deepEqual(checkPack(pack).shiny, { rate: 512, trainers: true });
-  assert.equal(checkPack({ ...pack, shiny: { rate: 3 } }).shiny, null, 'a pack with an unknown rate: the games’ own odds');
+  assert.equal(checkPack({ ...pack, shiny: { rate: 1 } }).shiny, null, 'a pack with a rate a run can’t have: the games’ own odds');
+  assert.equal(pack.format, 'soullink-studio/run-pack@2', 'a preset: 2.8.0 can still join');
   // the partner's build (an imported run has the setting; the request doesn't repeat it)
   const again = await buildRun({ identity: { id: m.id, room: m.room, secret: m.secret }, romId: ROM, randomize: false, config: {}, players: pack.players, buildFor: ['p2'], expectedOutputs: pack.outputs });
   assert.equal(again.outputs.p2.matchesFriend, true);
@@ -321,6 +335,16 @@ test('build → invite → partner: every player’s game patched alike, a game 
   // a new attempt keeps it
   assert.deepEqual(restartRequest(m, { library: { roms: [{ id: ROM, crc: m.base.crc }] }, runs: [] }).shiny, { rate: 512, trainers: true });
   assert.equal(restartRequest({ ...m, shiny: null }, { library: { roms: [{ id: ROM, crc: m.base.crc }] }, runs: [] }).shiny, undefined);
+
+  // a rate 2.8.0 doesn't know: a pack 2.8.0 refuses ("update to 2.8.1"), the rate kept through build and pack
+  const custom = await buildRun({ romId: ROM, randomize: false, config: {}, shiny: { rate: 1000 }, players: { p1: { name: 'Lou' }, p2: { name: 'Kim' } } });
+  assert.deepEqual(custom.shiny, { rate: 1000, trainers: false });
+  const cp = runPack(custom);
+  assert.deepEqual([cp.format, cp.minVersion], ['soullink-studio/run-pack@3', '2.8.1']);
+  assert.deepEqual(checkPack(cp).shiny, { rate: 1000, trainers: false });
+  const cOut = new Uint8Array(readFileSync(join(DATA, 'runs', custom.id, custom.outputs.p1.rom)));
+  const loc0 = locateShiny(new Uint8Array(readFileSync(ROM)).subarray(0x1000), FAMILY3(0));
+  assert.equal(cOut[0x1000 + loc0.checks[0]], 65, 'threshold 66 (1 in 993 – the closest to 1 in 1000): `cmp #65` + bls');
 
   const plain = await buildRun({ romId: ROM, randomize: false, config: {}, mode: 'nuzlocke', players: { p1: { name: 'Lou' } } });
   assert.equal(plain.shiny, null);
@@ -364,9 +388,328 @@ test('the live reader calls a Pokémon shiny with the run’s threshold', () => 
   assert.equal(parsePk3(mon(3), T)?.shiny, true);
 });
 
+// ---- any rate (2.8.1): thresholds above 255 -------------------------------------------------------------------------
+
+test('shinyOdds: presets as in 2.8.0, any other rate to the nearest threshold the patch can build', () => {
+  assert.deepEqual(SHINY_RATES.map((r) => shinyOdds(r).threshold), [8, 16, 64, 128, 255]);
+  const rep = (t) => {
+    while (t > 255) {
+      if (t % 2) return false;
+      t /= 2;
+    }
+    return true;
+  };
+  const candidates = [];
+  for (let k = 1; k <= 255; k++) for (let s = 0; s <= 8; s++) candidates.push(k * 2 ** s);
+  for (let n = MIN_RATE; n <= NORMAL_RATE; n++) {
+    const o = shinyOdds(n);
+    assert.ok(o.threshold >= 8 && o.threshold <= 32768 && rep(o.threshold), `${n}: ${o.threshold}`);
+    assert.equal(o.effective, 65536 / o.threshold);
+    if (SHINY_RATES.includes(n) || o.threshold === 8) continue;
+    const want = 65536 / n;
+    const best = Math.min(...candidates.map((t) => Math.abs(t - want)));
+    assert.equal(Math.abs(o.threshold - want), best, `${n}: the nearest one`);
+    if (o.threshold > 255) assert.ok(Math.abs(o.effective - n) / n < 0.004, `${n}: ${o.effective} – 8 significant bits`);
+    assert.equal(o.exact, Number.isInteger(Math.log2(n)), `${n}: exact only for powers of two`);
+  }
+  assert.deepEqual([100, 50, 10, 2, 3, 1000, 8191].map((n) => shinyOdds(n).threshold), [656, 1312, 6560, 32768, 21888, 66, 8]);
+  assert.equal(shinyOdds(2).exact, true);
+  assert.equal(shinyOdds(1), null);
+  assert.equal(shinyOdds(8193), null);
+  assert.deepEqual([2, 8192, 100].map(validRate), [true, true, true]);
+  assert.deepEqual([1, 8193, 99.5, '100'].map(validRate), [false, false, false, false]);
+  assert.equal(shinyThreshold({ rate: 100 }), 656);
+  assert.deepEqual([{ rate: 257 }, { rate: 256 }, { rate: 255 }, null].map(shinyNeedsHigh), [false, false, true, false]);
+  assert.deepEqual([{ rate: 512 }, { rate: 8192, trainers: true }, { rate: 100 }, null].map(shinyKnownTo280), [true, true, false, true]);
+});
+
+/**
+ * A THUMB function of `code` run from `entry` (r0… = args) until it returns – flags for the compares, shifts and ALU
+ * ops these functions use, conditional branches, bl, push/pop, a stack and memory (`mem`, address → byte). → r0.
+ */
+function exec(code, entry, args, mem = new Map()) {
+  const R = new Uint32Array(16);
+  args.forEach((v, i) => (R[i] = v));
+  R[13] = 0x03007e00;
+  R[14] = 0xfffffff1;
+  let N = false;
+  let Z = false;
+  let C = false;
+  const rd32 = (a) => [0, 1, 2, 3].reduce((v, i) => v | ((mem.get(a + i) ?? 0) << (8 * i)), 0) >>> 0;
+  const wr32 = (a, v) => [0, 1, 2, 3].forEach((i) => mem.set(a + i, (v >>> (8 * i)) & 0xff));
+  const nz = (v) => {
+    v >>>= 0;
+    N = v >= 0x80000000;
+    Z = v === 0;
+    return v;
+  };
+  const sub = (a, b) => {
+    C = a >>> 0 >= b >>> 0;
+    return nz(a - b);
+  };
+  let pc = entry;
+  for (let steps = 0; steps < 100000; steps++) {
+    if (pc === 0xfffffff0) return R[0];
+    const h = code[pc] | (code[pc + 1] << 8);
+    const d = h & 7;
+    const m = (h >> 3) & 7;
+    const top = h >> 11;
+    let next = pc + 2;
+    if (top <= 2) {
+      const imm = (h >> 6) & 31;
+      const v = R[m];
+      if (top === 0) {
+        if (imm) C = !!((v >>> (32 - imm)) & 1);
+        R[d] = nz(v << imm);
+      } else {
+        const sh = imm || 32;
+        C = !!((v >>> (sh - 1)) & 1);
+        R[d] = nz(top === 1 ? (sh === 32 ? 0 : v >>> sh) : v >> Math.min(31, sh));
+      }
+    } else if (top === 3) {
+      const n = h & 0x400 ? (h >> 6) & 7 : R[(h >> 6) & 7];
+      R[d] = h & 0x200 ? sub(R[m], n) : nz(R[m] + n);
+    } else if (top >= 4 && top <= 7) {
+      const r = (h >> 8) & 7;
+      const imm = h & 0xff;
+      if (top === 4) R[r] = nz(imm);
+      else if (top === 5) sub(R[r], imm);
+      else if (top === 6) R[r] = nz(R[r] + imm);
+      else R[r] = sub(R[r], imm);
+    } else if ((h & 0xfc00) === 0x4000) {
+      const op = (h >> 6) & 15;
+      const a = R[d];
+      const b = R[m];
+      if (op === 8) nz(a & b);
+      else if (op === 10) sub(a, b);
+      else R[d] = nz([a & b, a ^ b, a << b, a >>> b, a >> b, 0, 0, 0, 0, -b, 0, 0, a | b, Math.imul(a, b), a & ~b, ~b][op]);
+    } else if ((h & 0xfc00) === 0x4400) {
+      const op = (h >> 8) & 3;
+      const rd = d | ((h >> 4) & 8);
+      const rs = (h >> 3) & 15;
+      if (op === 3) next = (R[rs] & ~1) >>> 0;
+      else if (op === 2) R[rd] = R[rs];
+      else if (op === 1) sub(R[rd], R[rs]);
+      else R[rd] += R[rs];
+    } else if (top === 9) {
+      const a = ((pc + 4) & ~3) + (h & 0xff) * 4;
+      R[(h >> 8) & 7] = (code[a] | (code[a + 1] << 8) | (code[a + 2] << 16) | (code[a + 3] << 24)) >>> 0;
+    } else if ((h & 0xf800) === 0x6800) R[d] = rd32(R[m] + ((h >> 6) & 31) * 4);
+    else if ((h & 0xf800) === 0x6000) wr32(R[m] + ((h >> 6) & 31) * 4, R[d]);
+    else if ((h & 0xf600) === 0xb400) {
+      const list = [0, 1, 2, 3, 4, 5, 6, 7].filter((r) => h & (1 << r));
+      if (h & 0x800) {
+        for (const r of list) [R[r], R[13]] = [rd32(R[13]), R[13] + 4];
+        if (h & 0x100) [next, R[13]] = [(rd32(R[13]) & ~1) >>> 0, R[13] + 4];
+      } else {
+        if (h & 0x100) wr32((R[13] -= 4), R[14]);
+        for (const r of list.reverse()) wr32((R[13] -= 4), R[r]);
+      }
+    } else if ((h & 0xf000) === 0xd000) {
+      const cond = (h >> 8) & 15;
+      const take = [Z, !Z, C, !C, N, !N, false, false, C && !Z, !C || Z][cond];
+      if (take === undefined) throw new Error(`cond ${cond}`);
+      if (take) next = pc + 4 + 2 * ((h << 24) >> 24);
+    } else if ((h & 0xf800) === 0xe000) next = pc + 4 + 2 * ((h << 21) >> 21);
+    else if ((h & 0xf800) === 0xf000) {
+      const h2 = code[pc + 2] | (code[pc + 3] << 8);
+      let off = ((h & 0x7ff) << 12) | ((h2 & 0x7ff) << 1);
+      if (off & 0x400000) off -= 0x800000;
+      R[14] = (pc + 4) | 1;
+      next = pc + 4 + off;
+    } else throw new Error(`exec: ${h.toString(16)} at ${pc.toString(16)}`);
+    pc = next;
+  }
+  throw new Error('exec: no return');
+}
+
+const RNG = 0x03005d80; // the random generator's state (as in Emerald, gRngValue)
+/** Random(): state = state × 0x41C64E6D + 0x6073, the upper half returned (pokeemerald random.c, as agbcc builds it). */
+function random(a) {
+  return a.label('rand').ldr(2, 'rand.state').h(0x6811).ldr(0, 'rand.mul').h(0x4348).ldr(1, 'rand.add').h(0x1840, 0x6010, 0x0c00, 0x4770)
+    .word('rand.state', RNG).word('rand.mul', 0x41c64e6d).word('rand.add', 0x6073);
+}
+
+/**
+ * A Gen 3 game as agbcc builds it (Emerald's shapes): IsShinyOtIdPersonality, two palette functions, the battle
+ * sparkle (its 0xFFFF mask register still needed after the compare), CreateBoxMon's not-shiny loop around Random() and
+ * a picture drawn with SHINY_ODDS. `live`: the sparkle reads its XOR value after the compare (can't be rewritten).
+ */
+function gen3High({ live = false } = {}) {
+  const a = asm().h(0x4770).pad(0x40);
+  random(a);
+  // IsShinyOtIdPersonality(otId r0, personality r1) → bool
+  a.label('isShiny').h(0xb510, 0x2400, 0x0c02).ldr(3, 'isShiny.mask').h(0x4018, 0x4042, 0x0c08, 0x4042, 0x4019, 0x404a, 0x2a07).bcond(BHI, 'isShiny.no')
+    .h(0x2401).label('isShiny.no').h(0x1c20, 0xbc10, 0xbc02, 0x4708).word('isShiny.mask', 0xffff);
+  // palettes(species r0, otId r1, personality r2) → 0x1000 + species normal, 0x2000 + species shiny
+  for (const p of ['pal1', 'pal2']) {
+    a.label(p).h(0xb510, 0x1c04, 0x1c13, 0x0c08).ldr(2, `${p}.mask`).h(0x4011, 0x4048, 0x0c19, 0x4048, 0x4013, 0x4058, 0x2807).bcond(BLS, `${p}.sh`)
+      .ldr(0, `${p}.normal`).b(`${p}.j`).label(`${p}.sh`).ldr(0, `${p}.shiny`).label(`${p}.j`).h(0x1900, 0xbc10, 0xbc02, 0x4708)
+      .word(`${p}.mask`, 0xffff).word(`${p}.normal`, 0x1000).word(`${p}.shiny`, 0x2000);
+  }
+  // sparkle(otId r0, personality r1) → bool & mask (the mask in r7 still used after the compare)
+  a.label('sparkle').h(0xb5f0, 0x1c05, 0x1c0c, 0x2600, 0x0c28).ldr(7, 'sparkle.mask').h(0x403d, 0x4068, 0x0c21, 0x4048, 0x403c, 0x4060, 0x2807)
+    .bcond(BHI, 'sparkle.no').h(0x2601).label('sparkle.no').h(live ? 0x1c06 : 0x46c0, 0x1c30, 0x4038, 0xbcf0, 0xbc02, 0x4708).word('sparkle.mask', 0xffff);
+  // MakeOtId(personality r0) → an OT ID that isn't shiny with it (CreateBoxMon's OT_ID_RANDOM_NO_SHINY loop)
+  a.label('makeOt').h(0xb570, 0x1c06).ldr(5, 'makeOt.mask').label('makeOt.top').bl('rand').h(0x1c04).bl('rand').h(0x0400, 0x4304)
+    .h(0x0c21, 0x1c22, 0x402a, 0x4051, 0x0c30, 0x4041, 0x1c32, 0x402a, 0x4051, 0x2907).bcond(BLS, 'makeOt.top').b('makeOt.out')
+    .h(0x46c0).label('makeOt.out').h(0x1c20, 0xbc70, 0xbc02, 0x4708).word('makeOt.mask', 0xffff);
+  // a picture with SHINY_ODDS as the OT ID: CreateMonPic → the palette
+  a.label('pic').h(0xb510).bl('pal1').h(0xbc10, 0xbc02, 0x4708);
+  a.label('starter').h(0xb510, 0x2019, 0x2108, 0x2200, 0x2301).bl('pic').h(0xbc10, 0xbc02, 0x4708);
+  return { code: a.pad(0x800).bytes(), a };
+}
+
+/** Gen 4/5 as mwcc builds them (Black's, Platinum's shapes): the leaf check, Gen 4's not-shiny loop. `live`: r1 read after it. */
+function gen45High({ loop = false, live = false } = {}) {
+  const a = asm().h(0x4770).pad(0x40);
+  random(a);
+  a.label('check').ldr(3, 'check.mask').h(0x040a, 0x4019, 0x4003, 0x0400, 0x0c1b, 0x0c00, 0x0c09, 0x4058, 0x0c12, 0x4048, 0x4050, 0x2808)
+    .bcond(BHS, 'check.no').h(0x2001, live ? 0x1840 : 0x46c0, 0x4770).label('check.no').h(0x2000, 0x4770).word('check.mask', 0xffff0000);
+  if (loop) {
+    a.label('makeOt').h(0xb570, 0x1c06).label('makeOt.top').bl('rand').h(0x1c04).bl('rand').h(0x0400, 0x4304)
+      .h(0x0432, 0x0c12, 0x0c31, 0x0c20, 0x0423, 0x0c1b, 0x4058, 0x4048, 0x4050, 0x2808).bcond(BLO, 'makeOt.top').b('makeOt.out')
+      .h(0x46c0).label('makeOt.out').h(0x1c20, 0xbc70, 0xbc02, 0x4708);
+  }
+  return { code: a.pad(0x400).bytes(), a };
+}
+
+/** The function around `at`: where its `push {…, lr}` is. */
+const fnStart = (code, at) => {
+  for (let o = at; o > at - 96; o -= 2) if (code[o + 1] === 0xb5) return o;
+  throw new Error('no push');
+};
+const patched = (code, loc, shiny) => {
+  const c = code.slice();
+  for (const e of shinyEdits(loc, shiny)) c.set(e.bytes, e.at);
+  return c;
+};
+const shinyCount = (fn) => {
+  let n = 0;
+  for (let v = 0; v < 65536; v++) n += fn(v) ? 1 : 0;
+  return n;
+};
+
+test('Gen 4/5 above 255: every half shifted further, the compare with k – exactly k × 2^s of 65536 shiny', () => {
+  const { code } = gen45High({ loop: true });
+  const F4 = { gen: 4, checks: 1, loops: 1, literals: [0, 0] };
+  const loc = locateShiny(code, F4);
+  assert.equal(loc.high.ok, true, loc.high.why);
+  assert.equal(loc.high.checks[0].kind, 'shift');
+  const fn = loc.checks[0] - 24; // the leaf starts with `ldr r3, =0xFFFF0000`, 12 instructions before its compare
+  assert.equal(code[fn + 1] & 0xf8, 0x48);
+  for (const rate of [2, 3, 10, 50, 100, 255, 256, 300, 4096]) {
+    const c = patched(code, loc, { rate });
+    assert.equal(shinyCount((v) => exec(c, fn, [0, v])), shinyThreshold({ rate }), `1 in ${rate}`);
+    assert.equal(shinyCount((v) => exec(c, fn, [0x12345678, (0x12345678 ^ v) >>> 0])) > 0, true);
+  }
+  // the not-shiny loop: never an OT ID below the threshold – trainer shinies on: just once
+  for (const [rate, trainers] of [[2, false], [100, false], [100, true]]) {
+    const c = patched(code, loc, { rate, trainers });
+    const T = shinyThreshold({ rate });
+    const mem = new Map();
+    let low = 65536;
+    let below = 0;
+    for (let i = 0; i < 400; i++) {
+      [0, 1, 2, 3].forEach((k) => mem.set(RNG + k, (i * 2654435761 >>> (8 * k)) & 0xff));
+      const pid = 0x12345678;
+      const ot = exec(c, fnStart(c, loc.loop), [pid], mem);
+      const sv = (ot >>> 16) ^ (ot & 0xffff) ^ (pid >>> 16) ^ (pid & 0xffff);
+      low = Math.min(low, sv);
+      below += sv < T ? 1 : 0;
+    }
+    if (trainers) assert.ok(below > 0, `1 in ${rate}, trainer shinies: some below ${T}`);
+    else assert.ok(low >= T, `1 in ${rate}: lowest ${low}, threshold ${T}`);
+  }
+});
+
+test('Gen 3 above 255: the XOR made anew next to the threshold – checks, palettes, the sparkle, the loop and the pictures', () => {
+  const { code } = gen3High();
+  const F = { gen: 3, checks: 4, loops: 1, literals: [1, 1] };
+  const loc = locateShiny(code, F);
+  assert.equal(loc.high.ok, true, loc.high.why);
+  assert.deepEqual(loc.high.checks.map((p) => p.kind), ['rewrite', 'rewrite', 'rewrite', 'rewrite']);
+  const fnOf = (at) => fnStart(code, at);
+  const [isShiny, pal1, pal2, sparkle] = loc.checks.map(fnOf);
+  const starter = loc.literals[0] - 4;
+  for (const rate of [2, 10, 50, 100, 1000, 4096, 8192]) {
+    const T = shinyThreshold({ rate });
+    const c = patched(code, loc, { rate });
+    assert.equal(shinyCount((v) => exec(c, isShiny, [0, v]) & 0xff), T, `1 in ${rate}: IsShinyOtIdPersonality`);
+    for (const f of [pal1, pal2]) assert.equal(shinyCount((v) => exec(c, f, [25, 0, v]) === 0x2019), T, `1 in ${rate}: palette`);
+    assert.equal(shinyCount((v) => exec(c, sparkle, [0, v])), T, `1 in ${rate}: sparkle (its mask still 0xFFFF after the compare)`);
+    assert.equal(exec(c, starter, []), 0x1019, `1 in ${rate}: the pictures drawn with SHINY_ODDS stay normal`);
+    const mem = new Map();
+    let low = 65536;
+    for (let i = 0; i < 300; i++) {
+      [0, 1, 2, 3].forEach((k) => mem.set(RNG + k, (i * 2654435761 >>> (8 * k)) & 0xff));
+      const ot = exec(c, fnOf(loc.loop), [0xabcd1234], mem);
+      low = Math.min(low, (ot >>> 16) ^ (ot & 0xffff) ^ 0xabcd ^ 0x1234);
+    }
+    assert.ok(low >= T, `1 in ${rate}: trainers' OT IDs never shiny (lowest ${low})`);
+  }
+  // a rate the 8-bit compare takes is patched as in 2.8.0 – the same bytes
+  const old = shinyEdits({ ...loc, high: { ok: false } }, { rate: 512 });
+  assert.deepEqual(shinyEdits(loc, { rate: 512 }), old);
+  // the pictures: 0xFF up to 255, an OT ID of 0x8000 above (`movs r3, #1` first, then `lsls r1, r3, #15`)
+  const c = patched(code, loc, { rate: 100 });
+  const lit = loc.literals[0];
+  assert.deepEqual([...c.subarray(lit, lit + 2)], [0x01, 0x23]);
+  assert.deepEqual([...c.subarray(lit + 4, lit + 6)], [0xd9, 0x03]);
+});
+
+test('above 255 only where it is safe: a value read after the compare, a branch into the rewrite, a callee reading its argument', () => {
+  const F5 = { gen: 5, checks: 1, loops: 0, literals: [0, 0] };
+  const F4 = { gen: 4, checks: 1, loops: 1, literals: [0, 0] };
+  const F3 = { gen: 3, checks: 4, loops: 1, literals: [1, 1] };
+  assert.equal(locateShiny(gen45High().code, F5).high.ok, true);
+  assert.deepEqual(locateShiny(gen45High({ live: true }).code, F5).high, { ok: false, why: 'check' }, 'r1 is read after the compare (it changes)');
+  assert.deepEqual(locateShiny(gen3High({ live: true }).code, F3).high, { ok: false, why: 'check' }, 'the sparkle reads its value after the compare');
+  // a branch from elsewhere into the middle of the rewritten code
+  const { code } = gen45High();
+  const loc = locateShiny(code, F5);
+  const mid = Math.max(...loc.high.checks[0].leaves.map((l) => l.at));
+  const c = code.slice();
+  const from = 0x380;
+  const d = (mid - (from + 4)) >> 1;
+  c.set([d & 0xff, 0xe0 | ((d >> 8) & 7)], from);
+  assert.equal(locateShiny(c, F5).high.ok, false, '(the trial window ends where a branch lands: too short for the four halves)');
+  // a bl into it from anywhere: found by its own scan
+  const bl = code.slice();
+  const dd = (mid - (0x384 + 4)) >> 1;
+  bl.set([(dd >> 11) & 0xff, 0xf0 | ((dd >> 19) & 7), dd & 0xff, 0xf8 | ((dd >> 8) & 7)], 0x384);
+  assert.deepEqual(locateShiny(bl, F5).high, { ok: false, why: 'branch' });
+  // the loop's way back calls a function that reads the register the rewrite changes
+  const b = gen45High({ loop: true });
+  const loc4 = locateShiny(b.code, F4);
+  assert.equal(loc4.high.ok, true);
+  const rd = b.code.slice();
+  const rand = 0x40; // (Random() comes first)
+  rd.set([0x01, 0x1c], rand); // adds r1, r0, #0 – reads r0 before writing it
+  assert.deepEqual(locateShiny(rd, F4).high, { ok: false, why: 'loop' });
+  // refused: shinyEdits throws, the 8-bit rates still work
+  const bad = locateShiny(gen45High({ live: true }).code, F5);
+  assert.throws(() => shinyEdits(bad, { rate: 100 }), /not available/);
+  assert.equal(shinyEdits(bad, { rate: 300 }).length, 1);
+});
+
+test('liveness: overwritten before read on every path, into called functions, a return reads r0 and r4–r11', () => {
+  // movs r1, #0; bx lr – r1 dead; r0 read at the return
+  const ret = Uint8Array.of(0x00, 0x21, 0x70, 0x47);
+  assert.equal(deadAfter(ret, [0], 1 << 1), true);
+  assert.equal(deadAfter(ret, [0], 1 << 0), false);
+  assert.equal(deadAfter(ret, [0], 1 << 4), false, 'r4 is the caller’s');
+  // beq +2; adds r0, r1, #0 (reads r1); movs r1, #0; bx lr – read on one way
+  const fork = Uint8Array.of(0x00, 0xd0, 0x08, 0x1c, 0x00, 0x21, 0x70, 0x47);
+  assert.equal(deadAfter(fork, [0], 1 << 1), false);
+  assert.equal(deadAfter(fork, [4], 1 << 1), true);
+  assert.equal(decode(fork, 0).flow, 'cond');
+  assert.equal(decode(Uint8Array.of(0x70, 0x47), 0).flow, 'return');
+});
+
 // ---- real ROMs (optional) ------------------------------------------------------------------------------------------
 const ROMS = process.env.SOULDEW_TEST_ROMS;
-test('real Gen 3–5 ROMs: found, patched on a copy, the code reads back patched', { skip: !ROMS && 'set SOULDEW_TEST_ROMS' }, () => {
+test('real Gen 3–5 ROMs: found, patched on a copy (1 in 512, 100 and 2), the code reads back patched, the check counts right', { skip: !ROMS && 'set SOULDEW_TEST_ROMS' }, () => {
   const dir = mkdtempSync(join(DATA, 'real-'));
   const files = readdirSync(ROMS).filter((f) => ['.gba', '.nds'].includes(extname(f).toLowerCase()));
   let checked = 0;
@@ -374,21 +717,36 @@ test('real Gen 3–5 ROMs: found, patched on a copy, the code reads back patched
     const src = join(ROMS, f);
     const s = shinySupport(src);
     if (!s.ok) continue;
-    const copy = join(dir, f);
-    copyFileSync(src, copy);
-    const res = applyShiny(copy, { rate: 512, trainers: s.trainers });
-    assert.ok(res.changed > 0, f);
+    assert.equal(s.high, true, `${f}: rates above 1 in 257 too`);
     const before = new Uint8Array(readFileSync(src));
-    const after = new Uint8Array(readFileSync(copy));
-    assert.equal(after.length, before.length, f);
     const code = (b) => (extname(f).toLowerCase() === '.gba' ? b : ndsArm9(b).bytes);
     const was = code(before);
-    const now = code(after);
     const id = identifyRom(before.subarray(0, 0x200));
-    const edits = shinyEdits(locateShiny(was, shinyFamily(id.system, id.code)), { rate: 512, trainers: s.trainers });
-    const diff = [...now].map((b, i) => (b !== was[i] ? i : -1)).filter((i) => i >= 0);
-    assert.deepEqual(diff, edits.flatMap((e) => e.bytes.map((_, k) => e.at + k)), f);
-    rmSync(copy);
+    const loc = locateShiny(was, shinyFamily(id.system, id.code));
+    for (const shiny of [{ rate: 512, trainers: s.trainers }, { rate: 100 }, { rate: 2, trainers: s.trainers }]) {
+      const copy = join(dir, f);
+      copyFileSync(src, copy);
+      const res = applyShiny(copy, shiny);
+      assert.ok(res.changed > 0, f);
+      const after = new Uint8Array(readFileSync(copy));
+      assert.equal(after.length, before.length, f);
+      const now = code(after);
+      const edits = shinyEdits(loc, shiny);
+      const diff = [...now].map((b, i) => (b !== was[i] ? i : -1)).filter((i) => i >= 0);
+      assert.deepEqual(diff, edits.flatMap((e) => e.bytes.map((_, k) => e.at + k)).filter((o) => now[o] !== was[o]), `${f} 1 in ${shiny.rate}`);
+      // the check called for every shiny value: Gen 3's IsShinyOtIdPersonality (push {r4, lr}; movs r4, #0), the DS games'
+      // leaf check (it starts with the mask, `ldr r3, [pc, #…]`)
+      const T = shinyThreshold(shiny);
+      const fn = loc.gen === 3
+        ? loc.checks.map((at) => fnStart(was, at)).find((o) => was[o] === 0x10 && was[o + 1] === 0xb5 && was[o + 2] === 0x00 && was[o + 3] === 0x24)
+        : (() => {
+          for (let o = loc.checks[0]; o > loc.checks[0] - 32; o -= 2) if ((was[o + 1] & 0xf8) === 0x48 && (was[o + 1] & 7) === 3) return o;
+          return null;
+        })();
+      assert.ok(fn, `${f}: the check function`);
+      assert.equal(shinyCount((v) => exec(now, fn, [0, v]) & 0xff), T, `${f} 1 in ${shiny.rate}: ${T} of 65536 shiny`);
+      rmSync(copy);
+    }
     checked++;
   }
   assert.ok(checked > 0 || !existsSync(ROMS));

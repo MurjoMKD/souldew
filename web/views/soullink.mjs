@@ -1,7 +1,7 @@
 import { html, useState, useEffect } from '/vendor/htm-preact.mjs';
 import { useApp, Modal, Led } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
-import { t, ago } from '../lib/i18n.mjs';
+import { t, ago, currentLang } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
 import { buildLogText, serverErrorText } from '../lib/errors.mjs';
 import { diag } from '../lib/diag.mjs';
@@ -19,7 +19,7 @@ import { Board, InviteBody } from './board.mjs';
 import { JoinCode } from './invitecode.mjs';
 import { NuzlockeRules, TypeHelpRule, LivesRule } from './nuzrules.mjs';
 import { FirstSteps } from './firststeps.mjs';
-import { SHINY_RATES, NORMAL_RATE, cleanShiny } from '/shared/shiny.mjs';
+import { SHINY_RATES, NORMAL_RATE, MIN_RATE, cleanShiny, shinyOdds, shinyNeedsHigh } from '/shared/shiny.mjs';
 
 /**
  * The SoulLink and the Nuzlocke section – one view, two modes (route `soullink` / `nuzlocke`):
@@ -488,14 +488,48 @@ function namesFrom(from, fallback) {
 
 /** "1 in 8192" – how a shiny rate reads in the wizard. */
 const shinyRateLabel = (rate) => (rate === NORMAL_RATE ? t('new.shinyNormal', 'Normal (1 in 8192)') : t('new.shinyRate', '1 in {n}', { n: rate }));
+/** A custom rate starts here – what players asked for most. */
+const CUSTOM_RATE = 100;
+/** The commonest rate a game without the rewritten compares can take: a threshold of 255 (shared/shiny.mjs). */
+const MIN_RATE_8BIT = 257;
+/** "99.9" (of "1 in 99.9") – what a threshold gives, with as many decimals as it takes to differ from the rate asked for. */
+function effectiveText(o) {
+  const d = Number.isInteger(o.effective) ? 0 : Number(o.effective.toFixed(1)) !== o.rate ? 1 : 2;
+  return o.effective.toLocaleString(currentLang(), { minimumFractionDigits: d, maximumFractionDigits: d, useGrouping: false });
+}
+
+/**
+ * "1 in N" for a custom shiny rate: a number field that takes its value on Enter or when it loses focus, kept between
+ * the commonest rate the game can take (`min`) and 1 in 8192.
+ */
+function CustomRate({ rate, min, onRate }) {
+  const [draft, setDraft] = useState(String(rate));
+  useEffect(() => setDraft(String(rate)), [rate]);
+  const commit = (text) => {
+    const n = Math.round(Number(text));
+    const v = Number.isFinite(n) && String(text).trim() !== '' ? Math.max(min, Math.min(NORMAL_RATE, n)) : rate;
+    setDraft(String(v));
+    if (v !== rate) onRate(v);
+  };
+  return html`<span class="row shiny-custom" style="gap:6px; flex-wrap:nowrap">
+    <span class="small">${t('new.shinyOneIn', '1 in')}</span>
+    <input type="number" class="num-in" style="width:84px" min=${min} max=${NORMAL_RATE} step="1" value=${draft} aria-label=${t('new.shinyCustomAria', 'Shiny rate: 1 in how many')}
+      onInput=${(e) => setDraft(e.target.value)} onChange=${(e) => commit(e.target.value)} onKeyDown=${(e) => e.key === 'Enter' && commit(e.target.value)} />
+  </span>`;
+}
 
 /**
  * The game's shiny rate (and shiny Pokémon for trainers): offered for the games server/lib/shiny.mjs can patch –
- * `support` is the inspect's { ok, trainers, reason } – else shown switched off with the reason. `hack`: a ROM hack is
- * picked (the server only knows the copy isn't an original it recognises – a ROM hack, or a dump the catalog lacks).
+ * `support` is the inspect's { ok, trainers, high, reason } – else shown switched off with the reason. `hack`: a ROM
+ * hack is picked (the server only knows the copy isn't an original it recognises – a ROM hack, or a dump the catalog
+ * lacks). A preset from the list, or "Custom" with any "1 in N" (shared/shiny.mjs shinyOdds: when the game can't do
+ * that exactly, the hint says what it does).
  */
 function ShinyOption({ support, gen, solo, hack, rate, trainers, onRate, onTrainers }) {
   const ok = !!support?.ok;
+  const min = support?.high ? MIN_RATE : MIN_RATE_8BIT;
+  const [custom, setCustom] = useState(() => !SHINY_RATES.includes(rate));
+  const odds = custom && ok ? shinyOdds(rate) : null;
   const why = ok ? null
     : support?.reason === 'hack' && hack ? t('new.shinyHack', 'Not for ROM hacks – their code can differ from the original game.')
       : support?.reason === 'hack' || support?.reason === 'code' ? t('new.shinyCode', 'souldew can’t find the shiny check in this copy of the game, so the rate stays as it is.')
@@ -505,15 +539,28 @@ function ShinyOption({ support, gen, solo, hack, rate, trainers, onRate, onTrain
   return html`<div class="rule-sep stack">
     <div class="grid-2">
       <label class="field"><span>${t('new.shinyLabel', 'Shiny rate')}</span>
-        <select value=${rate} disabled=${!ok} onChange=${(e) => onRate(Number(e.target.value))}>
-          ${SHINY_RATES.map((r) => html`<option value=${r}>${shinyRateLabel(r)}</option>`)}</select></label>
+        <span class="row" style="gap:8px; flex-wrap:nowrap">
+          <select value=${custom && ok ? 'custom' : rate} disabled=${!ok} style="flex:1; min-width:0" onChange=${(e) => {
+            const v = e.target.value;
+            setCustom(v === 'custom');
+            if (v === 'custom') onRate(Math.max(min, CUSTOM_RATE));
+            else onRate(Number(v));
+          }}>
+            ${SHINY_RATES.map((r) => html`<option value=${r}>${shinyRateLabel(r)}</option>`)}
+            <option value="custom">${t('new.shinyCustom', 'Custom…')}</option></select>
+          ${custom && ok && html`<${CustomRate} rate=${rate} min=${min} onRate=${onRate} />`}
+        </span></label>
       ${ok && html`<label class="check" style=${`align-self: end${trainersOff ? '; opacity:.45' : ''}`}>
         <input type="checkbox" checked=${trainers && !trainersOff} disabled=${trainersOff} onChange=${(e) => onTrainers(e.target.checked)} />
         <span>${t('new.shinyTrainers', 'Trainers’ Pokémon can be shiny too')}<span class="hint">${trainersOff
           ? t('new.shinyTrainersGen5', 'Not in Gen 5 games.') : t('new.shinyTrainersHint', 'At the same rate – normally a trainer’s Pokémon is never shiny.')}</span></span></label>`}
     </div>
-    <p class="small muted">${ok ? (solo ? t('new.shinyHintSolo', 'How often a Pokémon is shiny – wild ones, gifts and eggs alike. Built into your game.')
-      : t('new.shinyHint', 'How often a Pokémon is shiny – wild ones, gifts and eggs alike. Built into every player’s game.')) : why}</p>
+    <p class="small muted">${[
+      ok ? (solo ? t('new.shinyHintSolo', 'How often a Pokémon is shiny – wild ones, gifts and eggs alike. Built into your game.')
+        : t('new.shinyHint', 'How often a Pokémon is shiny – wild ones, gifts and eggs alike. Built into every player’s game.')) : why,
+      odds && !odds.exact && t('new.shinyRounded', 'The game can do 1 in {n}, the closest to 1 in {rate}.', { n: effectiveText(odds), rate: odds.rate }),
+      odds && !support.high && rate === min && t('new.shinyMin8bit', 'This copy of the game goes up to 1 in {n}.', { n: MIN_RATE_8BIT }),
+    ].filter(Boolean).join(' ')}</p>
   </div>`;
 }
 
@@ -617,7 +664,9 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
   const ctrGames = ctr && randomize && canRandomize ? (solo || buildFor !== 'all' ? 1 : seedMode === 'shared' ? 1 : count) : 0;
   const ctrGb = inspect?.patched?.outputSize ? (inspect.patched.outputSize / 1024 ** 3).toFixed(1) : null;
   const shinyOk = !!inspect?.shiny?.ok;
-  const shiny = shinyOk ? cleanShiny({ rate: shinyRate, trainers: shinyTrainers && inspect.shiny.trainers }) : null;
+  // (a copy without the rewritten compares takes up to 1 in 257: a commoner custom rate stops there)
+  const rateFits = shinyOk && !inspect.shiny.high && shinyNeedsHigh({ rate: shinyRate }) ? MIN_RATE_8BIT : shinyRate;
+  const shiny = shinyOk ? cleanShiny({ rate: rateFits, trainers: shinyTrainers && inspect.shiny.trainers }) : null;
 
   async function build() {
     setBusy(true);
@@ -725,7 +774,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
         ? t('new.pairRandom', 'With the randomizer everyone needs {game}. Without it, your partners could also play {mate}.', { game: gameTitle(game), mate: gameTitle(mate) })
         : html`<span class="chip ok">${t('new.pairChip', 'Both editions')}</span> ${t('new.pairOk', 'Your partners may also play {mate} – in a run without randomizer or ROM hack, both editions work.', { mate: gameTitle(mate) })}`}</p>`}
       ${inspect && !inspect.failed && html`<${ShinyOption} support=${inspect.shiny} gen=${inspect.info?.generation} solo=${solo} hack=${!!(patch || hack || customHack)}
-        rate=${shinyOk ? shinyRate : NORMAL_RATE} trainers=${shinyTrainers} onRate=${setShinyRate} onTrainers=${setShinyTrainers} />`}
+        rate=${shinyOk ? rateFits : NORMAL_RATE} trainers=${shinyTrainers} onRate=${setShinyRate} onTrainers=${setShinyTrainers} />`}
     </section>
 
     <section class="panel stack">

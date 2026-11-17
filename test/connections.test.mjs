@@ -50,7 +50,7 @@ test('import route: damaged invites get a 400 with a code the app translates; im
 
 test('a run with a shiny rate travels in the pack format 2.7.4 refuses; this app reads both, and says "update" for a later one', async () => {
   const { runPack } = await import('../server/lib/build.mjs');
-  const { PACK_FORMAT, PACK_FORMAT_SHINY, PACK_FORMATS, SHINY_MIN_VERSION, packFormatState } = await import('../shared/runpack.mjs');
+  const { PACK_FORMAT, PACK_FORMAT_SHINY, PACK_FORMAT_SHINY_ANY, PACK_FORMATS, SHINY_MIN_VERSION, SHINY_ANY_MIN_VERSION, packFormatState } = await import('../shared/runpack.mjs');
   const { PACK_FORMATS: CODE_FORMATS } = await import('../web/lib/invitecode.mjs');
   const m = { id: 'a1b2c3d4', name: 'Duo', room: 'r', secret: 's', players: {}, outputs: {} };
   // 2.7.4 accepts exactly 'soullink-studio/run-pack@1' (server/app.mjs and web/lib/invitecode.mjs of 2.7.4)
@@ -60,8 +60,14 @@ test('a run with a shiny rate travels in the pack format 2.7.4 refuses; this app
   assert.notEqual(shiny.format, 'soullink-studio/run-pack@1', '2.7.4 refuses it instead of building the normal odds');
   assert.deepEqual([shiny.format, shiny.minVersion], [PACK_FORMAT_SHINY, '2.8.0']);
   assert.equal(SHINY_MIN_VERSION, '2.8.0');
+  // a rate 2.8.0 doesn't know (2.8.1: any rate): 2.8.0 reads @2 and would turn it into the normal odds – @3 it refuses
+  const custom = runPack({ ...m, shiny: { rate: 100, trainers: false } });
+  assert.deepEqual([custom.format, custom.minVersion], [PACK_FORMAT_SHINY_ANY, '2.8.1']);
+  assert.equal(SHINY_ANY_MIN_VERSION, '2.8.1');
+  assert.ok(!['soullink-studio/run-pack@1', 'soullink-studio/run-pack@2'].includes(custom.format), '2.8.0 reads only @1 and @2');
+  assert.equal(runPack({ ...m, shiny: { rate: 8192, trainers: true } }).format, PACK_FORMAT_SHINY, 'trainer shinies alone: 2.8.0 knows them');
   assert.deepEqual(CODE_FORMATS, PACK_FORMATS, 'the code invite reads the same formats as the import route');
-  assert.deepEqual(['ok', 'ok', 'newer', 'invalid', 'invalid'], [pack(), pack({ format: PACK_FORMAT_SHINY }), pack({ format: 'soullink-studio/run-pack@7' }), pack({ format: 'other' }), null].map(packFormatState));
+  assert.deepEqual(['ok', 'ok', 'ok', 'newer', 'invalid', 'invalid'], [pack(), pack({ format: PACK_FORMAT_SHINY }), pack({ format: PACK_FORMAT_SHINY_ANY }), pack({ format: 'soullink-studio/run-pack@7' }), pack({ format: 'other' }), null].map(packFormatState));
 
   const { server, url } = await startServer({ port: 0, background: false });
   const post = async (body) => {
@@ -72,9 +78,12 @@ test('a run with a shiny rate travels in the pack format 2.7.4 refuses; this app
     const ok = await post({ pack: pack({ id: 'b1b2c3d4', format: PACK_FORMAT_SHINY, minVersion: '2.8.0', shiny: { rate: 256, trainers: true } }) });
     assert.equal(ok.status, 200);
     assert.deepEqual(ok.body.shiny, { rate: 256, trainers: true }, 'the partner\'s game gets the same rate');
-    const later = await post({ pack: pack({ id: 'c1b2c3d4', format: 'soullink-studio/run-pack@3', minVersion: '3.1.0' }) });
+    const any = await post({ pack: pack({ id: 'd1b2c3d4', format: PACK_FORMAT_SHINY_ANY, minVersion: '2.8.1', shiny: { rate: 100, trainers: false } }) });
+    assert.equal(any.status, 200);
+    assert.deepEqual(any.body.shiny, { rate: 100, trainers: false }, 'a custom rate arrives as it is');
+    const later = await post({ pack: pack({ id: 'c1b2c3d4', format: 'soullink-studio/run-pack@4', minVersion: '3.1.0' }) });
     assert.deepEqual([later.status, later.body.code, later.body.vars?.version], [400, 'packNewer', '3.1.0']);
-    const unnamed = await post({ pack: pack({ id: 'c1b2c3d4', format: 'soullink-studio/run-pack@3', minVersion: '../x' }) });
+    const unnamed = await post({ pack: pack({ id: 'c1b2c3d4', format: 'soullink-studio/run-pack@4', minVersion: '../x' }) });
     assert.deepEqual([unnamed.status, unnamed.body.code], [400, 'packNewerAny']);
   } finally {
     server.close();
