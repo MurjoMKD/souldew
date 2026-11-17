@@ -306,9 +306,10 @@ export function BattlePanel({ battle, mine, gen, game = '', isRun, side = 'left'
   // the types a Pokémon has right now: the battle's own (a type change in battle – the reader has them where it can
   // tell, shared/live/parse.mjs), else the game's types of its species (read from the ROM, web/lib/data.mjs)
   const actives = battle.actives?.length ? battle.actives : [battle.active];
-  const typesOf = (id, mon = null) => {
+  // (`form`: a DS Pokémon's alternate form – Rotom's appliance, Wormadam's cloak … have types of their own)
+  const typesOf = (id, mon = null, form = mon?.form) => {
     const a = mon && actives.find((x) => x?.types?.length && team[x.index] === mon);
-    return a ? a.types : runData ? runData.types(id, slot) : [];
+    return a ? a.types : runData ? runData.types(id, slot, form) : [];
   };
   const fairy = !!runData?.fairy; // a hack that added the type
   // the game's own types (romtypes.mjs): a hack with types of its own needs its chart (else no matchups) and its moves'
@@ -318,7 +319,7 @@ export function BattlePanel({ battle, mine, gen, game = '', isRun, side = 'left'
   const moveGen = rt?.fairy && !rt.moves ? Math.max(gen, 6) : gen;
   // everyone the reader sees out there (a double battle: both), the one it follows first
   const foes = (battle.foes?.length ? battle.foes : [foe]).filter((f) => f?.species);
-  const foeTypesOf = (f) => (f.types?.length ? f.types : typesOf(f.species));
+  const foeTypesOf = (f) => (f.types?.length ? f.types : typesOf(f.species, null, f.form));
   const foeTypes = foeTypesOf(foe);
   // the player's Pokémon that are out – the reader's active slots (they follow a switch); unknown → the first one that
   // can fight, as the game sends it out
@@ -372,7 +373,7 @@ export function BattlePanel({ battle, mine, gen, game = '', isRun, side = 'left'
   const moveLabel = other === 'left' ? t('battle.moveLeft', 'Show the battle helper left of the game') : t('battle.moveRight', 'Show the battle helper right of the game');
   const foldLabel = collapsed ? t('battle.expand', 'Show the battle helper in full') : t('battle.collapse', 'Fold the battle helper in');
   const head = html`<div class="bt-head">
-    ${collapsed ? html`<span class="bt-head-foes">${foes.map((f) => html`<span class="bt-head-foe" key=${`${f.species}:${f.level}`}><${Sprite} id=${f.species} shiny=${f.shiny} size=${30} gen=${gen} /><b>${speciesName(f.species)}</b><span class="num">${t('common.lv', 'Lv')} ${f.level}</span></span>`)}</span>`
+    ${collapsed ? html`<span class="bt-head-foes">${foes.map((f) => html`<span class="bt-head-foe" key=${`${f.species}:${f.level}`}><${Sprite} id=${f.species} form=${f.form} shiny=${f.shiny} size=${30} gen=${gen} /><b>${speciesName(f.species)}</b><span class="num">${t('common.lv', 'Lv')} ${f.level}</span></span>`)}</span>`
       : html`<span class="bt-title px">${t('battle.title', 'Battle')}</span>`}
     <span class="bt-kind">${kind}</span>
     ${onPrefs && html`<span class="bt-ctls">
@@ -395,7 +396,7 @@ export function BattlePanel({ battle, mine, gen, game = '', isRun, side = 'left'
     <${EncounterFx} battle=${battle} />
     ${head}
     ${foeData.map(({ f, types }) => html`<div class="bt-foe" key=${`${f.species}:${f.level}`}>
-      <${Sprite} id=${f.species} shiny=${f.shiny} size=${many ? 40 : 48} gen=${gen} />
+      <${Sprite} id=${f.species} form=${f.form} shiny=${f.shiny} size=${many ? 40 : 48} gen=${gen} />
       <div class="bt-foe-body">
         <div class="bt-name"><b>${speciesName(f.species)}</b><span class="num">${t('common.lv', 'Lv')} ${f.level}</span>
           ${foeStatus(f) && html`<span class=${`pp-st ${foeStatus(f)}`}>${statusLabel(foeStatus(f))}</span>`}

@@ -6,9 +6,12 @@
 const A = (key, name, met = [], extra = {}) => ({ kind: 'area', key, name, met, ...extra });
 const B = (key, name, cap, extra = {}) => ({ kind: 'boss', key, name, cap, ...extra });
 
-/** Ace levels of vanilla HeartGold/SoulSilver (the PROGRESSION caps are Definitive HG's). */
+/**
+ * Ace levels of vanilla HeartGold/SoulSilver (the PROGRESSION caps are Definitive HG's). Falkner's ace is his Pidgeotto
+ * at 13 (Gold/Silver/Crystal's was 9), the rival's at Azalea Town 18 (Serebii, PokémonDB).
+ */
 export const VANILLA_CAPS = {
-  'rival-1': 5, falkner: 9, bugsy: 17, 'rival-2': 20, whitney: 19, morty: 25, chuck: 31, jasmine: 35, pryce: 34, 'rival-3': 32,
+  'rival-1': 5, falkner: 13, bugsy: 17, 'rival-2': 18, whitney: 19, morty: 25, chuck: 31, jasmine: 35, pryce: 34, 'rival-3': 32,
   clair: 41, 'rival-4': 38, will: 42, koga: 44, bruno: 46, karen: 47, lance: 50, 'kanto-leaders': 60, blue: 60, red: 88,
 };
 
@@ -145,19 +148,21 @@ export function areaForMetLocation(id) {
 
 /**
  * Level cap = ace level of the next unbeaten mandatory boss. Badge-based: 0..7 Johto
- * gyms, then E4 (until 8 badges + champion), Kanto leaders, Blue, Red.
+ * gyms, then E4 (until 8 badges + champion), Kanto leaders, Blue, Red. A boss marked as defeated on the board counts
+ * as beaten too – a gym leader as well, before the badge was read from the game (not playing right now, an older
+ * savestate, a game whose badges aren't read): marking Falkner beaten moves the cap on to Bugsy.
  */
 export function levelCapFor(badgeCount, defeated = {}, vanilla = false) {
   const mandatory = BOSSES.filter((b) => !b.optional).map((b) => (vanilla && VANILLA_CAPS[b.key] ? { ...b, cap: VANILLA_CAPS[b.key] } : b));
   const kanto = mandatory.findIndex((b) => b.badgesFrom !== undefined);
   for (const [i, b] of mandatory.entries()) {
     if (b.badge !== undefined) {
-      if (badgeCount <= b.badge) return { boss: b, cap: b.cap };
+      if (badgeCount <= b.badge && !defeated[b.key]) return { boss: b, cap: b.cap };
       continue;
     }
     if (b.badgesFrom !== undefined) {
       // Blue's gym only opens with the other seven Kanto badges: at 15 badges the next boss is Blue.
-      if (badgeCount < 15) return { boss: b, cap: b.cap };
+      if (badgeCount < 15 && !defeated[b.key]) return { boss: b, cap: b.cap };
       continue;
     }
     // Kanto badges only come after the Elite Four: a 9th badge means everything before Kanto is beaten,

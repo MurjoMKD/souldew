@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { findEntry, readLiveParty, LiveTables } from '../shared/live/parse.mjs';
+import { findEntry, readLiveParty, readLiveBattle, playerBattle, LiveTables } from '../shared/live/parse.mjs';
 import { encryptPK4 } from '../shared/gen4save.mjs';
 
 const L = (f) => JSON.parse(readFileSync(new URL(`../shared/data/${f}`, import.meta.url)));
@@ -26,18 +26,19 @@ function ram() {
   };
 }
 
-function pk4({ pid = 0x1234abcd, species = 152, level = 12, tid = TID, sid = SID, metLevel = 5 } = {}) {
+function pk4({ pid = 0x1234abcd, species = 152, level = 12, tid = TID, sid = SID, metLevel = 5, hp = 30, maxHp = 34, form = 0 } = {}) {
   const d = new Uint8Array(236);
   const dv = new DataView(d.buffer);
   dv.setUint32(0, pid, true);
   dv.setUint16(0x08, species, true);
   dv.setUint16(0x0c, tid, true);
   dv.setUint16(0x0e, sid, true);
+  d[0x40] = form << 3;
   dv.setUint16(0x46, 126, true);
   d[0x84] = metLevel;
   d[0x8c] = level;
-  dv.setUint16(0x8e, 30, true);
-  dv.setUint16(0x90, 34, true);
+  dv.setUint16(0x8e, hp, true);
+  dv.setUint16(0x90, maxHp, true);
   return encryptPK4(d);
 }
 
@@ -128,4 +129,84 @@ test('scanned Gen 4: a copy of the party lower in RAM – the module-params poin
   const res = readLiveParty(e, r.read, T, state);
   assert.equal(res.badges, 1);
   assert.equal(state.partyAddr, base + 0xa0, 'the save’s party from now on');
+});
+
+/** Polls the party and the battle `n` times (the heap search takes a few polls) → the last battle. */
+function battlePolls(e, r, state, n = 8) {
+  let fight = null;
+  for (let i = 0; i < n; i++) fight = readLiveBattle(e, r.read, T, state, readLiveParty(e, r.read, T, state).party);
+  return fight;
+}
+
+test('Platinum, HeartGold: the catching demo (Dawn\'s starter vs. Bidoof, Lyra\'s Marill vs. Rattata) is no battle of the player\'s', () => {
+  // Platinum: FieldBattleDTO_NewCatchingTutorial – the counterpart's starter (Lv. 5) and a Bidoof (Lv. 2), both another trainer's
+  const pt = findEntry(TABLE, { platform: 'nds', code: 'CPUE' });
+  let r = ram();
+  const base = 0x02270000;
+  r.u32(0x02101d40, base);
+  saveImage(r, pt, base, { mons: [pk4({ pid: 0x0a0a0001, species: 390, level: 9 })] });
+  r.u16(0x0224a55a, 0x2100); // in battle (the demo is flagged like any battle)
+  partyAt(r, 0x02300000, [pk4({ pid: 0x5eed0001, species: 393, level: 5, tid: 1, sid: 2 })]);
+  partyAt(r, 0x02301000, [pk4({ pid: 0x5eed0002, species: 399, level: 2, tid: 3, sid: 4, hp: 12, maxHp: 12 })]);
+  let fight = battlePolls(pt, r, {});
+  assert.equal(fight.tutorial, true);
+  assert.equal(fight.enemy.species, 399);
+  assert.equal(playerBattle(fight), null, 'the tracker skips it');
+  // a real battle: the player's party copy is there – a trainer's lone Bidoof isn't the demo then
+  partyAt(r, 0x02302000, [pk4({ pid: 0x0a0a0001, species: 390, level: 9, hp: 20 })]);
+  fight = battlePolls(pt, r, {});
+  assert.equal(fight.tutorial, undefined);
+  // HeartGold: BattleSetup_New_Tutorial – Marill (Lv. 5) and Rattata (Lv. 2)
+  const hg = findEntry(TABLE, { platform: 'nds', code: 'IPKE' });
+  r = ram();
+  const hb = 0x0227c218;
+  r.u32(0x02111880, hb);
+  saveImage(r, hg, hb, { mons: [pk4({ pid: 0x0a0a0001, species: 155, level: 9 })] });
+  r.u16(0x02246f48, 0x2100);
+  partyAt(r, 0x02300000, [pk4({ pid: 0x5eed0003, species: 183, level: 5, tid: 1, sid: 2 })]);
+  partyAt(r, 0x02301000, [pk4({ pid: 0x5eed0004, species: 19, level: 2, tid: 3, sid: 4 })]);
+  fight = battlePolls(hg, r, {});
+  assert.equal(fight.tutorial, true);
+  assert.equal(fight.enemy.species, 19);
+});
+
+test('Platinum: the trainer\'s Pokémon that is out comes from the battle\'s own BattleMon – the AI picks the next one, not the party order', () => {
+  const pt = findEntry(TABLE, { platform: 'nds', code: 'CPUE' });
+  const r = ram();
+  const base = 0x02270000;
+  r.u32(0x02101d40, base);
+  const me = { pid: 0x0a0a0001, species: 390, level: 14 };
+  saveImage(r, pt, base, { mons: [pk4(me)] });
+  r.u16(0x0224a55a, 0x2100);
+  partyAt(r, 0x02302000, [pk4({ ...me, hp: 20 })]); // the battle's copy of the player's party
+  const foes = [
+    { pid: 0x7e000001, species: 396, level: 12, tid: 9, sid: 9 },
+    { pid: 0x7e000002, species: 399, level: 12, tid: 9, sid: 9 },
+    { pid: 0x7e000003, species: 403, level: 14, tid: 9, sid: 9 },
+  ];
+  const copy = (hps) => partyAt(r, 0x02300000, foes.map((f, i) => pk4({ ...f, hp: hps[i], maxHp: 34 })));
+  // battler 1's BattleMon (0xC0 each from battler 0's, whose personality sits at saveBase + battleActive)
+  const b1 = base + parseInt(pt.battleActive.pidOffsetFromSaveBase, 16) - 0x68 + 0xc0;
+  const out = (f, hp) => {
+    r.u16(b1, f.species);
+    r.m[b1 + 0x34 - 0x02000000] = f.level;
+    r.u32(b1 + 0x4c, hp);
+    r.u32(b1 + 0x50, 34);
+    r.u32(b1 + 0x68, f.pid);
+  };
+  copy([34, 34, 34]);
+  out(foes[0], 34);
+  const state = {};
+  assert.equal(battlePolls(pt, r, state).enemy.species, 396, 'the lead');
+  // the lead is down, the trainer hasn't sent the next one yet: still the lead (at 0 HP), not a guess
+  copy([0, 34, 34]);
+  out(foes[0], 0);
+  assert.equal(battlePolls(pt, r, state, 1).enemy.species, 396);
+  // the AI sends its third Pokémon – not the second in the party
+  out(foes[2], 34);
+  assert.equal(battlePolls(pt, r, state, 1).enemy.species, 403);
+  // only one is left standing: that one is next for sure
+  copy([0, 34, 0]);
+  out(foes[2], 0);
+  assert.equal(battlePolls(pt, r, state, 1).enemy.species, 399);
 });

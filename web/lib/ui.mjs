@@ -8,12 +8,15 @@ export const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
 export { html };
 
-export function Sprite({ id, shiny, size = 48, gen = 4, alt = '' }) {
+/** `form`: a DS Pokémon's alternate form (shared/forms.mjs) – its own sprite, else the species'. */
+export function Sprite({ id, shiny, size = 48, gen = 4, alt = '', form = 0 }) {
   const [src, setSrc] = useState(null);
-  useEffect(() => setSrc(spriteUrl(id, { gen, shiny })), [id, gen, shiny]);
+  useEffect(() => setSrc(spriteUrl(id, { gen, shiny, form })), [id, gen, shiny, form]);
   if (!id || !spriteUrl(id, { gen, shiny })) return html`<span class="sprite"><span style=${`display:inline-block;width:${size}px;height:${size}px`}></span></span>`;
+  // (one missing: the artwork-style one, then the species' – the form's first)
+  const chain = [...new Set([spriteUrl(id, { gen, shiny, form }), spriteUrl(id, { gen: 9, shiny, form }), spriteUrl(id, { gen, shiny }), spriteUrl(id, { gen: 9, shiny })])];
   return html`<span class="sprite"><img class="pixel" src=${src} width=${size} height=${size} alt=${alt} loading="lazy"
-    onError=${() => { const fb = spriteUrl(id, { gen: 9, shiny }); if (src !== fb) setSrc(fb); }} /></span>`;
+    onError=${() => { const i = chain.indexOf(src); if (i >= 0 && i + 1 < chain.length) setSrc(chain[i + 1]); }} /></span>`;
 }
 
 export function Types({ types }) {

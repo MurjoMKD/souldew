@@ -16,6 +16,31 @@
 - **.sgb files work like .gb files** (thanks to a player for the report). Some cartridge readers save Red, Blue and other
   Game Boy games as .sgb (Super Game Boy) files. souldew now takes them everywhere: adding files, drag & drop, zips,
   “Find ROMs on this computer”, recognising the game, ROM hacks, new runs and playing.
+- **Catching demos are no longer your encounter** (thanks to a player on Discord). In Emerald, Wally's catching lesson
+  in Petalburg City filed the Zigzagoon he catches his Ralts with as your Petalburg encounter, and your own team seemed
+  to vanish while it lasted. souldew now recognizes every game's catching demo – the old man in Viridian City (Red, Blue, Yellow,
+  FireRed, LeafGreen), Professor Oak's Pikachu in Yellow, the Dude on Route 29 (Gold, Silver, Crystal), Wally (Ruby,
+  Sapphire, Emerald), Dawn and Lucas (Diamond, Pearl, Platinum), Lyra and Ethan (HeartGold, SoulSilver), Professor
+  Juniper (Black, White) and Bianca (Black 2, White 2) – and the Poké Dude's battles on FireRed and LeafGreen's Teachy
+  TV. They never count as an encounter, a missed encounter or a dupe, show no catch chance and can't cost a Pokémon, and
+  your team stays on screen the whole time.
+- **Black and White: Rotom's forms in the battle helper** (thanks to a player on Discord). Heat, Wash, Frost, Fan and
+  Mow Rotom showed Rotom's normal types, so the matchups were wrong. souldew now reads a Pokémon's form in the DS games
+  and uses its types and sprite – Rotom, Wormadam, Shaymin's Sky Forme, Arceus with its plate, Castform and the other
+  forms – from your ROM where it has them, so randomized and hacked games show theirs. In Diamond, Pearl, Platinum,
+  HeartGold and SoulSilver Rotom's forms keep Electric/Ghost, as in those games.
+- **The trainer's next Pokémon is the one actually sent out** (thanks to a player on Discord). In Black, White, Black 2,
+  White 2, Diamond, Pearl and Platinum the battle helper jumped to the next Pokémon in the trainer's party as soon as one
+  went down – but trainers pick their next Pokémon themselves. souldew now follows the battle itself: the defeated
+  Pokémon stays until the trainer sends the next one, and the helper shows the one that really comes out.
+- **Black, White, Black 2 and White 2: catches sent to the PC are filed right away** (thanks to a player on Discord).
+  With a full team, a new catch only showed up once you took it out of the PC – and a wild Pokémon that got away was
+  never asked about, since souldew couldn't tell whether it had been caught. souldew now reads the PC live in these games
+  too, so both work like in the other games.
+- **HeartGold and SoulSilver: the level caps** (thanks to a player on Discord). Falkner's cap was 9 – his Pidgey – instead
+  of 13, his Pidgeotto, and the rival at Azalea Town's 20 instead of 18. Marking a gym leader as defeated on the board
+  now also moves the cap on to the next one, even before the badge has been read from the game – for every player of a
+  SoulLink.
 
 ## 2.8.0
 
