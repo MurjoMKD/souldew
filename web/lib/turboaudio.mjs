@@ -1047,7 +1047,13 @@ export class TurboMixer {
         this.retarget();
         this.emit({ type: 'stream', seg: this.seg.id, jump: false });
       }
-      // … and look for its loop as soon as there is enough of it
+      // … and look for its loop as soon as there is enough of it – unless it is the 3DS host's own sound: that one is the
+      // game itself at its normal pitch, effects and all, at most streamLag late. A loop found in it is made of sound the
+      // game raced through (k× the effects per second of music) and replaces what the game does next with a few seconds
+      // on repeat: in a Windows player's Pokémon Y video (2.8.x, 4×) a 5.66 s loop found in the first trainer battle played
+      // through the knock-out, the level-up and the prize money – an attack sound every 5.66 s, the battle's own sounds
+      // never. So with the own sound the stream plays on; loops recorded at 1× (the library) still take its place.
+      if (this.own) return;
       const u = this.usable();
       if (!u || u.n * HOP < this.minSeg) return;
       if (this.lastJob.segId === this.seg.id && this.frames - this.lastJob.frame < this.researchAfter()) return;
