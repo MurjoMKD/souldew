@@ -23,8 +23,9 @@ import { resolveId } from './library.mjs';
 import { isCtrExt } from '../../shared/romid.mjs';
 import { identifyCtr } from '../../shared/ctr.mjs';
 import { ctrZonePlaces } from '../../shared/live/ctrzones.mjs';
+import { musicIndex } from '../../shared/ctr/musicindex.mjs';
 
-const VERSION = 21; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header, 16: Gen 3 hacks with moved RAM, badge flags by the leaders' order, 17: Black/White zone headers, 18: catch rates with the types, the Game Boy enemy's status / catch rate / battle type moved with a hack's RAM, 19: the Game Boy map headers, Gen 3 map headers, Black 2/White 2 zone headers – the place sign checks the game's copy of the current map's header against them, 20: Yellow's map headers (249 maps) and its memory table entry found from its ROM header, 21: Gen 5 forms' types)
+const VERSION = 22; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header, 16: Gen 3 hacks with moved RAM, badge flags by the leaders' order, 17: Black/White zone headers, 18: catch rates with the types, the Game Boy enemy's status / catch rate / battle type moved with a hack's RAM, 19: the Game Boy map headers, Gen 3 map headers, Black 2/White 2 zone headers – the place sign checks the game's copy of the current map's header against them, 20: Yellow's map headers (249 maps) and its memory table entry found from its ROM header, 21: Gen 5 forms' types, 22: a 3DS game's music streams – shared/ctr/musicindex.mjs)
 const memo = new Map(); // ROM id → { result, failedAt? }
 /** A scan that failed is tried again after this long (a file a scanner held, a drive that slept). */
 const RETRY_FAILED_MS = (process.env.NODE_TEST_CONTEXT && Number(process.env.SLS_ROMDATA_RETRY_MS)) || 30000;
@@ -163,13 +164,15 @@ export function ctrData(file) {
     };
     const info = identifyCtr(readAt, extname(file).slice(1));
     const z = info ? ctrZonePlaces(readAt, info) : null;
+    // its music streams and their loops, for "music from the ROM" (web/lib/rommusic.mjs) – a few KB of each RomFS file
+    const music = info && !info.encrypted ? musicIndex(readAt) : null;
     // identifyCtr and ctrZonePlaces never throw – a read that failed on the way (a virus scanner or backup holding the
     // 3 GB file for a moment, a drive that went to sleep) read as "no zone table" and was cached on disk for good: the
     // place sign was gone in every later session of that game. It throws instead, so the next request reads again.
     if (ioError) throw ioError;
     // the header: which memory table entry reads it (shared/live/features.mjs) – the game code, else the title ID
     const header = info ? { system: '3ds', code: info.code || '', title: '', titleId: info.titleId || null } : null;
-    return { ...ROMDATA_NONE, data: z ? { gen: z.gen, ctr: { family: z.family, places: z.places } } : null, header };
+    return { ...ROMDATA_NONE, data: z ? { gen: z.gen, ctr: { family: z.family, places: z.places } } : null, header, music };
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -179,7 +182,7 @@ export function ctrData(file) {
 export const isCtrFile = (file) => Boolean(file) && isCtrExt(extname(file).slice(1));
 
 /** What romDataFor finds when there's nothing to find – also the list of fields the disk cache must give back. */
-export const ROMDATA_NONE = Object.freeze({ data: null, species: null, wram: null, gbMaps: null, types: null, caps: null, capsWhy: null, items: null, moves: null, header: null, vanilla: null });
+export const ROMDATA_NONE = Object.freeze({ data: null, species: null, wram: null, gbMaps: null, types: null, caps: null, capsWhy: null, items: null, moves: null, header: null, vanilla: null, music: null });
 /** A disk-cache entry back into romDataFor's result (every field of ROMDATA_NONE – a missing one would be lost on the
  * next start, as the own types of Too Many Types were). */
 export const fromRomCache = (v) => Object.fromEntries(Object.keys(ROMDATA_NONE).map((k) => [k, v[k] ?? null]));

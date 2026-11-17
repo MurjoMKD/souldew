@@ -23,6 +23,14 @@
 //                    8 FFSOUND s16 stereo samples – fast-forward only, next to AUDIO: the core's own sound as it comes
 //                             (the game's pace: its normal pitch and full bandwidth, k seconds of it per second) – the
 //                             turbo mixer's "Music continues" records it instead of slowing AUDIO back down (see ff_frame)
+//                    9 ROMFS  u64 frame, u32 count, u32 flags (1: that frame was fast-forwarded), count × { u64 serial,
+//                             u64 offset, u32 length, u32 tag, u64 frame } – the
+//                             game's RomFS reads (native/azahar-patch/souldew-romfs.patch), sent ten times a second right
+//                             before that frame's AUDIO, with the emulated frame each read was seen in (an empty one twice a
+//                             second keeps the page's clock): souldew's "music from the ROM" (web/lib/rommusic.mjs) sees
+//                             which music stream the game reads and how far
+//                   10 ROMDATA u32 id, u32 status (0 ok, 1 the core can't, 2 no such RomFS), u64 size of that RomFS, bytes –
+//                             the answer to ROMREAD
 //   souldew → host   1 INPUT  u32 joypad bits (RETRO_DEVICE_ID_JOYPAD_*), s16 lx, ly, rx, ry, s16 px, py (pointer,
 //                             -0x7fff…0x7fff over the whole picture), u8 pressed
 //                    2 SPEED  f32 (1 = normal, 0 = paused, ≥ 100 = as fast as possible)
@@ -32,6 +40,9 @@
 //                    9 WRITE  u32 id, u32 addr, u32 len (≤ 256, inside one 4 KB page of the game's heaps), the bytes
 //                             expected there now, the new bytes – a cheat; answered by the event { event: 'written',
 //                             id, ok, why } (see mem_write)
+//                   10 ROMREAD u32 id, u32 tag, u64 offset, u32 length (≤ 1 MB) – bytes of the RomFS `tag` (from a ROMFS
+//                             read) as the game sees it, its update's or a LayeredFS mod's included; answered by ROMDATA
+//                             between frames, at most ROMREAD_BUDGET bytes per frame
 // Memory reads go through souldew_read_memory (native/azahar-patch: the game process's virtual memory, page by page)
 // between two frames – never torn. Azahar's own core (no patch) runs the game without live data.
 // Builds on macOS, Linux and Windows (compat.h); scripts/build-ctr.mjs builds it.
@@ -1181,6 +1192,85 @@ static void send_mem(void) {
   free(b);
 }
 
+// ---- the game's RomFS reads (souldew's "music from the ROM") ------------------------------------------------------
+// The core notes every RomFS read the game makes (native/azahar-patch/souldew-romfs.patch, a lock-free ring); the host
+// drains it after each frame – tagged with that frame – and sends what came ten times a second (ROMFS), right before
+// the frame's sound, so the page knows exactly which sound the reads belong to. Nothing here waits on the core or
+// changes how the game runs. ROMREAD asks for RomFS bytes (the tables, a stream's header and data): read between
+// frames, a little per frame.
+static uint32_t (*souldew_romfs_reads)(uint64_t *out, uint32_t max);
+static uint32_t (*souldew_romfs_read)(uint32_t tag, uint64_t offset, void *out, uint32_t size);
+static uint64_t (*souldew_romfs_size)(uint32_t tag);
+#define ROMFS_MAX 1024     // reads kept between two sends (a loading screen reads hundreds a second)
+#define ROMREAD_MAX (1u << 20)
+#define ROMREAD_BUDGET (2u << 20) // bytes of ROMREAD answered per frame (a few ms of disk at most)
+#define MAX_ROMREADS 32
+static uint8_t romfs_buf[16 + ROMFS_MAX * 32];
+static uint32_t romfs_n;
+static uint64_t romfs_lost; // reads that didn't fit until the next send (diagnostics: the page sees the serial gap)
+static struct romread { uint32_t id, tag, len; uint64_t offset; } romreads[MAX_ROMREADS]; // (cmd_lock)
+static unsigned romreads_n;
+
+/** After a frame: the reads the core noted during it, into the next ROMFS message. */
+static void romfs_drain(uint64_t frame) {
+  if (!souldew_romfs_reads) return;
+  uint64_t r[3 * 64];
+  for (;;) {
+    uint32_t n = souldew_romfs_reads(r, 64);
+    for (uint32_t i = 0; i < n; i++) {
+      if (romfs_n >= ROMFS_MAX) {
+        romfs_lost++;
+        continue;
+      }
+      uint8_t *e = romfs_buf + 16 + romfs_n * 32;
+      const uint32_t len = (uint32_t)r[3 * i + 2], tag = (uint32_t)(r[3 * i + 2] >> 32);
+      memcpy(e, &r[3 * i], 8), memcpy(e + 8, &r[3 * i + 1], 8), memcpy(e + 16, &len, 4), memcpy(e + 20, &tag, 4), memcpy(e + 24, &frame, 8);
+      romfs_n++;
+    }
+    if (n < 64) break;
+  }
+}
+
+/** Ten times a second (reads came), or twice a second (an empty one: the frame, for the page's clock). */
+static int romfs_now; // send with the next frame (fast-forward started or ended: the page lines the music up again)
+static void romfs_send(uint64_t frame, double t, int turbo) {
+  static double last_send, last_empty;
+  if (!souldew_romfs_reads) return;
+  if (!romfs_now && (romfs_n ? (t - last_send < 0.1 && romfs_n < ROMFS_MAX) : t - last_empty < 0.5)) return;
+  romfs_now = 0;
+  last_send = last_empty = t;
+  const uint32_t flags = turbo ? 1 : 0; // (the page lines the music up with 1× frames only)
+  memcpy(romfs_buf, &frame, 8);
+  memcpy(romfs_buf + 8, &romfs_n, 4);
+  memcpy(romfs_buf + 12, &flags, 4);
+  send_msg(9, romfs_buf, 16 + romfs_n * 32);
+  romfs_n = 0;
+}
+
+/** The ROMREADs that came since the last frame (as many as the budget allows – the rest wait for the next one). */
+static void romfs_answer(void) {
+  static struct romread q[MAX_ROMREADS];
+  pthread_mutex_lock(&cmd_lock);
+  unsigned n = 0;
+  uint32_t bytes = 0;
+  while (n < romreads_n && (n == 0 || bytes + romreads[n].len <= ROMREAD_BUDGET)) bytes += romreads[n].len, q[n] = romreads[n], n++;
+  memmove(romreads, romreads + n, (romreads_n - n) * sizeof *romreads);
+  romreads_n -= n;
+  pthread_mutex_unlock(&cmd_lock);
+  static uint8_t *buf;
+  if (n && !buf) buf = malloc(16 + ROMREAD_MAX);
+  for (unsigned i = 0; i < n; i++) {
+    uint8_t head[16] = {0};
+    uint32_t status = 0, got = 0;
+    uint64_t size = 0;
+    if (!souldew_romfs_read || !buf) status = 1; // (no patched core – or out of memory: an answer without bytes)
+    else if (!(size = souldew_romfs_size(q[i].tag))) status = 2;
+    else if (q[i].len) got = souldew_romfs_read(q[i].tag, q[i].offset, buf, q[i].len);
+    memcpy(head, &q[i].id, 4), memcpy(head + 4, &status, 4), memcpy(head + 8, &size, 8);
+    send_msg2(10, head, 16, buf, got);
+  }
+}
+
 // ---- commands from souldew ---------------------------------------------------------------------------------------
 static float speed = 1.0f;
 static int want_save, want_quit, want_reset;
@@ -1270,6 +1360,20 @@ static void *reader(void *arg) {
         }
       }
       break;
+    case 10: // ROMREAD u32 id, u32 tag, u64 offset, u32 length
+      if (h[1] >= 20) {
+        struct romread r;
+        memcpy(&r.id, p, 4), memcpy(&r.tag, p + 4, 4), memcpy(&r.offset, p + 8, 8), memcpy(&r.len, p + 16, 4);
+        if (r.len > ROMREAD_MAX) r.len = ROMREAD_MAX;
+        if (romreads_n < MAX_ROMREADS) romreads[romreads_n++] = r;
+        else { // (too many at once: answered "can't" right away – the page asks again)
+          uint8_t b[16] = {0};
+          const uint32_t st = 1;
+          memcpy(b, &r.id, 4), memcpy(b + 4, &st, 4);
+          send_msg(10, b, 16);
+        }
+      }
+      break;
     }
     pthread_mutex_unlock(&cmd_lock);
     free(p);
@@ -1343,6 +1447,11 @@ int main(int argc, char **argv) {
   souldew_read_memory = dlsym(lib, "souldew_read_memory");
   souldew_title_id = dlsym(lib, "souldew_title_id");
   souldew_write_memory = dlsym(lib, "souldew_write_memory");
+  souldew_romfs_reads = dlsym(lib, "souldew_romfs_reads");
+  souldew_romfs_read = dlsym(lib, "souldew_romfs_read");
+  souldew_romfs_size = dlsym(lib, "souldew_romfs_size");
+  if (!souldew_romfs_read || !souldew_romfs_size) souldew_romfs_reads = NULL; // (all three or none)
+  logf_("RomFS reads (music from the ROM): %s", souldew_romfs_reads ? "yes" : "no (a core without souldew_romfs_reads)");
   logf_("memory writes (cheats): %s", souldew_write_memory ? "through the core (souldew_write_memory)"
                                       : souldew_read_memory ? "page scan (a core without souldew_write_memory)" : "none (Azahar's own core)");
 
@@ -1373,8 +1482,9 @@ int main(int argc, char **argv) {
   memset(&av, 0, sizeof av);
   core.get_system_av_info(&av);
   double fps = av.timing.fps > 1 ? av.timing.fps : 60.0;
-  send_event("{\"event\":\"loaded\",\"width\":%u,\"height\":%u,\"fps\":%.4f,\"sampleRate\":%.1f,\"maps\":%u,\"memory\":%s,\"renderer\":\"%s\"}",
-             av.geometry.base_width, av.geometry.base_height, fps, av.timing.sample_rate, memmap_n, souldew_read_memory ? "true" : "false", RENDERER_NAMES[renderer]);
+  send_event("{\"event\":\"loaded\",\"width\":%u,\"height\":%u,\"fps\":%.4f,\"sampleRate\":%.1f,\"maps\":%u,\"memory\":%s,\"renderer\":\"%s\",\"romfs\":%s}",
+             av.geometry.base_width, av.geometry.base_height, fps, av.timing.sample_rate, memmap_n, souldew_read_memory ? "true" : "false", RENDERER_NAMES[renderer],
+             souldew_romfs_reads ? "true" : "false");
 
   if (opt_bench) {
     double t0 = now_s();
@@ -1459,6 +1569,7 @@ int main(int argc, char **argv) {
     const int turbo = sp > 1.01f;
     if (turbo != was_turbo) { // a fresh start for the sped-up sound: the asked-for speed until it is measured
       was_turbo = turbo;
+      romfs_now = 1;
       ff_reset(turbo ? (sp > FF_MAXK ? FF_MAXK : sp) : 1);
       if (turbo) send_event("{\"event\":\"ffrate\",\"k\":%.4f}", ff.k);
     } else if (turbo && ff.kin > sp) {
@@ -1475,6 +1586,9 @@ int main(int argc, char **argv) {
     if (++frame == 120) stage = "running the game";
     stat_frames++;
     t = now_s();
+    romfs_drain(frame);
+    romfs_send(frame, t, turbo); // (before the frame's sound: the page lines the reads up with it)
+    romfs_answer();
     if (!turbo) {
       if (audio_n) send_msg(3, audio_buf, (uint32_t)(audio_n * sizeof *audio_buf));
       if (audio_n && frame > 120) {

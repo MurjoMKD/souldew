@@ -100,7 +100,12 @@ node scripts/build-ctr.mjs --host-only                # only the host (after cha
 node scripts/build-ctr.mjs --src ../azahar            # reuse an Azahar checkout (with submodules)
 ```
 
-The core build takes a while (Azahar from source, `--target citra_libretro`). `native/azahar-patch/souldew-memory.patch`
+The core build takes a while (Azahar from source, `--target citra_libretro`). The patches in `native/azahar-patch/` are
+applied in name order. `native/azahar-patch/souldew-romfs.patch` logs every RomFS read the game makes (offset, length,
+which RomFS – a lock-free ring in `IVFCFile::Read`) and adds `souldew_romfs_reads`, `souldew_romfs_read` and
+`souldew_romfs_size`: ctrhost sends the reads to the page (message 9) and reads RomFS bytes for it (ROMREAD/ROMDATA), so
+"music from the ROM" (`shared/ctr/rommusic.mjs`, `web/lib/rommusic.mjs`, `web/lib/romvoice.mjs`) knows which stream the
+game plays and where. `native/azahar-patch/souldew-memory.patch`
 adds `souldew_read_memory`, `souldew_write_memory` and `souldew_title_id` to the core: the libretro memory map only has
 what exists when the game loads, not the heaps where the Pokémon games keep their party, so without the patch the game
 runs but has no live data (the status says `liveMemory: false`). `souldew_write_memory` is the Rare Candy cheat's

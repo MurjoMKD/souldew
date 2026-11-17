@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { join, extname, resolve, basename, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { WEB_DIR, SHARED_DIR, CACHE_DIR, DATA_DIR, CONFIG_PATH, NODE_MODULES, DEV, LIBRARY_DIR } from './lib/paths.mjs';
-import { writeFileAtomic, httpError, safeFileName, safeJoin, realInside, logLine } from './lib/fsutil.mjs';
+import { writeFileAtomic, httpError, safeFileName, safeJoin, realInside, logLine, readRange } from './lib/fsutil.mjs';
 import { detectJava, uprStatus, installUpr, runBridge, inspectRom } from './lib/toolchain.mjs';
 import { preparePatchedRom, KNOWN_PATCHES } from './lib/roms.mjs';
 import { ROM_EXTENSIONS, PATCH_EXTENSIONS, isCtrExt, matchCatalog } from '../shared/romid.mjs';
@@ -1820,6 +1820,21 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
         if (path === '/api/ctr/cmd' && req.method === 'POST') {
           ctr.send(url.searchParams.get('id'), await readRaw(req, 300 * 1024 * 1024));
           return send(res, 200, { ok: true });
+        }
+        // 3DS music from the ROM (web/lib/rommusic.mjs): the game's music streams (found once per ROM in the ROM data
+        // worker, cached), and bytes of its RomFS straight from the file – only for the game file of that session
+        if (path === '/api/ctr/music' && req.method === 'GET') {
+          const rom = ctr.romOf(url.searchParams.get('id'));
+          const r = rom ? await romDataFor({ file: rom }, { sharedDir: SHARED_DIR, cacheDir: CACHE_DIR }) : null;
+          return send(res, 200, { music: r?.music || null });
+        }
+        if (path === '/api/ctr/romfs' && req.method === 'GET') {
+          const rom = ctr.romOf(url.searchParams.get('id'));
+          const r = rom ? await romDataFor({ file: rom }, { sharedDir: SHARED_DIR, cacheDir: CACHE_DIR }) : null;
+          const off = Number(url.searchParams.get('off'));
+          const len = Number(url.searchParams.get('len'));
+          if (!r?.music || !Number.isSafeInteger(off) || off < 0 || !Number.isSafeInteger(len) || len <= 0 || len > 64 * 1024 * 1024) throw httpError(400, 'bad range', 'badRequest');
+          return send(res, 200, readRange(rom, r.music.base + off, len));
         }
         // DS / GBA / GB native host: the same two binary channels
         if (path === '/api/native/stream' && req.method === 'GET') return native.attach(url.searchParams.get('id'), res);

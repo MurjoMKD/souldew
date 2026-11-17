@@ -33,6 +33,13 @@
   every few seconds through the knock-out, the level-up and the prize money, and the battle's real sounds never came.
   In the 3DS player the music and sounds of the game now go on as the game plays them, at their normal pitch and at
   most a second behind. Music souldew heard at normal speed still takes over as before.
+- **3DS: the game's own music during fast-forward – at its normal speed, pitch and quality.** With “Music continues”,
+  souldew now plays the music track straight from the game: it sees which music file the game reads and where it is in
+  it, and while you fast-forward that track plays on at its normal speed – the real recording, its own loop, the next
+  track faded in when the game changes music (a new route, a battle), short fanfares left out. When fast-forward ends it
+  finds the exact spot the game is at and fades back into the game's sound without a seam. It works from the game's own
+  files, so other languages, updates, ROM hacks with new or renamed tracks and mods work the same way; where it finds
+  no music file, fast-forward sounds as before.
 - **DS and the other games in the fast player: steady fast-forward sound** (thanks to a player on Discord). With
   “Sped-up original” or “Plain” the sound jumped in pitch four times a second and left out bits whenever the computer
   didn't hold the turbo speed exactly, so it seemed to drift away from the game. It now uses the same steady method as
