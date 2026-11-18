@@ -426,7 +426,7 @@ index 105780e..c031757 100644
          ${!fs && html`<button class="rail-toggle no-drag" onClick=${() => setHidden(!railHidden)} title=${`${railHidden ? t('rail.pin', 'Keep the sidebar open') : t('rail.hide', 'Hide the sidebar')} (${shortcut('Mod+B')})`}
              aria-label=${railHidden ? t('rail.pin', 'Keep the sidebar open') : t('rail.hide', 'Hide the sidebar')} aria-pressed=${!railHidden}><${Icon} name="sidebar" size=${16} /></button>`}
 diff --git a/web/i18n/de.json b/web/i18n/de.json
-index ee9f54e..55c887f 100644
+index ee9f54e..e81c8ec 100644
 --- a/web/i18n/de.json
 +++ b/web/i18n/de.json
 @@ -5,7 +5,7 @@
@@ -730,7 +730,13 @@ index ee9f54e..55c887f 100644
    "rail.hide": "Seitenleiste einklappen",
    "rail.liveHintGreen": "Grünes Licht: Dein Partner ist verbunden",
    "rail.liveHintGroup": "Grünes Licht: Jemand aus deiner Gruppe ist verbunden",
-@@ -1406,7 +1406,7 @@
+@@ -1401,12 +1401,12 @@
+   "restart.same3": "dein Partner bekommt sofort eine Einladung zum Mitmachen",
+   "restart.same3Group": "die anderen bekommen sofort eine Einladung zum Mitmachen",
+   "restart.text": "Damit entsteht der neue Run „{name}“:",
+-  "restart.title": "Neuer Versuch",
++  "restart.title": "Neuer Versuch / ROM wechseln",
+   "restart.joinedText": "{name} hat den neuen Versuch „{run}“ schon gestartet – und du bist dabei. Spielt dort weiter, dann bleibt ihr zusammen.",
    "restart.ownText": "Du hast den neuen Versuch „{run}“ schon gestartet. Spiel dort weiter – die anderen sind dazu eingeladen.",
    "restart.lostText": "{name} hat im selben Moment gestartet. Ihr spielt den neuen Run von {name} – deiner wurde beiseitegelegt.",
    "restart.openJoined": "„{run}“ öffnen",
@@ -1110,7 +1116,7 @@ index ee9f54e..55c887f 100644
    "ctl.movedTo": "„{action}“ liegt jetzt auf {key}.",
    "ctl.noKey": "Keine Taste",
    "ctl.noKeyNow": "„{action}“ hat jetzt keine Taste.",
-@@ -2790,23 +2790,57 @@
+@@ -2790,23 +2790,65 @@
    "play.loadConfirmKey": "Savestate {n} laden? Der Fortschritt seitdem geht verloren. Drück noch mal {key} oder klick auf Laden.",
    "set.controlsText2": "Tastenbelegung für den eingebauten Emulator und seine Kürzel. Klick auf eine Taste und drück dann die neue – jede Taste kann auf jede Spieltaste oder jedes Kürzel, und Kürzel lassen sich auch ausschalten. Änderungen gelten sofort, auch für ein laufendes Spiel.",
    "ctr.blackTitle": "Das 3DS-Spiel zeigt nur einen schwarzen Bildschirm",
@@ -1174,7 +1180,15 @@ index ee9f54e..55c887f 100644
 +  "sm.search": "ROMs durchsuchen ({n})",
 +  "sm.noMatch": "Keine ROM passt zur Suche.",
 +  "sm.chosen": "Gewählt",
-+  "sm.noRoms": "Noch keine ROM in deiner Bibliothek – füge oben eine hinzu."
++  "sm.noRoms": "Noch keine ROM in deiner Bibliothek – füge oben eine hinzu.",
++  "sm.switchRom": "ROM wechseln",
++  "sm.switchPick": "ROM für den neuen Versuch – wähl eine andere, um zu wechseln",
++  "sm.switchChip": "ROM-Wechsel",
++  "sm.switchInfo": "Dein Partner bekommt sofort eine Meldung und kann mitwechseln – ohne neuen Code.",
++  "sm.switchInfoGroup": "Die anderen bekommen sofort eine Meldung und können mitwechseln – ohne neuen Code.",
++  "sm.offerSwitch": "{name} hat auf die ROM „{rom}“ gewechselt. Willst du mitwechseln?",
++  "sm.offerSwitchHint": "Als Nächstes wählst du deine ROM – die mit dem gleichen Dateinamen ist schon ausgewählt. Kein neuer Code nötig.",
++  "sm.offerSwitchBtn": "Mitwechseln"
  }
 diff --git a/web/index.html b/web/index.html
 index 1ecca27..9b7d35d 100644
@@ -1189,6 +1203,33 @@ index 1ecca27..9b7d35d 100644
    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
    <link rel="stylesheet" href="/styles.css" />
    <link rel="stylesheet" href="/session-info.css" />
+diff --git a/web/lib/restart.mjs b/web/lib/restart.mjs
+index 62f5783..44d0c24 100644
+--- a/web/lib/restart.mjs
++++ b/web/lib/restart.mjs
+@@ -35,7 +35,11 @@ export async function restartRun(oldManifest, opts = {}) {
+   const mySlot = mySlotIn(old);
+   const hack = old.game?.hackId ? hackById(old.game.hackId) : null;
+   const game = old.game?.id ? gameById(old.game.id) : null;
+-  const body = restartRequest(old, {
++  // "Switch ROM" (this build): the new attempt is built from another ROM of the library – the request is made as if the
++  // old run had been that ROM's
++  const picked = opts.romId ? (library?.roms || []).find((x) => x.id === opts.romId) : null;
++  const from = picked ? { ...old, base: { ...(old.base || {}), crc: picked.crc, name: picked.name } } : old;
++  const body = restartRequest(from, {
+     library,
+     runs: opts.runs || status?.runs || [],
+     // doc entries are { v, t, by }; a rules change from the partner may not be in the manifest yet
+@@ -43,6 +47,9 @@ export async function restartRun(oldManifest, opts = {}) {
+     mySlot,
+     gameTitle: hack?.name || (game ? gameTitle(game) : null),
+   });
++  if (picked) body.romId = picked.id;
++  // every player builds their own game from their own ROM (this build): the one who restarts builds only theirs
++  if (body.mode !== 'nuzlocke') body.buildFor = [mySlot];
+   // "Start from my intro save" (server/lib/introsave.mjs): only this computer's player, only their own save
+   const res = await api.post('/api/runs/build', opts.introSave ? { ...body, introSave: true, introSlot: mySlot } : body);
+   // The Discord webhook is local (not part of the rules): carry this computer's over to the new run.
 diff --git a/web/lib/run.mjs b/web/lib/run.mjs
 index 792b343..ab75f80 100644
 --- a/web/lib/run.mjs
@@ -1445,7 +1486,7 @@ index 0000000..c19d505
 +  </div>`;
 +}
 diff --git a/web/views/play.mjs b/web/views/play.mjs
-index 02947f9..9124ca1 100644
+index 02947f9..226f631 100644
 --- a/web/views/play.mjs
 +++ b/web/views/play.mjs
 @@ -8,9 +8,10 @@ import { t, ago } from '../lib/i18n.mjs';
@@ -1460,7 +1501,15 @@ index 02947f9..9124ca1 100644
  import { MusicKeyTracker } from '/shared/live/location.mjs';
  import { probeGen67 } from '/shared/live/gen67.mjs';
  import { PlayHome } from './playhome.mjs';
-@@ -302,6 +303,9 @@ export function GameSession({ session, mode }) {
+@@ -23,6 +24,7 @@ import { FeatureCheck, romFeatures } from '/shared/live/features.mjs';
+ import { gymCapsFamily } from '/shared/routes.mjs';
+ import { shiftEntry } from '/shared/live/romwram.mjs';
+ import { RulesTab } from './board.mjs';
++import { RestartModal } from './restart.mjs';
+ import { CartInsert } from './cartinsert.mjs';
+ import { play as playCue } from '../lib/sound.mjs';
+ import { addSample, typicalReach, offeredSteps, beyondReach, HELD } from '../lib/reach.mjs';
+@@ -302,8 +304,12 @@ export function GameSession({ session, mode }) {
    usePresence(status?.config?.presence !== false && phase === 'running' && !ctrFail
      ? { system: target.system, mode: target.kind === 'run' ? runMode(manifest) : 'solo' } : null);
    const [fs, setFs] = useState(false);
@@ -1469,8 +1518,11 @@ index 02947f9..9124ca1 100644
 +  const setFocus = (v) => { setFocusState(v); ls.set('sl-focus', v); };
    const [confirmReset, setConfirmReset] = useState(false);
    const [rulesOpen, setRulesOpen] = useState(false);
++  const [switchOpen, setSwitchOpen] = useState(false); // "ROM wechseln" (this build): a new attempt with another ROM
    const [panelPrefs, setPanelPrefs] = useBattlePanelPrefs();
-@@ -1355,6 +1359,12 @@ export function GameSession({ session, mode }) {
+   // the running game's generation, from its memory table entry (a DS game is Gen 4 or 5, a 3DS game 6 or 7) – the system
+   // alone until the game is found
+@@ -1355,6 +1361,12 @@ export function GameSession({ session, mode }) {
      : !cheatsAllowed ? t('cheat.off', 'Cheats are off in this run’s rules.')
        : liveState.status !== 'live' ? t('cheat.waiting', 'Available once live tracking has found your team.')
          : battle?.enemy || demo ? t('cheat.inBattle', 'Not during a battle.') : null;
@@ -1483,7 +1535,7 @@ index 02947f9..9124ca1 100644
    const doCheat = async () => {
      setConfirmCheat(false);
      const e = emu();
-@@ -1390,7 +1400,15 @@ export function GameSession({ session, mode }) {
+@@ -1390,7 +1402,16 @@ export function GameSession({ session, mode }) {
    const battlePanel = html`<${BattlePanel} battle=${battle} mine=${myParty} gen=${gameGen} game=${liveGame} isRun=${isRun}
      side=${panelSide} collapsed=${panelPrefs.collapsed} onPrefs=${setPanelPrefs} hitsOpen=${panelPrefs.hits} noMoves=${features?.moves === 'no'} />`;
    const hasLeft = !!(isRun || here || (battle?.enemy && panelSide === 'left'));
@@ -1497,10 +1549,16 @@ index 02947f9..9124ca1 100644
 +        ${panelSide === 'left' && battlePanel}
 +      </aside>`;
 +  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${focus && mode === 'full' ? 'focus' : ''} ${isDs ? 'ds' : ''}`} data-v=${docVersion}>
++    ${switchOpen && manifest && doc && html`<${RestartModal} r=${manifest} rules=${doc.get('rules')} onClose=${() => setSwitchOpen(false)} />`}
      <div class="mini-head">
        <${Led} on=${phase === 'running' && !paused} color="green" /><span class="grow ellipsis">${target.label}</span>
        ${btn('close', t('play.close', 'Close game'), actions.close)}
-@@ -1403,11 +1421,7 @@ export function GameSession({ session, mode }) {
+@@ -1399,15 +1420,12 @@ export function GameSession({ session, mode }) {
+       <b class="ellipsis">${target.label}</b>
+       ${phase === 'running' && html`<${SaveAge} savedAt=${guard.savedAt} hasSave=${guard.hasSave} dirty=${guard.dirty} />`}
+       <span class="spacer"></span>
++      ${isRun && !solo && manifest && doc && html`<button class="btn small" onClick=${() => setSwitchOpen(true)}><${Icon} name="reset" size=${14} />${t('sm.switchRom', 'Switch ROM')}</button>`}
+       ${isRun && html`<button class="btn small ghost" onClick=${() => navigate('soullink', { run: target.runId })}><${Icon} name="link" size=${14} />${t('play.board', 'Board')}</button>`}
        <button class="btn small ghost" onClick=${actions.close}><${Icon} name="close" size=${14} />${t('play.close', 'Close game')}</button>
      </div>
      <div class=${`session-body ${hasLeft ? 'has-left' : ''}`}>
@@ -1513,7 +1571,7 @@ index 02947f9..9124ca1 100644
        <div class="session-stage">
          <div class="session-screen" onClick=${focusGame}>
            <div class="console-screen" style=${`--arn:${arn}`}>
-@@ -1465,8 +1479,9 @@ export function GameSession({ session, mode }) {
+@@ -1465,8 +1483,9 @@ export function GameSession({ session, mode }) {
            ${btn('camera', t('keys.screenshot', 'Screenshot') + hint('screenshot'), actions.screenshot)}
            <span class="cheat-wrap">
              ${btn('candy', t('cheat.title', 'Cheats'), () => setCheatOpen(!cheatOpen), { 'aria-expanded': cheatOpen, 'aria-haspopup': 'dialog' })}
@@ -1524,7 +1582,7 @@ index 02947f9..9124ca1 100644
                <button class="btn small" disabled=${!!cheatWhy} onClick=${() => { setCheatOpen(false); setConfirmCheat(true); }}>
                  <${Icon} name="candy" size=${14} />${t('cheat.rareCandy', 'Add 99 Rare Candies')}</button>
                <span class="tiny faint">${cheatWhy || (isRun && !solo ? t('cheat.hintRun', 'Everyone in the run sees it in the log. Save in the game to keep them.')
-@@ -1498,6 +1513,7 @@ export function GameSession({ session, mode }) {
+@@ -1498,6 +1517,7 @@ export function GameSession({ session, mode }) {
                  onClick=${() => saveDiagnostics({ turboAudio, speed: speed === MAX ? 'max' : speed, reach, steps: steps.map((x) => (x === MAX ? 'max' : x)), volume, perf: emu()?.perf?.() ?? null, audioGraph: emu()?.audioGraph?.() ?? null, pad: emu()?.padInfo?.() ?? null })}><${Icon} name="save" size=${14} />${t('play.diag', 'Save diagnostics')}</button>
              </div>`}
            </span>
@@ -1532,20 +1590,113 @@ index 02947f9..9124ca1 100644
            ${btn(fs ? 'shrink' : 'full', (fs ? t('play.exitFullscreen', 'Leave fullscreen') : t('keys.fullscreen', 'Fullscreen game')) + hint('fullscreen'), actions.fullscreen)}
          </div>
          ${slow && mode === 'full' && html`<${SlowNotice} slow=${slow} isDs=${isDs} native=${nativeOn} onClose=${() => { setSlow(null); focusGame(); }} />`}
-diff --git a/web/views/soullink.mjs b/web/views/soullink.mjs
-index 9720a43..9dc5e45 100644
---- a/web/views/soullink.mjs
-+++ b/web/views/soullink.mjs
-@@ -569,6 +569,57 @@ function ShinyOption({ support, gen, solo, hack, rate, trainers, onRate, onTrain
+diff --git a/web/views/restart.mjs b/web/views/restart.mjs
+index 26c24d6..9fd6858 100644
+--- a/web/views/restart.mjs
++++ b/web/views/restart.mjs
+@@ -12,7 +12,8 @@ import { api } from '../lib/api.mjs';
+ import { ShareButton, HallOfFame } from './liveshare.mjs';
+ import { IntroSaveOption, useIntroSave } from './introsave.mjs';
+ import { endEvent } from '../lib/liveshare.mjs';
+-import { numberedName, baseName, newAttempt, restartPlan, RESTART_KEY, CLAIM_TTL } from '/shared/restart.mjs';
++import { numberedName, baseName, newAttempt, restartPlan, RESTART_KEY, CLAIM_TTL, baseRomsFor } from '/shared/restart.mjs';
++import { RomPicker } from './rompicker.mjs';
  
- /** The new-run wizard of one mode: a SoulLink (2–4 players, invite at the end) or a solo Nuzlocke (rules step).
-  * A restart (`from`) always keeps the mode of the old run. */
+ /**
+  * r: the old run (status list entry or manifest). rules: its live doc rules, if at hand (board).
+@@ -20,7 +21,13 @@ import { numberedName, baseName, newAttempt, restartPlan, RESTART_KEY, CLAIM_TTL
+  * now), this joins theirs instead – two new runs would each get their own room, and the players would never meet.
+  */
+ export function RestartModal({ r, rules, onClose }) {
+-  const { navigate, setRunId, setMe, reloadStatus, toast, status, doc, manifest, me, offerRestart } = useApp();
++  const { navigate, setRunId, setMe, reloadStatus, toast, status, doc, manifest, me, offerRestart, library, closeSession } = useApp();
++  // "Switch ROM" (this build): the ROM the new attempt is built from – the run's own until another one is picked
++  const sys = r.game?.system || null;
++  const romChoices = (library?.roms || []).filter((x) => !sys || x.system === sys);
++  const [romId, setRomId] = useState(null);
++  const currentRom = baseRomsFor(r, library?.roms || [])[0] || null;
++  const pickedRom = romChoices.find((x) => x.id === romId) || currentRom;
+   const [busy, setBusy] = useState(false);
+   const [error, setError] = useState(null);
+   const [lost, setLost] = useState(false); // our build lost a same-moment race and was set aside
+@@ -61,8 +68,12 @@ export function RestartModal({ r, rules, onClose }) {
+   // randomized: a manifest knows; a run-list entry may not (then the line is left out rather than guessed)
+   const randomized = r.randomizer ? r.randomizer.enabled !== false : typeof r.randomized === 'boolean' ? r.randomized : null;
+   const close = () => !busy && onClose();
+-  const go = async () => {
++  // the running game belongs to the old run – close it first (asks when progress isn't saved in-game)
++  const go = () => (closeSession ? closeSession(doGo) : doGo());
++  const doGo = async () => {
+     setBusy(true);
++    // (started from the game screen the dialog closes with the game – this says the build goes on)
++    toast({ kind: 'ok', title: t('restart.building', 'Building the new games – this can take a minute …'), text: '' });
+     setError(null);
+     setLost(false);
+     try {
+@@ -72,7 +83,7 @@ export function RestartModal({ r, rules, onClose }) {
+       // open the old run – their app offers to join the new one
+       const out = await newAttempt({
+         doc: live, entry: live ? null : saved ?? null, me: mine, byName: myName, runs: status?.runs,
+-        build: () => restartRun(r, { runs: status?.runs, ...(rules ? { rules } : {}), introSave: !!intro && fromIntro }),
++        build: () => restartRun(r, { runs: status?.runs, ...(rules ? { rules } : {}), introSave: !!intro && fromIntro, romId: pickedRom?.id && pickedRom.id !== currentRom?.id ? pickedRom.id : null }),
+         discard: (id) => api.del(`/api/runs/${id}`),
+       });
+       if (!out.started) {
+@@ -127,6 +138,10 @@ export function RestartModal({ r, rules, onClose }) {
+       ${lost && html`<p class="small muted">${t('restart.lostText', '{name} started at the same moment. Their new run is the one to play – yours was set aside.', { name: who(plan.by, plan.byName) })}</p>`}
+       <p class="small muted restart-wait" role="status"><${Led} on color="amber" blink />${t('restart.waitHint', 'Keep souldew open – you don’t need to do anything else.')}</p>`
+     : html`
++    <${RomPicker} roms=${romChoices} value=${pickedRom?.id} onPick=${setRomId} disabled=${busy} label=${t('sm.switchPick', 'ROM for the new attempt – pick another one to switch')} />
++    ${!solo && pickedRom && currentRom && pickedRom.id !== currentRom.id && html`<p class="small"><span class="chip ok">${t('sm.switchChip', 'ROM switch')}</span> ${n > 2
++      ? t('sm.switchInfoGroup', 'The others get a message right away and can switch along – no new code needed.')
++      : t('sm.switchInfo', 'Your partner gets a message right away and can switch along – no new code needed.')}</p>`}
+     <p>${t('restart.text', 'This creates the new run “{name}”:', { name: next })}</p>
+     <ul class="restart-list">
+       <li>${solo ? t('restart.same1Solo', 'same game or ROM hack, same rules') : t('restart.same1', 'same game or ROM hack, same rules, same players')}</li>
+@@ -153,6 +168,8 @@ export function RestartOffer({ offer, onClose }) {
+   const [error, setError] = useState(null);
+   if (!offer) return null;
+   const name = offer.byName || (manifest?.players?.[offer.by]?.name) || (doc?.get(`player:${offer.by}`)?.name) || t('common.partner', 'Partner');
++  // "Switch ROM" (this build): the new attempt was built from another ROM than the old run's
++  const switched = !!(offer.pack?.base?.name && manifest?.base?.name && offer.pack.base.name !== manifest.base.name);
+   // The running game belongs to the old run – close it first (asks when progress isn't saved in-game).
+   const join = () => closeSession(doJoin);
+   const doJoin = async () => {
+@@ -174,7 +191,9 @@ export function RestartOffer({ offer, onClose }) {
+   };
+   return html`<${Modal} open=${true} onClose=${() => !busy && onClose()} title=${t('restart.offerTitle', '{name} started a new attempt', { name })}
+     footer=${html`<button class="btn ghost" disabled=${busy} onClick=${onClose}>${t('restart.offerLater', 'Later')}</button>
+-      <button class="btn primary" disabled=${busy} onClick=${join}><${Icon} name="reset" size=${14} />${t('restart.offerJoin', 'Join “{run}”', { run: offer.name })}</button>`}>
++      <button class="btn primary" disabled=${busy} onClick=${join}><${Icon} name="reset" size=${14} />${switched ? t('sm.offerSwitchBtn', 'Switch along') : t('restart.offerJoin', 'Join “{run}”', { run: offer.name })}</button>`}>
++    ${switched && html`<p><b>${t('sm.offerSwitch', '{name} switched to the ROM “{rom}”. Switch along?', { name, rom: offer.pack.base.name })}</b></p>
++      <p class="small muted">${t('sm.offerSwitchHint', 'Next you pick your ROM – the one with the same file name is already chosen. No new code needed.')}</p>`}
+     <p>${manifest?.randomizer?.enabled === false
+       ? t('restart.offerTextNoRnd', 'Same game, same rules – a fresh start. Your app builds the new game from your own copy, like the first time.')
+       : t('restart.offerText', 'Same game, same rules, same randomizer settings – new seeds. Your app builds the new game from your own copy, like the first time.')}</p>
+diff --git a/web/views/rompicker.mjs b/web/views/rompicker.mjs
+new file mode 100644
+index 0000000..bfc19bc
+--- /dev/null
++++ b/web/views/rompicker.mjs
+@@ -0,0 +1,63 @@
++// Stefan Mario SoulLink: picking the ROM for a run – already randomized ROMs, often many of the same game. Used by the
++// new-run page, the join page and "Switch ROM" (web/views/restart.mjs).
++import { html, useState } from '/vendor/htm-preact.mjs';
++import { useApp } from '../lib/ui.mjs';
++import { Icon } from '../lib/icons.mjs';
++import { t } from '../lib/i18n.mjs';
++import { api } from '../lib/api.mjs';
++
++const norm = (n) => String(n || '').split(/[\\/]/).pop().replace(/\.(nds|gba|gbc|gb|3ds|cci|cxi|zip|7z)$/i, '').trim().toLowerCase();
++/** Is library ROM `r` the file named `name` (with or without its extension)? */
++export const sameRomName = (r, name) => !!name && !!r && norm(r.name || r.id) === norm(name);
++
 +/**
 + * This build: pick the ROM for a run – already randomized ROMs, often many of the same game. Listed by file name (the
 + * game's title is the same for all of them), with a search field and buttons that add a ROM file or a whole folder of
 + * ROMs straight from here.
 + */
-+function RomPicker({ roms, value, onPick, disabled, label }) {
++export function RomPicker({ roms, value, onPick, disabled, label }) {
 +  const { library, reloadLibrary, toast } = useApp();
 +  const [q, setQ] = useState('');
 +  const [adding, setAdding] = useState(false);
@@ -1591,10 +1742,19 @@ index 9720a43..9dc5e45 100644
 +  </div>`;
 +}
 +
- function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode }) {
-   const { status, navigate, reloadStatus, setRunId, setMe } = useApp();
-   const { roms, patchesFor, preferredPatch, patchById, hackMissing } = useGameChoices(gameId || null, hackId);
-@@ -580,7 +631,8 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+diff --git a/web/views/soullink.mjs b/web/views/soullink.mjs
+index 9720a43..77cd92d 100644
+--- a/web/views/soullink.mjs
++++ b/web/views/soullink.mjs
+@@ -9,6 +9,7 @@ import { catalog, gameById, hackById, gameTitle, patchLabel, patchFits, patchDia
+ import { PRESETS, DEFAULT_VALUES, localizeRandomizer, randomSeed, sameSettings, withDefaults, fieldActive, fieldEnabled, forGen, buildValues } from '/shared/randomizer-options.mjs';
+ import { Cart, coverOf } from './library.mjs';
+ import { RestartModal } from './restart.mjs';
++import { RomPicker, sameRomName } from './rompicker.mjs';
+ import { mySlotIn } from '../lib/restart.mjs';
+ import { numberedName, baseRomsFor, needsIdenticalRom, pairJoin, joinGameId } from '/shared/restart.mjs';
+ import { pairMate } from '/shared/pair-titles.mjs';
+@@ -580,7 +581,8 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
    const [patchId, setPatchId] = useState(() => (from ? (from.patch ? (patchesFor(rom).find((p) => p.sha1 && p.sha1 === from.patch.sha1) || preferredPatch(rom))?.id || null : null)
      : (picked && patchesFor(rom).some((p) => p.id === picked.id) ? picked.id : preferredPatch(rom)?.id || null)));
    const [inspect, setInspect] = useState(null);
@@ -1604,7 +1764,7 @@ index 9720a43..9dc5e45 100644
    const oldValues = from?.randomizer?.values && Object.keys(from.randomizer.values).length ? from.randomizer.values : null;
    // (the old run's generation: options of other generations – Gen 7's totems – don't decide which preset it was)
    const fromGen = from ? gameById(from.game?.id)?.generation || genFromSystem(from.game) : null;
-@@ -609,7 +661,8 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+@@ -609,7 +611,8 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
    const [seedMode, setSeedMode] = useState(from?.randomizer?.sharedSeed ? 'shared' : 'separate');
    const [seeds, setSeeds] = useState(() => Object.fromEntries(ALL_SLOTS.map((s) => [s, randomSeed()])));
    const [names, setNames] = useState(() => (from ? namesFrom(from, status?.config?.playerName || '') : { p1: status?.config?.playerName || '', p2: '', p3: '', p4: '' }));
@@ -1614,7 +1774,7 @@ index 9720a43..9dc5e45 100644
    const [busy, setBusy] = useState(false);
    const [log, setLog] = useState([]);
    const [error, setError] = useState(null);
-@@ -625,13 +678,8 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+@@ -625,13 +628,8 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
      let off = false;
      setInspect(null);
      setError(null); // an error of the previous pick (e.g. a patch that didn't fit) doesn't apply to this one
@@ -1630,7 +1790,7 @@ index 9720a43..9dc5e45 100644
      return () => { off = true; };
    }, [rom?.id, patchId]);
  
-@@ -668,7 +716,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+@@ -668,7 +666,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
    const ctr = inspect?.patched?.system === '3ds';
    // the other title of the game's pair (HeartGold → SoulSilver): partners may play it in a run without randomizer or hack
    const mate = !solo && game && !hack && !customHack && !patchId ? gameById(pairMate(game.variantOf || game.id)) : null;
@@ -1639,7 +1799,7 @@ index 9720a43..9dc5e45 100644
    const seedSlots = solo || seedMode === 'shared' ? ['p1'] : slots;
    // a randomized 3DS game is rebuilt per world: how many games this computer builds, and their size
    const ctrGames = ctr && randomize && canRandomize ? (solo || buildFor !== 'all' ? 1 : seedMode === 'shared' ? 1 : count) : 0;
-@@ -756,81 +804,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+@@ -756,81 +754,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
  
      <section class="panel stack">
        <h2>${t('new.stepGame', '{n} · Game', { n: step.game })}</h2>
@@ -1722,7 +1882,7 @@ index 9720a43..9dc5e45 100644
      </section>
  
      <section class="panel stack">
-@@ -849,9 +823,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+@@ -849,9 +773,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
  
      <section class="panel stack">
        <h2>${t('new.stepBuild', '{n} · Build', { n: step.build })}</h2>
@@ -1733,7 +1893,7 @@ index 9720a43..9dc5e45 100644
        <${IntroSaveOption} intro=${intro} forget=${forgetIntro} on=${fromIntro} onChange=${setFromIntro} disabled=${busy} />
        ${ctrGames > 1 && html`<p class="small muted">${t('new.ctrGames', 'This builds {n} 3DS games on this computer{size}. “Only me” builds just yours – the others build their own.', { n: ctrGames, size: ctrGb ? ` (≈ ${(ctrGames * Number(ctrGb)).toFixed(1)} GB)` : '' })}</p>`}
        <div class="row">
-@@ -913,7 +885,10 @@ function JoinRun() {
+@@ -913,7 +835,11 @@ function JoinRun() {
    // (by CRC32 – a 3DS game, which has none, by its game: never just the first 3DS file of the library)
    const cat = catalog();
    const rootOf = (id) => cat.games.find((g) => g.id === id)?.variantOf || id;
@@ -1741,11 +1901,12 @@ index 9720a43..9dc5e45 100644
 +  // every ROM of the run's game in the library – the player picks theirs (own, already randomized ROMs: each their own)
 +  const romChoices = pack ? baseRomsFor(pack, library?.roms, rootOf) : [];
 +  const [romPickId, setRomPickId] = useState(null);
-+  const rom = romChoices.find((r) => r.id === romPickId) || romChoices[0];
++  // a ROM switch ("ROM wechseln"): the ROM with the same file name as the host's new one comes first – rom57 → rom57
++  const rom = romChoices.find((r) => r.id === romPickId) || romChoices.find((r) => sameRomName(r, pack?.base?.name)) || romChoices[0];
    // The release behind a CRC32, e.g. "Pokemon - Platinum Version (USA) (Rev 1)" – for messages a person can act on.
    const releaseOf = (crc) => {
      const c = String(crc || '').toUpperCase();
-@@ -1009,9 +984,10 @@ function JoinRun() {
+@@ -1009,9 +935,10 @@ function JoinRun() {
      </section>
      ${pack && html`<section class="panel stack">
        <h2>${t('join.step2', '2 · Your game')}</h2>
