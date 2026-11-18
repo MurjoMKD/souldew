@@ -1073,6 +1073,12 @@ static bool environment(unsigned cmd, void *data) {
 // the heaps the game allocates after loading are readable too. The official core only has the memory map from load.
 static bool (*souldew_read_memory)(uint32_t addr, void *out, uint32_t size);
 static uint64_t (*souldew_title_id)(void);
+// Save states that stop the game only while its memory is copied (native/azahar-patch/souldew-state.patch): zstd runs on
+// a thread of the core's own and the state goes out once it is packed, a few frames later. Without them (an older core)
+// retro_serialize_size packs it between two frames – 0.4 s without sound or pictures on a Windows PC.
+static int (*souldew_state_begin)(void);
+static int64_t (*souldew_state_poll)(void);
+static bool (*souldew_state_take)(void *out, size_t size);
 
 static const uint8_t *mem_at(uint32_t addr, uint32_t len) {
   for (unsigned i = 0; i < memmap_n; i++) {
@@ -1363,7 +1369,7 @@ static void *reader(void *arg) {
         speed = isfinite(v) ? v : v > 0 ? 1000.0f : 1.0f; // NaN would stop the frame pacing for good
       }
       break;
-    case 3: want_save = 1; break;
+    case 3: want_save++; break; // (each ask gets its answer)
     case 4: free(load_data); load_data = p; load_len = h[1]; p = NULL; break;
     case 5:
       if (h[1] >= 4) {
@@ -1505,6 +1511,10 @@ int main(int argc, char **argv) {
   SYM(unserialize, "retro_unserialize");
   souldew_read_memory = dlsym(lib, "souldew_read_memory");
   souldew_title_id = dlsym(lib, "souldew_title_id");
+  souldew_state_begin = dlsym(lib, "souldew_state_begin");
+  souldew_state_poll = dlsym(lib, "souldew_state_poll");
+  souldew_state_take = dlsym(lib, "souldew_state_take");
+  if (!souldew_state_begin || !souldew_state_poll || !souldew_state_take) souldew_state_begin = NULL;
   souldew_write_memory = dlsym(lib, "souldew_write_memory");
   souldew_romfs_reads = dlsym(lib, "souldew_romfs_reads");
   souldew_romfs_read = dlsym(lib, "souldew_romfs_read");
@@ -1627,12 +1637,34 @@ int main(int argc, char **argv) {
       free(ld);
       send_event("{\"event\":\"stateLoaded\",\"ok\":%s}", ok ? "true" : "false");
     }
+    static int state_asked; // save states asked for and not answered yet (the page asks one at a time)
+    static double state_t0, state_t1;
     if (save) {
-      size_t n = core.serialize_size();
-      uint8_t *b = n ? malloc(n) : NULL;
-      if (b && core.serialize(b, n)) send_msg(5, b, (uint32_t)n);
-      else send_msg(5, NULL, 0);
-      free(b);
+      if (souldew_state_begin) {
+        state_t0 = now_s();
+        const int r = state_asked ? 1 : souldew_state_begin(); // (one still being packed answers this ask too)
+        state_t1 = now_s();
+        if (r < 0) for (int i = 0; i < save; i++) send_msg(5, NULL, 0);
+        else state_asked += save;
+      } else {
+        const double t0 = now_s();
+        size_t n = core.serialize_size();
+        uint8_t *b = n ? malloc(n) : NULL;
+        const bool ok = b && core.serialize(b, n);
+        for (int i = 0; i < save; i++) send_msg(5, ok ? b : NULL, ok ? (uint32_t)n : 0);
+        free(b);
+        logf_("save state: %zu bytes, %.0f ms between two frames", n, (now_s() - t0) * 1000);
+      }
+    }
+    if (state_asked) {
+      const int64_t n = souldew_state_poll();
+      if (n != 0) {
+        uint8_t *b = n > 0 ? malloc((size_t)n) : NULL;
+        const bool ok = b && souldew_state_take(b, (size_t)n);
+        for (; state_asked > 0; state_asked--) send_msg(5, ok ? b : NULL, ok ? (uint32_t)n : 0);
+        free(b);
+        logf_("save state: %lld bytes, %.0f ms between two frames, packed %.0f ms later", (long long)n, (state_t1 - state_t0) * 1000, (now_s() - state_t1) * 1000);
+      }
     }
     if (sp <= 0.0f) { // paused
       compat_sleep(0.01);

@@ -224,3 +224,69 @@ test('3DS session: 10 speed toggles, loaded states, a pause and a mode change �
   assert.ok(w.ring.stats.breaks >= 8, `(they ran dry ${w.ring.stats.breaks} times, as breaks)`);
   assert.equal(w.ring.prime, Math.round(SR * 0.06), '`prime` still at its base (until 2.8.2: 240 ms after such a session)');
 });
+
+test('3DS save states: the host stops 0.4 s for each (the play view’s resume state) – with the page’s { type: \'stall\' } none counts as a gap or grows the delay; without it each did', () => {
+  const run = (tell) => {
+    const { w, send } = worklet({ prime: Math.round(SR * 0.06), primeMax: Math.round(SR * 0.18), trim: Math.round(SR * 0.04), maxLag: Math.round(SR * 0.25) });
+    send({ type: 'paused', paused: false });
+    send({ type: 'speed', ratio: 1 });
+    const q = [];
+    let next = 0;
+    let frozen = 0;
+    const saves = [10, 30, 50, 70];
+    const L = new Float32Array(128);
+    const R = new Float32Array(128);
+    const lags = [];
+    for (let b = 0, t = 0; t < 85; b++, t = (b * 128) / SR) {
+      if (saves.length && saves[0] <= t) {
+        saves.shift();
+        if (tell) send({ type: 'stall' });
+        frozen = t + 0.02 + 0.4; // the next frame boundary, then 0.4 s copying (an older core on a Windows PC)
+      }
+      if (t >= frozen) {
+        if (next < t - 0.1) next = t; // (ctrhost.c: no racing to catch up more than 100 ms)
+        for (; next <= t; next += 1 / 59.83) q.push([next + 0.004, 547]);
+      }
+      while (q.length && q[0][0] <= t) send(new Float32Array(q.shift()[1] * 2).fill(0.1));
+      w.process([], [[L, R]]);
+      lags.push([t, (w.ring.lag / SR) * 1000]);
+    }
+    const after = lags.filter(([t]) => t >= 72 && t < 85).map(([, x]) => x);
+    return { w, after: after.reduce((x, y) => x + y, 0) / after.length };
+  };
+  const told = run(true);
+  assert.equal(told.w.ring.stats.underruns, 0, 'no gap counted');
+  assert.equal(told.w.ring.prime, Math.round(SR * 0.06), '`prime` stays at its base');
+  assert.ok(told.after < 75, `${told.after.toFixed(0)} ms behind afterwards`);
+  const untold = run(false);
+  assert.ok(untold.w.ring.stats.underruns >= 3 && untold.w.ring.prime > told.w.ring.prime, `(without it: ${untold.w.ring.stats.underruns} gaps, prime ${Math.round((untold.w.ring.prime / SR) * 1000)} ms – the 2-minute hole a Windows player saw, with the delay growing each time)`);
+});
+
+test('quiet moments: { type: \'quiet\', id, ms } is answered once `ms` in a row came out nearly silent – not during the music, once only, and not after a cancel', () => {
+  const { w, send, out } = worklet();
+  const loud = (n) => send(new Float32Array(n * 2).fill(0.2));
+  const quiet = (n) => send(new Float32Array(n * 2).fill(0.002));
+  send({ type: 'quiet', id: 7, ms: 200 });
+  for (let i = 0; i < 100; i++) {
+    loud(128);
+    out();
+  }
+  assert.equal(w.posted.filter((m) => m.type === 'quiet').length, 0, 'music: no quiet moment');
+  for (let i = 0; i < 30; i++) {
+    quiet(128);
+    out();
+  }
+  assert.equal(w.posted.filter((m) => m.type === 'quiet').length, 0, '~120 ms quiet: not yet');
+  for (let i = 0; i < 40; i++) {
+    quiet(128);
+    out();
+  }
+  assert.deepEqual(w.posted.filter((m) => m.type === 'quiet'), [{ type: 'quiet', id: 7 }], '200 ms quiet: told, once');
+  send({ type: 'quiet', id: 8, ms: 200 });
+  send({ type: 'quiet', cancel: true });
+  for (let i = 0; i < 100; i++) {
+    quiet(128);
+    out();
+  }
+  assert.equal(w.posted.filter((m) => m.type === 'quiet').length, 1, 'cancelled: not told');
+});

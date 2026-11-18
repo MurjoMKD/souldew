@@ -16,9 +16,15 @@
 // the numbers also go to the page once a
 // second ({ type: 'ring' }).
 // A speed step, another sound mode, the game going on after a pause and 'clear' (a loaded state, a reset) are breaks the
-// player asked for: the buffer starts over from its base depth (JitterRing.rebase) instead of taking them for gaps.
+// player asked for: the buffer starts over from its base depth (JitterRing.rebase) instead of taking them for gaps. So is
+// { type: 'stall' }: the 3DS host stops between two frames to copy a save state (the play view's resume state, every
+// 2 minutes) – the sound may run dry for a moment, which must not grow the buffer (and the sound's delay) for good.
+// { type: 'quiet', id, ms } asks to be told ({ type: 'quiet', id }) once `ms` in a row came out nearly silent – the play
+// view takes its resume state then, where the host's moment without sound isn't heard ({ type: 'quiet', cancel }: not).
 import { TurboMixer } from './turboaudio.mjs';
 import { JitterRing } from './jitterring.mjs';
+
+const QUIET_PEAK = 0.01; // −40 dBFS: below it a moment counts as quiet (a scene change, a menu, a fade)
 
 class NativeAudio extends AudioWorkletProcessor {
   constructor(options) {
@@ -35,6 +41,8 @@ class NativeAudio extends AudioWorkletProcessor {
     // what came out over the last ~0.1 s (RMS and peak of both channels) – the probe reports it (tests, diagnostics)
     this.level = { rms: 0, peak: 0 };
     this.lvl = { sum: 0, peak: 0, n: 0 };
+    this.quietRun = 0; // frames in a row that came out (nearly) silent
+    this.quiet = null; // { id, need }: tell the page once `need` frames in a row were silent ({ type: 'quiet' })
     this.tap = null; // { l, r, at } – a recording of what comes out ({ type: 'tap' }: tests, diagnostics)
     this.told = 0; // frames since the buffer's numbers last went to the page (once a second: diagnostics)
     this.mixer = new TurboMixer(sampleRate, { onEvent: (e) => this.port.postMessage({ type: 'mixer', e: e.type === 'probe' ? { ...e, level: this.level } : e }) });
@@ -67,6 +75,8 @@ class NativeAudio extends AudioWorkletProcessor {
       if (this.ring.paused && !m.paused) this.ring.rebase();
       this.ring.paused = !!m.paused;
     }
+    if (m.type === 'quiet') this.quiet = m.cancel ? null : { id: m.id, need: Math.round(((m.ms ?? 200) / 1000) * sampleRate) };
+    if (m.type === 'stall') this.ring.rebase(); // (the host stops a moment for a save state: no gap, see ctrplayer getState)
     if ((m.type === 'speed' && m.ratio !== this.asked.speed) || (m.type === 'mode' && m.mode !== this.asked.mode)) {
       if (this.asked[m.type] !== null) this.ring.rebase();
       this.asked[m.type] = m.type === 'speed' ? m.ratio : m.mode;
@@ -188,14 +198,21 @@ class NativeAudio extends AudioWorkletProcessor {
 
   measure(L, R, n) {
     const m = this.lvl;
+    let bp = 0;
     for (let i = 0; i < n; i++) {
       const a = L[i];
       const b = R[i];
       m.sum += a * a + b * b;
       const p = Math.max(Math.abs(a), Math.abs(b));
-      if (p > m.peak) m.peak = p;
+      if (p > bp) bp = p;
     }
+    if (bp > m.peak) m.peak = bp;
     m.n += n;
+    this.quietRun = bp < QUIET_PEAK ? this.quietRun + n : 0;
+    if (this.quiet && this.quietRun >= this.quiet.need) {
+      this.port.postMessage({ type: 'quiet', id: this.quiet.id });
+      this.quiet = null;
+    }
     if (m.n >= sampleRate / 10) {
       this.level = { rms: Math.sqrt(m.sum / (2 * m.n)), peak: m.peak };
       m.sum = m.peak = m.n = 0;

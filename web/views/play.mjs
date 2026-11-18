@@ -803,6 +803,22 @@ export function GameSession({ session, mode }) {
         }
       });
     };
+    // 3DS: the host stops the game for a moment to copy the state (~0.1–0.4 s without sound, lib/ctrplayer.mjs getState)
+    // – it is taken at the next quiet moment of the game's sound (a scene change, a menu, a fade), or after `within` ms
+    // without one. Other systems: right away (their states are small).
+    let autoWaiting = false;
+    const autoWhenQuiet = async (within) => {
+      if (autoWaiting) return; // (the one waiting saves what is current by then)
+      autoWaiting = true;
+      try {
+        await emu()?.quietMoment?.(within);
+      } catch {
+        // take it anyway
+      } finally {
+        autoWaiting = false;
+      }
+      if (!stopped) saveAuto(grabState());
+    };
     const grabState = () => {
       try {
         return emu()?.ready ? emu().getState() : null;
@@ -845,7 +861,7 @@ export function GameSession({ session, mode }) {
           if (h && h !== lastSave) {
             lastSave = h;
             guard.saved(h);
-            saveAuto(grabState()); // "where you left off" goes with the new save
+            autoWhenQuiet(30000); // "where you left off" goes with the new save
           }
           if (!stopped) setTimeout(stampLoop, 4000);
         };
@@ -889,7 +905,7 @@ export function GameSession({ session, mode }) {
             // start from the save instead
           }
         }
-        autoTimer = setInterval(() => document.visibilityState === 'visible' && saveAuto(grabState()), 120000);
+        autoTimer = setInterval(() => document.visibilityState === 'visible' && autoWhenQuiet(180000), 120000);
       }
       // battery save → disk every 5 s when it changed
       const saveLoop = async () => {

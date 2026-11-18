@@ -112,7 +112,12 @@ while the page asks (SFX) and the game fast-forwards, leaves them out of the fra
 game's own DSP state and final mix stay as they are). `souldew_audio_frame_flags` says per DSP frame whether a new sound
 began (key-on) and whether the music was left out; ctrhost sends that sound as message 11 and the turbo mixer plays each
 sound at 1× over the ROM track (`web/lib/sfxplayer.mjs`). An unknown voice streaming queued buffers for half a second
-makes the core leave everything in (the page then plays no sound effects). `native/azahar-patch/souldew-memory.patch`
+makes the core leave everything in (the page then plays no sound effects). `native/azahar-patch/souldew-state.patch`
+adds `souldew_state_begin`, `souldew_state_poll` and `souldew_state_take`: a save state stops the game only while its
+memory (~300 MB) is copied into one buffer, zstd and the header run on a thread, and ctrhost answers SAVE a few frames
+later (Azahar's own `retro_serialize_size` packs it between two frames: 0.4 s without sound on a Windows PC – every
+2 minutes, when the play view took its resume state). The play view also takes that state at a quiet moment of the
+game's sound (`quietMoment` in `web/lib/ctrplayer.mjs`). `native/azahar-patch/souldew-memory.patch`
 adds `souldew_read_memory`, `souldew_write_memory` and `souldew_title_id` to the core: the libretro memory map only has
 what exists when the game loads, not the heaps where the Pokémon games keep their party, so without the patch the game
 runs but has no live data (the status says `liveMemory: false`). `souldew_write_memory` is the Rare Candy cheat's

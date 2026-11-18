@@ -28,6 +28,11 @@
   “Plain” also comes sooner: about an eighth of a second behind the picture when the game holds its speed, instead of
   almost half a second, and never more than about a third of a second – when the game gets faster, it catches up within
   a moment instead of trailing the picture by seconds.
+- **3DS: no more short hole in the sound every two minutes.** While you play, souldew keeps a “where you left off”
+  state every two minutes – and for that the 3DS game stood still for almost half a second on some computers, so the
+  music and sound effects dropped out for a moment (and came a little later afterwards). The game now stands still only
+  for the part that can’t wait (copying its memory), and souldew takes the state when the game is quiet for a moment
+  (a scene change, a menu, a fade) whenever there is one – the sound stays in step with the picture afterwards.
 - **Fast-forward at Max sounds clean** (thanks to a player on Discord). With “Sped-up original” or “Plain” the sound at
   Max turned into a harsh, garbled mush. It still sounds like fast-forward, but clean now – in the 3DS player and in
   the fast player (DS and the other games there).

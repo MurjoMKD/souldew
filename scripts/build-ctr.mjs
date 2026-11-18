@@ -38,7 +38,8 @@ const cross = plat !== `${process.platform}-${process.arch}`;
 const out = join(root, 'tools', 'ctr', plat);
 const ext = os === 'win32' ? 'dll' : os === 'darwin' ? 'dylib' : 'so';
 // native/azahar-patch/*.patch, applied in name order: souldew-memory (live data), souldew-romfs (music from the ROM),
-// souldew-sfx (the sound effects without the music while fast-forwarding)
+// souldew-sfx (the sound effects without the music while fast-forwarding), souldew-state (save states that stop the game
+// only while its memory is copied – zstd runs on a thread)
 const PATCH_NAMES = readdirSync(join(root, 'native', 'azahar-patch')).filter((n) => n.endsWith('.patch')).sort();
 const PATCHES = PATCH_NAMES.map((n) => join(root, 'native', 'azahar-patch', n));
 const coreStamp = () => stampOf(TAG, PATCH_NAMES, (n) => readFileSync(join(root, 'native', 'azahar-patch', n), 'utf8'));
@@ -97,11 +98,11 @@ function buildCore() {
     copyFileSync(given, target);
   } else {
     const src = azahar;
-    // apply the patches once each, in name order (a checkout that has one already is left as it is)
-    for (const patch of PATCHES) {
-      const check = spawnSync('git', ['apply', '--reverse', '--check', patch], { cwd: src });
-      if (check.status !== 0) run('git', ['apply', patch], { cwd: src });
-    }
+    // apply the patches once each, in name order. A checkout that has some already: the last one applied is the last
+    // whose reverse applies (an earlier one's doesn't once a later patch changed lines around it) – the rest go on top.
+    let applied = 0;
+    for (let k = PATCHES.length; k > 0 && !applied; k--) if (spawnSync('git', ['apply', '--reverse', '--check', PATCHES[k - 1]], { cwd: src }).status === 0) applied = k;
+    for (const patch of PATCHES.slice(applied)) run('git', ['apply', patch], { cwd: src });
     const build = join(src, 'build-souldew');
     if (cross) throw new Error('building the core for another platform: use --core with a built one (.github/workflows/ctr.yml builds them)');
     const extra = process.platform === 'darwin' ? [`-DCMAKE_OSX_ARCHITECTURES=${process.arch === 'arm64' ? 'arm64' : 'x86_64'}`] : process.platform === 'linux' ? ['-DENABLE_LTO=OFF'] : [];

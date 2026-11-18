@@ -243,7 +243,7 @@ layout();
 // of the bandwidth (the sped-up sound is low-passed before it is sped up) – at 4× muffled music.
 // The worklet keeps more in hand than for the fast player: the sound comes between pictures of up to 7 MB.
 const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
-const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [], taps: [], rate: 0, exact: false, win: null, last: null, rom: null, romQueue: [] };
+const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [], taps: [], quiet: new Map(), quietId: 0, rate: 0, exact: false, win: null, last: null, rom: null, romQueue: [] };
 /**
  * The worklet's buffer (frames, lib/jitterring.mjs): start / restart once 60 ms are there – more after each gap, up to
  * 180 ms, for a PC whose sound arrives late now and then (back down after 6 s without one – longer after repeated gaps
@@ -293,6 +293,7 @@ async function startAudio(rate) {
     await audio.ctx.audioWorklet.addModule('/lib/native-audio-worklet.mjs');
     audio.node = new AudioWorkletNode(audio.ctx, 'native-audio', { outputChannelCount: [2], processorOptions: { init: audioInit(), ...ringFor(audio.ctx.sampleRate) } });
     audio.node.port.onmessage = (e) => {
+      if (e.data?.type === 'quiet') return audio.quiet.get(e.data.id)?.(true);
       if (e.data?.type === 'tap') return audio.taps.splice(0).forEach((f) => f(e.data));
       if (e.data?.type === 'ring') return ringWindow(e.data.ring);
       const ev = e.data?.e;
@@ -616,6 +617,7 @@ async function pump() {
   // the host is gone: nothing answers what's still waiting (a quick save / load would hang the play view)
   st.ended = true;
   waiters.state.splice(0).forEach((f) => f(null));
+  [...audio.quiet.values()].forEach((f) => f(false));
   waiters.loaded.splice(0).forEach((f) => f(false));
   [...waiters.written.values()].forEach((f) => f(false));
   if (st.error) return;
@@ -839,10 +841,39 @@ window.__emu = {
   frames: () => (st.hostFrames ? st.hostFrame : st.frames),
   fastForward: () => st.speed > 1,
   ffRatio: () => (st.speed > 1 ? st.speed : 3),
-  /** A save state (the host serializes between two frames). */
+  /**
+   * A save state. The host copies it between two frames (a 3DS core with souldew-state.patch packs it on a thread
+   * meanwhile; an older one packs it right there – 0.4 s without sound on a Windows PC): the sound may run dry for that
+   * moment, so the worklet takes it as a break, not as a gap that grows its buffer.
+   */
   getState() {
     if (st.ended) return Promise.resolve(null);
+    tellAudio({ type: 'stall' });
     return ask(waiters.state, CMD.SAVE, undefined, null, (b) => (b && b.length ? b : null));
+  },
+  /**
+   * Resolves true at the next quiet moment of the game's sound (200 ms in a row below −40 dBFS: a scene change, a menu,
+   * a fade), right away while paused or fast-forwarding (the music then doesn't come from the host), false after
+   * `within` ms without one – the play view takes its resume state then, so the host's moment without sound (getState)
+   * falls where it isn't heard.
+   */
+  quietMoment(within = 180000) {
+    if (st.ended || !audio.node) return Promise.resolve(false);
+    if (st.paused || st.speed > 1) return Promise.resolve(true);
+    return new Promise((res) => {
+      const id = ++audio.quietId;
+      const done = (v) => {
+        clearTimeout(timer);
+        audio.quiet.delete(id);
+        res(v);
+      };
+      const timer = setTimeout(() => {
+        tellAudio({ type: 'quiet', cancel: true });
+        done(false);
+      }, within);
+      audio.quiet.set(id, done);
+      tellAudio({ type: 'quiet', id, ms: 200 });
+    });
   },
   loadState(u8) {
     if (st.ended) return Promise.resolve(false);
@@ -995,6 +1026,7 @@ async function start() {
   pump().catch((e) => {
     st.ended = true;
     waiters.state.splice(0).forEach((f) => f(null));
+    [...audio.quiet.values()].forEach((f) => f(false));
     waiters.loaded.splice(0).forEach((f) => f(false));
     [...waiters.written.values()].forEach((f) => f(false));
     showError(t('ctr.failed', 'The 3DS game can’t run: {why}', { why: e.message }));
