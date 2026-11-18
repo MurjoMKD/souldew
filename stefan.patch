@@ -1,0 +1,1718 @@
+diff --git a/electron/main.mjs b/electron/main.mjs
+index a538cae..589d22e 100644
+--- a/electron/main.mjs
++++ b/electron/main.mjs
+@@ -16,15 +16,15 @@ const here = dirname(fileURLToPath(import.meta.url));
+ const MAC = process.platform === 'darwin';
+ const WIN = process.platform === 'win32';
+ const LINUX = process.platform === 'linux';
+-app.setName('souldew');
++app.setName('Stefan Mario SoulLink');
+ // Windows: the same id as the installer's shortcuts (package.json → build.appId), so the taskbar groups the window
+ // with a pinned shortcut and shows the app's own name and icon.
+-if (WIN) app.setAppUserModelId('studio.soullink.app');
++if (WIN) app.setAppUserModelId('de.stefanmario.soullink');
+ // The app used to be called "SoulLink Studio": its data folder keeps that name, so runs, saves, settings and the
+ // web storage (localStorage, EmulatorJS' IndexedDB) carry over after the rename. (macOS: ~/Library/Application
+ // Support/SoulLink Studio, Windows: %APPDATA%\SoulLink Studio, Linux: ~/.config/SoulLink Studio – $XDG_CONFIG_HOME.)
+ // An explicit --user-data-dir (tests, a second profile) still wins.
+-if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', join(app.getPath('appData'), 'SoulLink Studio'));
++if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', join(app.getPath('appData'), 'Stefan Mario SoulLink'));
+ // Boot chime + emulator audio without a prior click.
+ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+ // The game must keep running when the window is covered by another app: without these Chromium treats an
+@@ -164,7 +164,7 @@ function createWindow() {
+   }
+   win = new BrowserWindow({
+     ...initialWindowSize(workArea),
+-    title: 'souldew',
++    title: 'Stefan Mario SoulLink',
+     backgroundColor: '#1b1a1f',
+     ...windowChrome(),
+     // the window / taskbar icon when running from source (`npm run app`) – and always on Linux, where X11 window
+@@ -310,7 +310,7 @@ function buildMenu(labels = {}) {
+   const settings = { label: l('settings', t('menu.settings', 'Settings …')), accelerator: 'CmdOrCtrl+,', click: nav('settings') };
+   const template = [
+     ...(MAC ? [{
+-      label: 'souldew',
++      label: 'Stefan Mario SoulLink',
+       submenu: [
+         { role: 'about' },
+         { type: 'separator' },
+diff --git a/package.json b/package.json
+index 9642be4..81b7576 100644
+--- a/package.json
++++ b/package.json
+@@ -1,8 +1,8 @@
+ {
+-  "name": "souldew",
++  "name": "stefan-mario-soullink",
+   "version": "2.8.2",
+   "private": true,
+-  "description": "souldew – Pokémon SoulLinks (2–4 players) and Nuzlockes with a built-in emulator, live sync and a game library",
++  "description": "Stefan Mario SoulLink – based on souldew (GPL-3.0): Pokémon SoulLinks with a built-in emulator, live sync and Action Replay cheats",
+   "license": "GPL-3.0-or-later",
+   "homepage": "https://github.com/souldewapp/souldew",
+   "repository": {
+@@ -31,7 +31,7 @@
+     "matrix": "node scripts/rom-matrix.mjs --live"
+   },
+   "updates": {
+-    "repo": "souldewapp/souldew",
++    "repo": "",
+     "feed": "https://github.com/{repo}/releases/latest/download/latest.json",
+     "publicKey": "MCowBQYDK2VwAyEANG4Ng/ROJT1UWYJ0XQ0k3ZfY3mYKKmiiF0tunuAzlBA="
+   },
+@@ -53,10 +53,11 @@
+   },
+   "main": "electron/main.mjs",
+   "desktopName": "souldew.desktop",
+-  "author": "souldew",
++  "author": "Stefan Dimoski (based on souldew)",
+   "build": {
+-    "appId": "studio.soullink.app",
+-    "productName": "souldew",
++    "appId": "de.stefanmario.soullink",
++    "productName": "Stefan Mario SoulLink",
++    "executableName": "StefanMarioSoulLink",
+     "copyright": "souldew",
+     "asar": false,
+     "directories": {
+@@ -164,7 +165,7 @@
+           ]
+         }
+       ],
+-      "artifactName": "souldew-${version}-win-${arch}-setup.${ext}",
++      "artifactName": "StefanMarioSoulLink-${version}-win-${arch}-setup.${ext}",
+       "extraResources": [
+         {
+           "from": "tools/jre/win32-x64",
+@@ -193,9 +194,9 @@
+       "runAfterFinish": true,
+       "createDesktopShortcut": true,
+       "createStartMenuShortcut": true,
+-      "shortcutName": "souldew",
++      "shortcutName": "Stefan Mario SoulLink",
+       "include": "build/installer.nsh",
+-      "uninstallDisplayName": "souldew",
++      "uninstallDisplayName": "Stefan Mario SoulLink",
+       "deleteAppDataOnUninstall": false,
+       "installerIcon": "build/icon.ico",
+       "uninstallerIcon": "build/icon.ico"
+diff --git a/server/app.mjs b/server/app.mjs
+index 5500cd3..c2828a0 100644
+--- a/server/app.mjs
++++ b/server/app.mjs
+@@ -528,7 +528,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
+   /** The save watch of a run as the page gets it – with whether souldew can read and edit (the graveyard) its saves. */
+   const watchStatus = (runId, manifest) => ({ ...watcher.status(runId), readable: !!parserOfRun(manifest), graveyard: isHgssRun(manifest) });
+   // the anonymous "playing now" heartbeat – it reads the setting on every call, so "off" applies at once
+-  const playingNow = presenceCounter({ enabled: () => loadConfig().presence !== false });
++  const playingNow = presenceCounter({ enabled: () => false }) /* this build: nothing is sent to souldew's servers */;
+   const live = new LiveBridge(emit);
+   // 3DS in souldew's own player (server/lib/ctr.mjs): one game at a time
+   const ctr = new CtrSessions();
+diff --git a/shared/live/arcodes.mjs b/shared/live/arcodes.mjs
+new file mode 100644
+index 0000000..f877cbf
+--- /dev/null
++++ b/shared/live/arcodes.mjs
+@@ -0,0 +1,177 @@
++// Action Replay DS codes – the same codes people type into DeSmuME or melonDS, run by souldew itself.
++//
++// Why not the core's own cheat support: the fast player (native host) has none, and the browser cores differ in what
++// they accept. Like shared/live/cheats.mjs this works on any memory source with read(addr, len) / write(addr, bytes)
++// on console bus addresses – both DS players mirror the whole main RAM (0x02000000, 4 MB). souldew runs every switched
++// on code a few times per second, which is what a real Action Replay does too (once per frame).
++//
++// Supported: the usual Action Replay DS code types (EnHacklopedia "Action Replay DS" / melonDS AREngine):
++//   0/1/2  write 32/16/8 bit            3–6  32-bit conditions      7–A  16-bit masked conditions
++//   B      offset = [addr + offset]     C0   loop                   D0/D1/D2 end-if / next / end-all
++//   D3–DC  offset and data register     E    patch bytes            F    copy bytes
++// Only main RAM is read or written. Conditions on the buttons (0x04000130 / 0x027FFFA8 – "press L+R") always count
++// as true: in souldew the switch is the activator.
++
++const RAM_BASE = 0x02000000;
++const RAM_MASK = 0x3fffff; // 4 MB, mirrored up to 0x02FFFFFF
++const KEY_ADDRS = new Set([0x04000130, 0x04000136, 0x027fffa8, 0x023fffa8]);
++
++/** A main-RAM bus address for `a` (mirrors folded in), or -1 outside main RAM. */
++export const ramAddr = (a) => ((a >>> 24) === 2 ? RAM_BASE + (a & RAM_MASK) : -1);
++
++/**
++ * Parse an Action Replay code: lines of two 8-digit hex words ("12345678 9ABCDEF0"), separated by spaces, new lines or
++ * "+" (RetroArch's style). Returns { ok, lines: [[a, b], …] } or { ok: false, error, at } with the bad word.
++ */
++export function parseAR(text) {
++  const words = String(text || '').replace(/[:;,]/g, ' ').split(/[\s+]+/).filter(Boolean);
++  if (!words.length) return { ok: false, error: 'empty' };
++  for (const w of words) if (!/^[0-9a-f]{8}$/i.test(w)) return { ok: false, error: 'word', at: w };
++  if (words.length % 2) return { ok: false, error: 'odd' };
++  const lines = [];
++  for (let i = 0; i < words.length; i += 2) lines.push([parseInt(words[i], 16) >>> 0, parseInt(words[i + 1], 16) >>> 0]);
++  return { ok: true, lines };
++}
++
++/** The code tidied up: one "XXXXXXXX YYYYYYYY" line per instruction (upper case) – or the text as it was if it doesn't parse. */
++export function formatAR(text) {
++  const p = parseAR(text);
++  if (!p.ok) return String(text || '').trim();
++  const h = (v) => v.toString(16).toUpperCase().padStart(8, '0');
++  return p.lines.map(([a, b]) => `${h(a)} ${h(b)}`).join('\n');
++}
++
++const MAX_STEPS = 100000; // loops can't hang the page
++
++/**
++ * Run parsed code lines once against `mem` ({ read, write }). Writes only where the value differs (fewer messages to the
++ * native host). Returns { writes, skipped } – `skipped`: instructions that touched memory outside main RAM.
++ */
++export function runAR(lines, mem) {
++  let offset = 0;
++  let data = 0;
++  let cond = true;
++  const stack = [];
++  let loop = null; // { start, count }
++  let writes = 0;
++  let skipped = 0;
++  let steps = 0;
++
++  const rd = (addr, n) => {
++    const a = ramAddr(addr >>> 0);
++    if (a < 0) return null;
++    const b = mem.read(a, n);
++    if (!b || b.length < n) return null;
++    let v = 0;
++    for (let i = n - 1; i >= 0; i--) v = (v * 256) + b[i];
++    return v >>> 0;
++  };
++  const wrBytes = (addr, bytes) => {
++    const a = ramAddr(addr >>> 0);
++    if (a < 0 || ramAddr((addr + bytes.length - 1) >>> 0) < 0) { skipped++; return; }
++    const cur = mem.read(a, bytes.length);
++    if (cur && cur.length === bytes.length && cur.every((x, i) => x === bytes[i])) return;
++    if (mem.write(a, bytes) !== false) writes++;
++  };
++  const wr = (addr, v, n) => {
++    const b = new Uint8Array(n);
++    for (let i = 0; i < n; i++) b[i] = (v >>> (8 * i)) & 0xff;
++    wrBytes(addr, b);
++  };
++  const push = (test) => { stack.push(cond); cond = cond && test; };
++  // address of a condition: 0 in the code means "the offset"
++  const condAddr = (a) => (a & 0x0fffffff) || offset;
++
++  for (let i = 0; i < lines.length; i++) {
++    if (++steps > MAX_STEPS) break;
++    const [a, b] = lines[i];
++    const op = a >>> 28;
++    const addr = (a & 0x0fffffff) + offset;
++    if (op <= 2) {
++      if (cond) wr(addr, b, op === 0 ? 4 : op === 1 ? 2 : 1);
++      continue;
++    }
++    if (op >= 3 && op <= 6) {
++      const ca = condAddr(a);
++      if (KEY_ADDRS.has(ca >>> 0)) { push(true); continue; }
++      const v = rd(ca, 4);
++      push(v != null && (op === 3 ? b > v : op === 4 ? b < v : op === 5 ? b === v : b !== v));
++      continue;
++    }
++    if (op >= 7 && op <= 0xa) {
++      const ca = condAddr(a);
++      if (KEY_ADDRS.has(ca >>> 0)) { push(true); continue; }
++      const raw = rd(ca, 2);
++      const mask = (~(b >>> 16)) & 0xffff;
++      const want = b & 0xffff;
++      const v = raw == null ? null : raw & mask;
++      push(v != null && (op === 7 ? want > v : op === 8 ? want < v : op === 9 ? want === v : want !== v));
++      continue;
++    }
++    if (op === 0xb) {
++      if (cond) { const v = rd(addr, 4); offset = v ?? 0; if (v == null) cond = false; }
++      continue;
++    }
++    if (op === 0xc) {
++      const sub = (a >>> 24) & 0xf;
++      if (sub === 0) loop = { start: i, count: b };
++      else if (sub === 6 && cond) wr(b, offset, 4); // C6: store the offset
++      continue;
++    }
++    if (op === 0xd) {
++      const sub = (a >>> 24) & 0xf;
++      switch (sub) {
++        case 0: cond = stack.length ? stack.pop() : true; break; // end-if
++        case 1: // next (loop), conditions stay
++          if (loop && loop.count > 0) { loop.count--; i = loop.start; } else loop = null;
++          break;
++        case 2: // next and end everything
++          if (loop && loop.count > 0) { loop.count--; i = loop.start; } else { loop = null; offset = 0; data = 0; cond = true; stack.length = 0; }
++          break;
++        case 3: if (cond) offset = b; break;
++        case 4: if (cond) data = (data + b) >>> 0; break;
++        case 5: if (cond) data = b; break;
++        case 6: if (cond) { wr(b + offset, data, 4); offset += 4; } break;
++        case 7: if (cond) { wr(b + offset, data & 0xffff, 2); offset += 2; } break;
++        case 8: if (cond) { wr(b + offset, data & 0xff, 1); offset += 1; } break;
++        case 9: if (cond) data = rd(b + offset, 4) ?? 0; break;
++        case 0xa: if (cond) data = rd(b + offset, 2) ?? 0; break;
++        case 0xb: if (cond) data = rd(b + offset, 1) ?? 0; break;
++        case 0xc: if (cond) offset = (offset + b) >>> 0; break;
++        default: break;
++      }
++      offset >>>= 0;
++      continue;
++    }
++    if (op === 0xe) {
++      // E: `b` bytes follow, 8 per line
++      const n = b;
++      const nLines = Math.ceil(n / 8);
++      if (cond) {
++        const bytes = new Uint8Array(n);
++        for (let k = 0; k < n; k++) {
++          const line = lines[i + 1 + (k >> 3)];
++          if (!line) break;
++          const word = line[(k >> 2) & 1];
++          bytes[k] = (word >>> (8 * (k & 3))) & 0xff;
++        }
++        if (n) wrBytes(addr, bytes);
++      }
++      i += nLines;
++      continue;
++    }
++    if (op === 0xf) {
++      if (cond && b > 0 && b <= 0x10000) {
++        const src = ramAddr(offset >>> 0);
++        const got = src >= 0 ? mem.read(src, b) : null;
++        if (got && got.length === b) wrBytes(a & 0x0fffffff, got);
++        else skipped++;
++      }
++      continue;
++    }
++  }
++  return { writes, skipped };
++}
++
++/** Is this cheat code valid for souldew (parses, and isn't empty)? */
++export const validAR = (text) => parseAR(text).ok;
+diff --git a/test/arcodes.test.mjs b/test/arcodes.test.mjs
+new file mode 100644
+index 0000000..c415e5b
+--- /dev/null
++++ b/test/arcodes.test.mjs
+@@ -0,0 +1,95 @@
++// Action Replay DS codes (shared/live/arcodes.mjs): parsing and the code types on a synthetic main RAM.
++import { test } from 'node:test';
++import assert from 'node:assert/strict';
++import { parseAR, formatAR, runAR, ramAddr, validAR } from '../shared/live/arcodes.mjs';
++
++/** 4 MB main RAM at 0x02000000, like both DS players' read/write. */
++function ram() {
++  const b = new Uint8Array(0x400000);
++  const m = {
++    b,
++    writes: [],
++    read(a, n) { const o = a - 0x02000000; return o < 0 || o + n > b.length ? null : b.slice(o, o + n); },
++    write(a, bytes) { const o = a - 0x02000000; if (o < 0 || o + bytes.length > b.length) return false; b.set(bytes, o); m.writes.push(a); return true; },
++    u32(a) { const o = a - 0x02000000; return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0; },
++    set32(a, v) { const o = a - 0x02000000; for (let i = 0; i < 4; i++) b[o + i] = (v >>> (8 * i)) & 0xff; },
++  };
++  return m;
++}
++const run = (code, m) => runAR(parseAR(code).lines, m);
++
++test('parse: spaces, new lines and "+" all separate; bad input is named', () => {
++  assert.deepEqual(parseAR('02000000 00000063\n12000004 0000FFFF').lines, [[0x02000000, 0x63], [0x12000004, 0xffff]]);
++  assert.deepEqual(parseAR('02000000 00000063+12000004 0000FFFF').lines.length, 2);
++  assert.equal(parseAR('0200000 00000063').error, 'word');
++  assert.equal(parseAR('02000000').error, 'odd');
++  assert.equal(parseAR('  ').error, 'empty');
++  assert.equal(formatAR('02000000 63000000+b2000024 00000000'), '02000000 63000000\nB2000024 00000000');
++  assert.ok(validAR('D2000000 00000000'));
++});
++
++test('main RAM only, mirrors folded in', () => {
++  assert.equal(ramAddr(0x027ffe0c), 0x023ffe0c);
++  assert.equal(ramAddr(0x04000130), -1);
++});
++
++test('0/1/2 write 32/16/8 bit, only when the value differs', () => {
++  const m = ram();
++  run('02000010 12345678\n12000020 0000BEEF\n22000030 000000AA', m);
++  assert.equal(m.u32(0x02000010), 0x12345678);
++  assert.equal(m.u32(0x02000020), 0xbeef);
++  assert.equal(m.b[0x30], 0xaa);
++  assert.equal(m.writes.length, 3);
++  run('02000010 12345678', m);
++  assert.equal(m.writes.length, 3, 'same value: no second write');
++});
++
++test('B pointer + D2: the typical Pokémon code', () => {
++  const m = ram();
++  m.set32(0x02000024, 0x02210000); // the pointer the game keeps
++  run('B2000024 00000000\n10000100 000003E7\nD2000000 00000000\n02000040 00000001', m);
++  assert.equal(m.u32(0x02210100) & 0xffff, 999);
++  assert.equal(m.u32(0x02000040), 1, 'D2 reset the offset');
++});
++
++test('conditions and end-if', () => {
++  const m = ram();
++  m.set32(0x02000000, 5);
++  run('52000000 00000005\n02000010 00000001\nD0000000 00000000\n52000000 00000006\n02000014 00000001\nD0000000 00000000\n02000018 00000001', m);
++  assert.equal(m.u32(0x02000010), 1, 'equal: runs');
++  assert.equal(m.u32(0x02000014), 0, 'not equal: skipped');
++  assert.equal(m.u32(0x02000018), 1, 'after D0: runs again');
++  // 16-bit masked: upper half is the mask of bits to ignore
++  m.set32(0x02000004, 0x1234);
++  run('92000004 FF000034\n02000020 00000001\nD2000000 00000000', m);
++  assert.equal(m.u32(0x02000020), 1);
++});
++
++test('button conditions count as pressed', () => {
++  const m = ram();
++  run('94000130 FCFF0000\n02000010 00000007\nD2000000 00000000', m);
++  assert.equal(m.u32(0x02000010), 7);
++});
++
++test('loops with the data register, E patch and F copy', () => {
++  const m = ram();
++  run('D3000000 02000100\nC0000000 00000003\nD5000000 00000063\nD6000000 00000000\nD2000000 00000000', m);
++  for (let i = 0; i < 4; i++) assert.equal(m.u32(0x02000100 + i * 4), 0x63, `slot ${i}`);
++  run('E2000200 00000006\n44332211 00006655', m);
++  assert.deepEqual([...m.b.slice(0x200, 0x206)], [0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
++  run('D3000000 02000200\nF2000300 00000006\nD2000000 00000000', m);
++  assert.deepEqual([...m.b.slice(0x300, 0x306)], [0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
++});
++
++test('nothing outside main RAM is written', () => {
++  const m = ram();
++  const r = run('04000000 00000001', m);
++  assert.equal(r.skipped, 1);
++  assert.equal(m.writes.length, 0);
++});
++
++test('an endless loop stops', () => {
++  const m = ram();
++  run('C0000000 FFFFFFFF\nD1000000 00000000', m);
++  assert.ok(true);
++});
+diff --git a/web/app.mjs b/web/app.mjs
+index 105780e..c031757 100644
+--- a/web/app.mjs
++++ b/web/app.mjs
+@@ -749,14 +749,12 @@ function App() {
+   const playingIn = session ? (session.target.runId ? sectionOf(session.target.runId) : 'library') : null;
+   const here = route.route !== 'play' ? route.route
+     : showsSession && session ? playingIn : rp.run ? sectionOf(rp.run) : 'library';
++  // (this build: Nuzlocke, Stream and Trophies left out of the sidebar – the pages still work if linked)
+   const NAV = [
+     { id: 'library', label: t('nav.library', 'Library'), icon: 'library', accent: '#e0a458' },
+     // the board's to-do count shows at the section of the open run
+     { id: 'soullink', label: t('nav.soullink', 'SoulLink'), icon: 'link', count: manifest && runMode(manifest) === 'soullink' ? warnCount : 0, accent: '#d77fc6' },
+-    { id: 'nuzlocke', label: t('nav.nuzlocke', 'Nuzlocke'), icon: 'nuzlocke', count: manifest && runMode(manifest) === 'nuzlocke' ? warnCount : 0, accent: '#e8735f' },
+     { id: 'link', label: t('nav.link', 'Connection'), icon: 'signal', accent: '#6f9bff' },
+-    { id: 'stream', label: t('nav.stream', 'Stream'), icon: 'stream', accent: '#ff5b6e', onAir: streamer },
+-    { id: 'trophies', label: t('nav.trophies', 'Trophies'), icon: 'trophy', accent: '#e7c24f' },
+     { id: 'settings', label: t('nav.settings', 'Settings'), icon: 'gear', accent: '#9a8ee6' },
+     { id: 'guide', label: t('nav.guide', 'Help'), icon: 'help', accent: '#4fb8c4' },
+   ];
+@@ -769,7 +767,7 @@ function App() {
+       ${railHidden && !fs && !peek && html`<button class="rail-open no-drag" onClick=${() => setHidden(false)} title=${`${t('rail.show', 'Show the sidebar')} (${shortcut('Mod+B')})`} aria-label=${t('rail.show', 'Show the sidebar')}><${Icon} name="sidebar" size=${18} /></button>`}
+       <aside class=${`rail ${native ? '' : 'web'} ${native ? 'drag' : ''}`} onPointerEnter=${folded ? peekIn : undefined} onPointerLeave=${folded ? peekOut : undefined}
+         onfocusin=${folded ? peekIn : undefined} onfocusout=${folded ? (e) => { if (!e.currentTarget.contains(e.relatedTarget)) peekOut(); } : undefined}>
+-        <div class="brand no-drag"><${AppMark} size=${34} /><div class="name">souldew</div>
++        <div class="brand no-drag"><${AppMark} size=${34} /><div class="name">SM SoulLink</div>
+           ${streamer && html`<a href="#/stream" class="onair on brand-onair" title=${t('stream.onAirHint', 'Streamer mode is on – codes, keys, paths and spoilers are covered')}>${t('stream.live', 'LIVE')}</a>`}</div>
+         ${!fs && html`<button class="rail-toggle no-drag" onClick=${() => setHidden(!railHidden)} title=${`${railHidden ? t('rail.pin', 'Keep the sidebar open') : t('rail.hide', 'Hide the sidebar')} (${shortcut('Mod+B')})`}
+             aria-label=${railHidden ? t('rail.pin', 'Keep the sidebar open') : t('rail.hide', 'Hide the sidebar')} aria-pressed=${!railHidden}><${Icon} name="sidebar" size=${16} /></button>`}
+diff --git a/web/i18n/de.json b/web/i18n/de.json
+index ee9f54e..55c887f 100644
+--- a/web/i18n/de.json
++++ b/web/i18n/de.json
+@@ -5,7 +5,7 @@
+   "battle.catchCrit": "Kritische Fänge sind nicht eingerechnet – sie machen einen Fang nur wahrscheinlicher.",
+   "battle.catchDarkGrass": "Im dunklen Gras ist es schwerer, bis du viele Arten gefangen hast.",
+   "battle.catchNoStatus": "Status nicht gelesen",
+-  "battle.catchNoStatusTip": "souldew kann Statusprobleme in diesem Spiel nicht lesen – schlafend, gefroren, paralysiert, vergiftet oder verbrannt ist es leichter zu fangen als angezeigt.",
++  "battle.catchNoStatusTip": "SM SoulLink kann Statusprobleme in diesem Spiel nicht lesen – schlafend, gefroren, paralysiert, vergiftet oder verbrannt ist es leichter zu fangen als angezeigt.",
+   "battle.catchTip": "Ein Ball, so wie dieses Spiel rechnet: Fangrate {rate}, {hp}/{max} KP, Level {level}{status}.",
+   "battle.chart": "{mon} gegen Typen",
+   "battle.danger": "Was {mon} trifft",
+@@ -86,7 +86,7 @@
+   "board.waiting": "wartet",
+   "board.warnLess": "Weniger anzeigen",
+   "board.warnMore": "{n} weitere Hinweise",
+-  "boot.failed": "souldew konnte nicht starten",
++  "boot.failed": "SM SoulLink konnte nicht starten",
+   "boot.failedText": "Der lokale Server antwortet nicht oder eine Datendatei fehlt. Prüf, ob die App noch läuft, und versuch es dann noch mal.",
+   "boss.blue": "Blau",
+   "boss.bruno": "Bruno (Top Vier)",
+@@ -132,7 +132,7 @@
+   "cheat.inBattle": "Nicht während eines Kampfes.",
+   "cheat.max": "Du trägst schon so viele Sonderbonbons, wie das Spiel erlaubt.",
+   "cheat.notFound": "Dein Beutel war gerade nicht im Speicher des Spiels zu finden. Versuch es außerhalb von Menüs und Kämpfen noch mal.",
+-  "cheat.notFoundVersion": "Dein Beutel war nicht dort, wo diese Version des Spiels ihn ablegt – souldew kennt dieses Spiel-Update vielleicht noch nicht.",
++  "cheat.notFoundVersion": "Dein Beutel war nicht dort, wo diese Version des Spiels ihn ablegt – SM SoulLink kennt dieses Spiel-Update vielleicht noch nicht.",
+   "cheat.off": "Cheats sind in den Regeln dieses Runs aus.",
+   "cheat.openRules": "Regeln öffnen",
+   "cheat.rareCandies": "{n} Sonderbonbon|{n} Sonderbonbons",
+@@ -159,9 +159,9 @@
+   "code.aria": "Einladungscode {code}",
+   "code.attempts": "Abgelehnte oder fehlgeschlagene Versuche: {count} von 3 – danach wird der Code gesperrt.",
+   "code.cancel": "Code abbrechen",
+-  "code.confirmAsk": "Frag {name} nach den 4 Ziffern, die souldew dort anzeigt, und gib sie hier ein:",
++  "code.confirmAsk": "Frag {name} nach den 4 Ziffern, die SM SoulLink dort anzeigt, und gib sie hier ein:",
+   "code.confirmFirst": "Gib zuerst die 4 Ziffern ein",
+-  "code.confirmMismatch": "Die Ziffern stimmen nicht. Prüf sie noch einmal mit {name} – wenn souldew dort wirklich diese anzeigt, sitzt jemand dazwischen: lehn ab.",
++  "code.confirmMismatch": "Die Ziffern stimmen nicht. Prüf sie noch einmal mit {name} – wenn SM SoulLink dort wirklich diese anzeigt, sitzt jemand dazwischen: lehn ab.",
+   "code.confirmTellHost": "Sag dem Host diese 4 Ziffern – er gibt sie ein, um dich reinzulassen:",
+   "code.conflict": "Zwei verschiedene Personen haben diesen Code benutzt – er wurde sicherheitshalber abgebrochen.",
+   "code.connecting": "Verbinde …",
+@@ -173,9 +173,9 @@
+   "code.errDeclined": "Der Host hat die Anfrage abgelehnt.",
+   "code.errExpired": "Dieser Code ist abgelaufen. Lass dir einen neuen geben.",
+   "code.errFormat": "Gib den 6-stelligen Code ein, den du bekommen hast.",
+-  "code.errHostGone": "souldew beim Host antwortet nicht mehr (geschlossen oder neu gestartet). Lass dir einen neuen Code geben.",
++  "code.errHostGone": "SM SoulLink beim Host antwortet nicht mehr (geschlossen oder neu gestartet). Lass dir einen neuen Code geben.",
+   "code.errLocked": "Dieser Code wurde nach zu vielen Versuchen gesperrt. Lass dir einen neuen geben.",
+-  "code.errNoHost": "Auf diesen Code hat niemand geantwortet. Prüf die Ziffern – wer dich eingeladen hat, muss ihn in souldew geöffnet haben, und ein Code gilt 15 Minuten.",
++  "code.errNoHost": "Auf diesen Code hat niemand geantwortet. Prüf die Ziffern – wer dich eingeladen hat, muss ihn in SM SoulLink geöffnet haben, und ein Code gilt 15 Minuten.",
+   "code.errOffline": "Die Relay-Server sind nicht erreichbar. Prüf deine Internetverbindung.",
+   "code.errOther": "Beitreten mit dem Code hat nicht geklappt.",
+   "code.errTimeout": "Der Host hat nicht rechtzeitig geantwortet.",
+@@ -228,7 +228,7 @@
+   "conn.flowAria": "So funktioniert die Verbindung",
+   "conn.friend": "Der Computer deines Partners",
+   "conn.friendGroup": "Die Computer der anderen",
+-  "conn.local": "souldew, lokal",
++  "conn.local": "SM SoulLink, lokal",
+   "conn.p1": "Die App läuft lokal auf beiden Computern, nutzt aber das Internet. So finden sich eure beiden Apps – ohne eigenen Server, ohne Konto, ohne Router-Einstellungen:",
+   "conn.p1Group": "Die App läuft lokal auf jedem Computer, nutzt aber das Internet. So finden sich eure Apps – ohne eigenen Server, ohne Konto, ohne Router-Einstellungen:",
+   "conn.p2": "Beide Apps melden sich mit eurem Raumcode bei öffentlichen Nostr-Relays. Die Relays stellen euch nur einander vor – danach sprechen eure Apps direkt miteinander (WebRTC, wie bei einem Videoanruf).",
+@@ -254,7 +254,7 @@
+   "ctl.unbindable": "Diese Taste kann nicht fürs Spiel belegt werden. Drück eine andere Taste.",
+   "ctl.up": "Steuerkreuz hoch",
+   "ctr.failed": "Das 3DS-Spiel kann nicht laufen: {why}",
+-  "ctr.failedHint": "Manche Grafikkarten und Treiber können souldews eingebauten 3DS-Player noch nicht ausführen. Azahar, der kostenlose 3DS-Emulator, spielt dieselben Spiele – mit Live-Tracking. Zurückwechseln kannst du jederzeit unter Einstellungen › Emulatoren.",
++  "ctr.failedHint": "Manche Grafikkarten und Treiber können SM SoulLinks eingebauten 3DS-Player noch nicht ausführen. Azahar, der kostenlose 3DS-Emulator, spielt dieselben Spiele – mit Live-Tracking. Zurückwechseln kannst du jederzeit unter Einstellungen › Emulatoren.",
+   "ctr.failedTitle": "Das 3DS-Spiel wurde beendet",
+   "ctr.stopped": "Das 3DS-Spiel wurde beendet. Schließe das Spiel und starte es neu.",
+   "ctr.stoppedWhy": "Das 3DS-Spiel wurde beendet ({why}).",
+@@ -296,7 +296,7 @@
+   "disc.have": "schon in der Bibliothek",
+   "disc.known": "erkannt",
+   "disc.none": "An den üblichen Orten wurden keine Spiele gefunden. Füge sie von Hand hinzu – oder zieh die Dateien in die Bibliothek.",
+-  "disc.privacy": "Gelesen werden nur Dateinamen und die ersten Bytes von Spieldateien – nichts verlässt deinen Mac. macOS fragt eventuell einmal, ob souldew in diese Ordner schauen darf.",
++  "disc.privacy": "Gelesen werden nur Dateinamen und die ersten Bytes von Spieldateien – nichts verlässt deinen Mac. macOS fragt eventuell einmal, ob SM SoulLink in diese Ordner schauen darf.",
+   "disc.privacyPc": "Gelesen werden nur Dateinamen und die ersten Bytes von Spieldateien – nichts verlässt deinen PC.",
+   "disc.searching": "Suche in Downloads, Schreibtisch, Dokumente, iCloud Drive und Spieleordnern …",
+   "disc.searchingLinux": "Suche in Downloads, Desktop, Dokumente, Spieleordnern (EmuDeck, RetroDECK, RetroArch) und auf SD-Karten …",
+@@ -312,7 +312,7 @@
+   "enc.dupeSolo": "Dupes-Klausel: Das hast du schon gefangen ({area}) – such weiter.",
+   "enc.level": "Level",
+   "enc.missed": "Verpasst (geflohen / besiegt)",
+-  "enc.missedSeen": "Aus dem letzten Kampf hier – souldew hat es live gesehen.",
++  "enc.missedSeen": "Aus dem letzten Kampf hier – SM SoulLink hat es live gesehen.",
+   "enc.missedWhich": "Welches Pokémon ist entkommen? Optional.",
+   "enc.missedWhichDupes": "Welches Pokémon ist entkommen? Optional – damit zählt seine Entwicklungsreihe als Dupe.",
+   "enc.nickname": "Spitzname",
+@@ -365,11 +365,11 @@
+   "err.confirmMissing": "Bitte erst bestätigen",
+   "err.coverTooLarge": "Bild zu groß (höchstens 4 MB)",
+   "err.coverType": "Nur Bilder im Format PNG, JPEG oder WebP",
+-  "err.ctrEncrypted": "Diese 3DS-Spieldatei ist verschlüsselt. souldew und Azahar spielen nur entschlüsselte Spiele, und auch der Randomizer braucht eine entschlüsselte Kopie (.3ds, .cci oder .cxi) – souldew entschlüsselt keine Spiele. Lies dein Modul entschlüsselt aus (zum Beispiel mit GodMode9 auf deinem 3DS) und füge diese Datei hinzu.",
++  "err.ctrEncrypted": "Diese 3DS-Spieldatei ist verschlüsselt. SM SoulLink und Azahar spielen nur entschlüsselte Spiele, und auch der Randomizer braucht eine entschlüsselte Kopie (.3ds, .cci oder .cxi) – SM SoulLink entschlüsselt keine Spiele. Lies dein Modul entschlüsselt aus (zum Beispiel mit GodMode9 auf deinem 3DS) und füge diese Datei hinzu.",
+   "err.ctrEnded": "Das 3DS-Spiel wurde beendet",
+   "err.ctrInArchive": "Entpacke das 3DS-Spiel zuerst aus dem Archiv in die Bibliothek",
+-  "err.shinyUnsupported": "Dieser Run ändert die Shiny-Rate, und souldew kann sie nicht in diese Kopie des Spiels einbauen – dafür braucht es ein Originalspiel der Gen 3–5 (Game Boy Advance oder DS).",
+-  "err.ctrMissing": "Der 3DS-Teil von souldew fehlt – installiere souldew neu oder spiele 3DS-Spiele in Azahar (Einstellungen › Emulatoren)",
++  "err.shinyUnsupported": "Dieser Run ändert die Shiny-Rate, und SM SoulLink kann sie nicht in diese Kopie des Spiels einbauen – dafür braucht es ein Originalspiel der Gen 3–5 (Game Boy Advance oder DS).",
++  "err.ctrMissing": "Der 3DS-Teil von SM SoulLink fehlt – installiere SM SoulLink neu oder spiele 3DS-Spiele in Azahar (Einstellungen › Emulatoren)",
+   "err.ctrNoPatch": "Nintendo-3DS-Spiele lassen sich hier nicht patchen",
+   "err.emptyFile": "Leere Datei",
+   "err.emptySave": "Leerer Spielstand – nicht gespeichert",
+@@ -381,7 +381,7 @@
+   "err.emuNotInstalled": "{emu} ist nicht installiert – installiere es unter Einstellungen › Emulatoren",
+   "err.emuOffline": "GitHub ist nicht erreichbar, {emu} kann nicht geladen werden – prüfe die Internetverbindung und versuche es erneut ({detail})",
+   "err.emuUnpack": "Das Entpacken von {emu} ist fehlgeschlagen ({detail}). Es wurde nichts verändert – versuche es erneut.",
+-  "err.emuWrite": "{emu} konnte nicht in souldews Werkzeug-Ordner gespeichert werden ({detail}) – ist die Festplatte voll oder der Ordner geschützt?",
++  "err.emuWrite": "{emu} konnte nicht in SM SoulLinks Werkzeug-Ordner gespeichert werden ({detail}) – ist die Festplatte voll oder der Ordner geschützt?",
+   "err.emulatorOpen": "{emu} ist schon offen – starte das Spiel dort oder schließe {emu} und starte es von hier",
+   "err.emulatorRunning": "Der externe Emulator läuft noch. Im Spiel speichern, Emulator schließen, dann erneut versuchen.",
+   "err.fileNotFound": "Datei nicht gefunden",
+@@ -408,8 +408,8 @@
+   "err.notHost": "Nur der Host kann die Regeln dieses Runs ändern",
+   "err.notInArchive": "„{entry}“ nicht im Archiv gefunden",
+   "err.notInLibrary": "Die Datei liegt nicht in einem Bibliotheksordner",
+-  "err.pathNotApproved": "{name} liegt in keinem Ordner, den souldew lesen darf – füg die Datei über „Dateien hinzufügen“ hinzu",
+-  "err.folderNotApproved": "Der Ordner {name} wurde nicht in souldews Ordnerauswahl gewählt – wähl ihn über „Ordner verwenden“",
++  "err.pathNotApproved": "{name} liegt in keinem Ordner, den SM SoulLink lesen darf – füg die Datei über „Dateien hinzufügen“ hinzu",
++  "err.folderNotApproved": "Der Ordner {name} wurde nicht in SM SoulLinks Ordnerauswahl gewählt – wähl ihn über „Ordner verwenden“",
+   "err.notPatch": "Keine Patch-Datei",
+   "err.notRom": "Keine ROM-Datei",
+   "err.packBroken": "Das Run-Paket ist beschädigt ({what})",
+@@ -429,7 +429,7 @@
+   "err.runIsLocal": "Dieser Run wurde auf diesem Computer erstellt und kann nicht durch ein Run-Paket ersetzt werden",
+   "err.runNotFound": "Run nicht gefunden",
+   "err.saveTooLarge": "Der Spielstand ist zu groß",
+-  "err.scriptMissing": "Das mGBA-Skript fehlt – starte souldew neu, dann wird es wieder angelegt",
++  "err.scriptMissing": "Das mGBA-Skript fehlt – starte SM SoulLink neu, dann wird es wieder angelegt",
+   "err.unknownEmulator": "Unbekannter Emulator",
+   "err.uploadType": "Nur ROMs (.gb/.gbc/.gba/.nds), Patches oder .zip",
+   "err.view": "Diese Ansicht ist abgestürzt",
+@@ -437,20 +437,20 @@
+   "ext.azaharOff": "Live-Daten sind in Azahar aus.",
+   "ext.azaharReading": "Mit Azahar verbunden – suche dein Team in {game} …",
+   "ext.azaharSolo": "Dein Team erscheint in einem SoulLink- oder Nuzlocke-Run mit diesem Spiel.",
+-  "ext.azaharUnsupported": "Mit Azahar verbunden, aber souldew hat keine Live-Daten für {game}.",
++  "ext.azaharUnsupported": "Mit Azahar verbunden, aber SM SoulLink hat keine Live-Daten für {game}.",
+   "ext.azaharWaiting": "Noch keine Verbindung – starte Azahar (nach dem Einschalten einmal neu starten).",
+   "ext.ciaText": "Eine .cia-Datei wird installiert, nicht gestartet: Wähle in Azahar Datei › CIA installieren… und dann die Datei, danach startest du das Spiel aus Azahars Liste. Live-Daten funktionieren genauso.",
+   "ext.installEmu": "{emu} installieren",
+   "ext.launch": "{emu} starten",
+   "ext.liveConnected": "Skript verbunden – warte auf Spieldaten …",
+   "ext.liveNoConnection": "Noch keine Verbindung – lade das Skript in mGBA (siehe oben). Es verbindet sich, sobald ein Spiel läuft.",
+-  "ext.liveNoPort": "Die Live-Verbindung konnte nicht starten: Ihre Netzwerk-Ports sind auf diesem Computer belegt. Starte souldew neu.",
++  "ext.liveNoPort": "Die Live-Verbindung konnte nicht starten: Ihre Netzwerk-Ports sind auf diesem Computer belegt. Starte SM SoulLink neu.",
+   "ext.liveOn": "Live-Daten kommen an",
+   "ext.liveOutdated": "In mGBA läuft eine ältere Version des Skripts. Sie funktioniert, aber die neue verbindet sich von selbst neu und erklärt Probleme im Scripting-Fenster von mGBA: Wähle dort Datei › Zurücksetzen (File › Reset) und lade die Datei erneut.",
+-  "ext.liveRejected": "mGBA wollte sich mit einem veralteten Skript oder einem aus einer anderen souldew-Installation verbinden. Wähle im Scripting-Fenster von mGBA Datei › Zurücksetzen (File › Reset) und lade die Datei oben erneut.",
+-  "ext.liveUnsupported": "Das Skript ist verbunden, aber souldew hat keine Live-Daten für {game}.",
++  "ext.liveRejected": "mGBA wollte sich mit einem veralteten Skript oder einem aus einer anderen SM SoulLink-Installation verbinden. Wähle im Scripting-Fenster von mGBA Datei › Zurücksetzen (File › Reset) und lade die Datei oben erneut.",
++  "ext.liveUnsupported": "Das Skript ist verbunden, aber SM SoulLink hat keine Live-Daten für {game}.",
+   "ext.needEmu": "Für dieses Spiel brauchst du {emu}",
+-  "ext.needEmuText": "Nintendo-3DS-Spiele laufen in {emu}, einem kostenlosen Emulator. souldew lädt die neueste Version von GitHub und legt sie in einem eigenen Ordner ab.",
++  "ext.needEmuText": "Nintendo-3DS-Spiele laufen in {emu}, einem kostenlosen Emulator. SM SoulLink lädt die neueste Version von GitHub und legt sie in einem eigenen Ordner ab.",
+   "ext.pathCopied": "Füge den Pfad im Fenster „Skript laden“ von mGBA ins Feld für den Dateinamen ein.",
+   "ext.revealLinux": "Im Dateimanager zeigen",
+   "ext.revealMac": "Im Finder zeigen",
+@@ -458,11 +458,11 @@
+   "ext.rpcConfirm": "Ja, einschalten",
+   "ext.rpcEnable": "Live-Daten in Azahar einschalten",
+   "ext.rpcEnabledToast": "Eingeschaltet – starte Azahar neu, falls es offen ist.",
+-  "ext.rpcFile": "souldew ändert dafür genau diese eine Einstellung in {file}.",
++  "ext.rpcFile": "SM SoulLink ändert dafür genau diese eine Einstellung in {file}.",
+   "ext.rpcWarn": "Azahar antwortet auch im lokalen Netzwerk, nicht nur auf diesem Computer (UDP-Port 45987). Solange Azahar läuft, könnten andere Geräte im selben Netzwerk den Speicher des Spiels lesen und ändern. Nutze es nur in Netzwerken, denen du vertraust.",
+   "ext.rpcWarnTitle": "Gut zu wissen:",
+-  "ext.rpcWhy": "Für Live-Daten (Team, Fänge, Tode) muss Azahar den Speicher des laufenden Spiels mit souldew teilen: über seinen „RPC-Server“ (Einstellungen › Debug).",
+-  "ext.saveText": "{emu} kann keine Live-Daten teilen. Speichere regelmäßig im Spiel – souldew liest nach jedem Speichern den Spielstand neben der ROM.",
++  "ext.rpcWhy": "Für Live-Daten (Team, Fänge, Tode) muss Azahar den Speicher des laufenden Spiels mit SM SoulLink teilen: über seinen „RPC-Server“ (Einstellungen › Debug).",
++  "ext.saveText": "{emu} kann keine Live-Daten teilen. Speichere regelmäßig im Spiel – SM SoulLink liest nach jedem Speichern den Spielstand neben der ROM.",
+   "ext.scriptSteps": "Für Live-Daten: Öffne in mGBA Werkzeuge › Scripting… (Tools), dann Datei › Skript laden… (File › Load script) und wähle diese Datei. mGBA lädt sie nicht von selbst – nach jedem Neustart von mGBA lädst du sie wieder (Datei › Kürzlich geöffnetes Skript laden).",
+   "ext.switch": "In den Einstellungen kannst du zurück zum eingebauten Emulator wechseln.",
+   "ext.title": "Spielen mit {emu}",
+@@ -472,8 +472,8 @@
+   "faq.a4": "Alle Pokémon-Hauptspiele auf Game Boy, Game Boy Color, Game Boy Advance und Nintendo DS (Gen 1–5) und deren ROM-Hacks, dazu X/Y bis Ultrasonne/Ultramond auf dem Nintendo 3DS (Gen 6–7). Live-Tracking funktioniert mit den englischen und deutschen Versionen; ROM-Hacks funktionieren, wenn sie das ursprüngliche Speicherlayout beibehalten.",
+   "faq.a5": "Ja – wähle sie in den Einstellungen. mGBA überträgt Live-Daten über ein kleines Skript, das du einmal lädst (Tools › Scripting). melonDS hat keine Skript-Unterstützung und synchronisiert deshalb nach jedem Speichern im Spiel.",
+   "faq.a6": "Nichts geht verloren. Jede App behält ihre eigene Kopie, und beide werden automatisch zusammengeführt, sobald ihr wieder verbunden seid.",
+-  "faq.a7": "Speichere direkt danach die Diagnose und schick die Datei mit, zusammen mit dem, was du gemacht hast. Darin steht, was souldew in dieser Sitzung aus dem Spiel gelesen und entschieden hat (Liednummern, Level, was der Turbo-Ton gespielt hat) – keine ROM, kein Spielstand, keine Einladung.",
+-  "faq.q8": "Sendet souldew etwas über mich?",
++  "faq.a7": "Speichere direkt danach die Diagnose und schick die Datei mit, zusammen mit dem, was du gemacht hast. Darin steht, was SM SoulLink in dieser Sitzung aus dem Spiel gelesen und entschieden hat (Liednummern, Level, was der Turbo-Ton gespielt hat) – keine ROM, kein Spielstand, keine Einladung.",
++  "faq.q8": "Sendet SM SoulLink etwas über mich?",
+   "faq.a8a": "Kein Konto, keine Analyse. Das Einzige, was souldew von sich aus meldet, ist ein anonymer „Spielt gerade“-Herzschlag für die Spielerzahl im souldew-Discord: während ein Spiel läuft, einmal pro Minute das System (GB, GBA, DS, 3DS), Solo / Nuzlocke / SoulLink, die App-Version und eine Zufalls-ID, die bei jedem Spiel neu ist. Kein Name, kein Spieltitel, kein Run, keine ROM – und die IP-Adresse wird nicht gespeichert.",
+   "faq.a8b": "Du willst nicht mitgezählt werden? Schalte „Bei ‚Spielt gerade‘ mitzählen“ in Einstellungen › Allgemein aus – das gilt sofort.",
+   "faq.q1": "Wie verbinden wir uns, wenn die App lokal läuft?",
+@@ -615,7 +615,7 @@
+   "inbox.pairDies": "Paar stirbt",
+   "inbox.special": "ein Tausch oder Geschenk, keine Routen-Begegnung: wähle das Gebiet, für das es zählt",
+   "inbox.title": "Aus deinem Spiel",
+-  "intro.ctrOwn": "Nur im 3DS-Player von souldew – Azahar hat seine Spielstände in einem eigenen Ordner.",
++  "intro.ctrOwn": "Nur im 3DS-Player von SM SoulLink – Azahar hat seine Spielstände in einem eigenen Ordner.",
+   "intro.fromRun": "Gespeichert {when} in „{run}“ – du überspringst das Intro und startest dort, wo du gespeichert hast.",
+   "intro.keep": "Als Intro-Spielstand nehmen",
+   "intro.keepFailed": "Intro-Spielstand konnte nicht übernommen werden",
+@@ -633,8 +633,8 @@
+   "invite.codeWhatGroup": "Am einfachsten: Erstelle für jede Person einen Code und sag ihn ihr. Ihre App holt die Einstellungen und den Schlüssel zu eurem Raum – keine Spieldaten – sobald du es erlaubst.",
+   "invite.fileInstead": "Oder eine Einladungsdatei nutzen",
+   "invite.s1": "Speichere die Einladung und schick sie {name} – z. B. per Discord, WhatsApp oder Mail. Oder kopier sie und füg sie in den Chat ein.",
+-  "invite.s2": "{name} öffnet souldew › SoulLink › „Mit Code beitreten“ und öffnet die Datei. Die eigene Kopie des Spiels muss in der Bibliothek sein.",
+-  "invite.s2Group": "Alle öffnen souldew › SoulLink › „Mit Code beitreten“ und öffnen die Datei. Ihr eigenes Exemplar des Spiels muss in ihrer Bibliothek sein.",
++  "invite.s2": "{name} öffnet SM SoulLink › SoulLink › „Mit Code beitreten“ und öffnet die Datei. Die eigene Kopie des Spiels muss in der Bibliothek sein.",
++  "invite.s2Group": "Alle öffnen SM SoulLink › SoulLink › „Mit Code beitreten“ und öffnen die Datei. Ihr eigenes Exemplar des Spiels muss in ihrer Bibliothek sein.",
+   "invite.s3": "Die App baut das identische Spiel und verbindet euch automatisch.",
+   "invite.s3Group": "Ihre Apps bauen das identische Spiel und verbinden euch alle automatisch.",
+   "invite.title": "Jetzt {name} die Einladung schicken",
+@@ -703,7 +703,7 @@
+   "lib.addFolder": "Ordner verwenden",
+   "lib.addOwn": "Füge deinen eigenen Dump dieses Spiels hinzu, um es zu spielen.",
+   "lib.addPatch": "Patch-Datei hinzufügen",
+-  "lib.addTitle": "Spiele zu souldew hinzufügen",
++  "lib.addTitle": "Spiele zu SM SoulLink hinzufügen",
+   "lib.added": "Bibliothek aktualisiert",
+   "lib.addedText": "Neue Spiele stehen im Regal.",
+   "lib.all": "Alle",
+@@ -789,10 +789,10 @@
+   "link.error": "Verbindungsproblem: {msg}",
+   "link.how": "So funktioniert’s",
+   "link.invite": "Einladung",
+-  "link.inviteFileGroup": "Oder speichere die Einladungsdatei – die anderen Spieler öffnen sie in souldew unter SoulLink › „Mit Code beitreten“.",
+-  "link.inviteFileGroupImported": "Speichere die Einladungsdatei – die anderen Spieler öffnen sie in souldew unter SoulLink › „Mit Code beitreten“.",
+-  "link.inviteFileOne": "Oder speichere die Einladungsdatei – {name} öffnet sie in souldew unter SoulLink › „Mit Code beitreten“.",
+-  "link.inviteFileOneImported": "Speichere die Einladungsdatei – {name} öffnet sie in souldew unter SoulLink › „Mit Code beitreten“.",
++  "link.inviteFileGroup": "Oder speichere die Einladungsdatei – die anderen Spieler öffnen sie in SM SoulLink unter SoulLink › „Mit Code beitreten“.",
++  "link.inviteFileGroupImported": "Speichere die Einladungsdatei – die anderen Spieler öffnen sie in SM SoulLink unter SoulLink › „Mit Code beitreten“.",
++  "link.inviteFileOne": "Oder speichere die Einladungsdatei – {name} öffnet sie in SM SoulLink unter SoulLink › „Mit Code beitreten“.",
++  "link.inviteFileOneImported": "Speichere die Einladungsdatei – {name} öffnet sie in SM SoulLink unter SoulLink › „Mit Code beitreten“.",
+   "link.lastSync": "zuletzt synchronisiert {when}",
+   "link.liveDirect": "verbunden · direkt",
+   "link.liveRelay": "verbunden · Relay",
+@@ -854,7 +854,7 @@
+   "live.eInvalid": "Der Server hat den Post abgelehnt ({field}).",
+   "live.eLinkRate": "Zu viele Versuche – warte {n} Min.",
+   "live.eNotMember": "Dein Discord-Konto ist nicht mehr auf dem souldew-Server – tritt wieder bei, um zu posten.",
+-  "live.eOffline": "Keine Verbindung zum souldew-Bot – bist du online?",
++  "live.eOffline": "Keine Verbindung zum SM SoulLink-Bot – bist du online?",
+   "live.eRate": "Zu viele Posts – versuch es in {n} Min. wieder.",
+   "live.eServer": "Teilen hat nicht geklappt – versuch es später noch mal.",
+   "live.eToken": "Die Discord-Verbindung ist beendet – verbinde dich in Einstellungen › Discord neu.",
+@@ -989,7 +989,7 @@
+   "new.forAll": "Uns alle",
+   "new.forBoth": "Uns beide",
+   "new.forMe": "Nur mich",
+-  "new.game": "Spiel aus deiner Bibliothek",
++  "new.game": "Deine ROM",
+   "new.hack": "ROM-Hack (optional)",
+   "new.hackNoFit": "{hack} passt nicht zu diesem ROM – sein Patch braucht eine andere Kopie des Spiels (CRC32 {crc}). So wäre dieser Run das Originalspiel.",
+   "new.hostHint": "Du hostest diesen Run – am Ende bekommst du eine Einladung für die anderen.",
+@@ -1018,7 +1018,7 @@
+   "new.ownWorld": "Jeder Spieler bekommt seine eigene Welt",
+   "new.pairChip": "Beide Editionen",
+   "new.pairOk": "Deine Mitspieler dürfen auch {mate} spielen – in einem Run ohne Randomizer und ROM-Hack passen beide Editionen.",
+-  "new.shinyCode": "souldew findet die Shiny-Prüfung in dieser Kopie des Spiels nicht, deshalb bleibt die Rate, wie sie ist.",
++  "new.shinyCode": "SM SoulLink findet die Shiny-Prüfung in dieser Kopie des Spiels nicht, deshalb bleibt die Rate, wie sie ist.",
+   "new.shinyGames": "Nur für die Originalspiele der Gen 3–5 (Game Boy Advance und DS).",
+   "new.shinyGen1": "In Gen 1 gibt es keine Shinys.",
+   "new.shinyHack": "Nicht für ROM-Hacks – ihr Code kann vom Originalspiel abweichen.",
+@@ -1129,8 +1129,8 @@
+   "onb.controlsText": "Beides funktioniert sofort. Wähl die Tasten, die dir liegen – jede Taste lässt sich später in den Einstellungen ändern.",
+   "onb.controlsTitle": "Tastatur oder Controller?",
+   "onb.gamesFound": "{count} Spiel in deiner Bibliothek|{count} Spiele in deiner Bibliothek",
+-  "onb.gamesLegal": "souldew lädt keine Spiele herunter. Nutze Dumps von Modulen, die dir gehören.",
+-  "onb.gamesText": "Füge die ROMs hinzu, die dir gehören (.gb, .gbc, .gba, .nds oder .zip), und gegebenenfalls ROM-Hack-Patches. Sie werden in deine souldew-Bibliothek kopiert.",
++  "onb.gamesLegal": "SM SoulLink lädt keine Spiele herunter. Nutze Dumps von Modulen, die dir gehören.",
++  "onb.gamesText": "Füge die ROMs hinzu, die dir gehören (.gb, .gbc, .gba, .nds oder .zip), und gegebenenfalls ROM-Hack-Patches. Sie werden in deine SM SoulLink-Bibliothek kopiert.",
+   "onb.gamesTitle": "Spiele hinzufügen",
+   "onb.how1Any": "Auf jeder Route behält jede Person nur das erste Pokémon, das ihr begegnet. Diese Fänge sind verlinkt – als Paar oder, mit 3–4 Leuten, als Gruppe.",
+   "onb.how1Title": "1 · Gemeinsam fangen",
+@@ -1173,7 +1173,7 @@
+   "onb.startTextAny": "Ein SoulLink braucht 2–4 Leute: eine Person hostet, die anderen treten mit einem Code bei. Einen Nuzlocke spielst du allein.",
+   "onb.startTitle": "Wie willst du starten?",
+   "onb.tagline": "Pokémon-SoulLinks zusammen spielen: eingebauter Emulator, Live-Tracking beider Teams, Randomizer und Regeln – alles in einer App.",
+-  "onb.welcome": "Willkommen bei souldew",
++  "onb.welcome": "Willkommen bei SM SoulLink",
+   "over.again": "Neuer Versuch …",
+   "over.blackoutSolo": "Dein Team ist besiegt – der Nuzlocke ist vorbei.",
+   "over.board": "Zum Board",
+@@ -1211,7 +1211,7 @@
+   "pad.autoNone": "Automatisch",
+   "pad.notAPad": "sieht nicht nach einem Controller aus",
+   "pad.missing": "{name} (nicht verbunden)",
+-  "pad.remembered": "souldew merkt sich diesen Controller und nimmt ihn, sobald er verbunden ist.",
++  "pad.remembered": "SM SoulLink merkt sich diesen Controller und nimmt ihn, sobald er verbunden ist.",
+   "pad.autoHint": "Automatisch nimmt einen echten Controller und überspringt Mikrofone, Headsets und andere Geräte, die das System als Controller meldet.",
+   "pad.onlyOdd": "Kein Controller gefunden – {name} sieht nicht nach einem aus. Schließ deinen Controller an und drück eine Taste darauf, oder wähl das Gerät unten aus, falls es doch einer ist.",
+   "pad.nintendo": "Nintendo-Anordnung (A rechts)",
+@@ -1258,7 +1258,7 @@
+   "play.continueRuns": "Run fortsetzen",
+   "play.controls": "Spielsteuerung",
+   "play.diag": "Diagnose speichern",
+-  "play.diagHint": "Speichert, was souldew in dieser Sitzung über Musik und Live-Tracking aufgezeichnet hat – häng die Datei an deine Fehlermeldung. Keine ROM-, Spielstand- oder Einladungsdaten.",
++  "play.diagHint": "Speichert, was SM SoulLink in dieser Sitzung über Musik und Live-Tracking aufgezeichnet hat – häng die Datei an deine Fehlermeldung. Keine ROM-, Spielstand- oder Einladungsdaten.",
+   "play.emptyTextRun": "Füg deine Pokémon-ROMs zur Bibliothek hinzu – dann kannst du sie hier direkt spielen oder damit einen SoulLink oder Nuzlocke starten.",
+   "play.emptyTitle": "Noch nichts zum Spielen",
+   "play.exitFullscreen": "Vollbild verlassen",
+@@ -1365,7 +1365,7 @@
+   "ps.title": "Spiel von {name}",
+   "rail.allLive": "Alle sind live",
+   "rail.coffee": "Spendier mir einen Kaffee",
+-  "rail.coffeeHint": "Unterstütze souldew auf Buy Me a Coffee",
++  "rail.coffeeHint": "Unterstütze den souldew-Entwickler (Original-App) auf Buy Me a Coffee",
+   "rail.hide": "Seitenleiste einklappen",
+   "rail.liveHintGreen": "Grünes Licht: Dein Partner ist verbunden",
+   "rail.liveHintGroup": "Grünes Licht: Jemand aus deiner Gruppe ist verbunden",
+@@ -1406,7 +1406,7 @@
+   "restart.ownText": "Du hast den neuen Versuch „{run}“ schon gestartet. Spiel dort weiter – die anderen sind dazu eingeladen.",
+   "restart.lostText": "{name} hat im selben Moment gestartet. Ihr spielt den neuen Run von {name} – deiner wurde beiseitegelegt.",
+   "restart.openJoined": "„{run}“ öffnen",
+-  "restart.waitHint": "Lass souldew einfach offen – sonst musst du nichts tun.",
++  "restart.waitHint": "Lass SM SoulLink einfach offen – sonst musst du nichts tun.",
+   "restart.waitText": "{name} baut den neuen Versuch schon. Die Einladung erscheint gleich hier – so spielt ihr denselben neuen Run zusammen.",
+   "restart.waitingFor": "Warte auf {name} …",
+   "rnd.abilitiesFollowEvolutions": "Fähigkeiten folgen Entwicklungen",
+@@ -1863,17 +1863,17 @@
+   "set.github": "souldew auf GitHub",
+   "set.gpu": "Grafik-Schnittstelle",
+   "set.gpuAuto": "Automatisch",
+-  "set.gpuFallbackCrash": "Die Grafik-Schnittstelle {backend} ist mehrmals abgestürzt. Ab dem nächsten Start nutzt souldew wieder „Automatisch“ – du kannst das in den Einstellungen ändern.",
+-  "set.gpuFallbackStart": "souldew ist mit der Grafik-Schnittstelle {backend} nicht gestartet und nutzt wieder „Automatisch“. Du kannst das in den Einstellungen ändern.",
++  "set.gpuFallbackCrash": "Die Grafik-Schnittstelle {backend} ist mehrmals abgestürzt. Ab dem nächsten Start nutzt SM SoulLink wieder „Automatisch“ – du kannst das in den Einstellungen ändern.",
++  "set.gpuFallbackStart": "SM SoulLink ist mit der Grafik-Schnittstelle {backend} nicht gestartet und nutzt wieder „Automatisch“. Du kannst das in den Einstellungen ändern.",
+   "set.gpuFallbackTitle": "Grafik-Schnittstelle zurückgesetzt",
+   "set.gpuHint": "Wenn das Spiel ruckelt oder der Ton knackt, probier Vulkan. „Automatisch“ lässt das System entscheiden.",
+-  "set.gpuRestart": "Die neue Grafik-Schnittstelle gilt nach einem Neustart von souldew.",
++  "set.gpuRestart": "Die neue Grafik-Schnittstelle gilt nach einem Neustart von SM SoulLink.",
+   "set.install": "Installieren",
+   "set.installed": "Installiert",
+   "set.installing": "Installiere …",
+   "set.javaMissing": "nicht gefunden",
+   "set.language": "Sprache",
+-  "set.legal": "Pokémon und alle zugehörigen Namen sind Marken von Nintendo, Game Freak und The Pokémon Company. souldew ist ein Fanprojekt, enthält keine Spiele und lädt auch keine herunter.",
++  "set.legal": "Pokémon und alle zugehörigen Namen sind Marken von Nintendo, Game Freak und The Pokémon Company. SM SoulLink ist ein Fanprojekt, enthält keine Spiele und lädt auch keine herunter.",
+   "set.library": "Bibliothek",
+   "set.libraryText": "Spiele, die du hinzufügst, werden in den Bibliotheksordner kopiert. Du kannst auch Ordner einbinden, in denen deine ROMs schon liegen.",
+   "set.liveRpc": "live über RPC",
+@@ -1999,8 +1999,8 @@
+   "stream.live": "LIVE",
+   "stream.minimal": "Minimal",
+   "stream.mode": "Streamer-Modus",
+-  "stream.modeOff": "Schalte ihn ein, bevor du live gehst – souldew verdeckt dann, was deine Zuschauer nicht sehen sollen.",
+-  "stream.modeOn": "souldew kann gezeigt werden: Alles unten Genannte ist auf jeder Seite verdeckt, bis du ihn ausschaltest.",
++  "stream.modeOff": "Schalte ihn ein, bevor du live gehst – SM SoulLink verdeckt dann, was deine Zuschauer nicht sehen sollen.",
++  "stream.modeOn": "SM SoulLink kann gezeigt werden: Alles unten Genannte ist auf jeder Seite verdeckt, bis du ihn ausschaltest.",
+   "stream.noRun": "Noch kein Run",
+   "stream.noRunText": "Die Overlays zeigen einen Run live. Starte zuerst einen SoulLink oder einen Nuzlocke.",
+   "stream.obsCount": "ein Overlay live in OBS|{count} Overlays live in OBS",
+@@ -2020,7 +2020,7 @@
+   "stream.plOn": "Pokélink-Bridge",
+   "stream.plPort": "Port",
+   "stream.plRunning": "Läuft auf 127.0.0.1:{port}",
+-  "stream.plText": "Du hast schon ein Pokélink-Theme, das dir gefällt? souldew kann es füttern: Schalte die Bridge ein und öffne das Theme mit einer der Endungen unten statt seinem eigenen ?user=… – in OBS genau wie vorher.",
++  "stream.plText": "Du hast schon ein Pokélink-Theme, das dir gefällt? SM SoulLink kann es füttern: Schalte die Bridge ein und öffne das Theme mit einer der Endungen unten statt seinem eigenen ?user=… – in OBS genau wie vorher.",
+   "stream.player": "Spieler",
+   "stream.players": "Spieler",
+   "stream.position": "Position",
+@@ -2033,7 +2033,7 @@
+   "stream.followOff": "Diese Links zeigen immer „{name}“, auch wenn du einen anderen Run spielst. Wähl „Aktueller Run“ für Links, die von Run zu Run weiter funktionieren.",
+   "stream.s1": "Such dir ein Widget aus und stell es ein – die Vorschau ist genau das, was OBS zeigt, live.",
+   "stream.s2": "Zieh „In OBS ziehen“ auf deine Szene – OBS legt eine Browser-Quelle in passender Größe an. Oder kopiere die URL in eine neue Browser-Quelle.",
+-  "stream.s3": "Lass souldew offen, während du streamst: Die Overlays ändern sich in dem Moment, in dem etwas passiert.",
++  "stream.s3": "Lass SM SoulLink offen, während du streamst: Die Overlays ändern sich in dem Moment, in dem etwas passiert.",
+   "stream.scale": "Größe",
+   "stream.size": "Größe der Browser-Quelle: {w} × {h}",
+   "stream.solid": "Massiv",
+@@ -2070,11 +2070,11 @@
+   "stream.apiEvents": "Live-Events (SSE)",
+   "stream.apiNewToken": "Neuer Token",
+   "stream.apiLocal": "Auch Seiten von diesem Computer ohne Token: Layouts, die im Browser von der Festplatte geöffnet werden, und andere lokale Webserver (localhost)",
+-  "stream.apiOpenObs": "Ohne Token dürfen OBS (auch lokale Dateien), Skripte und souldew lesen – andere Websites nicht.",
++  "stream.apiOpenObs": "Ohne Token dürfen OBS (auch lokale Dateien), Skripte und SM SoulLink lesen – andere Websites nicht.",
+   "stream.apiSafe": "Nur lesend und nur auf diesem Computer (127.0.0.1): keine ROMs, Spielstände, Dateinamen, Einladungscodes oder Spoiler. Run: {name}",
+   "stream.apiSprite": "Ein Sprite",
+   "stream.apiState": "Alles zum Run",
+-  "stream.apiText": "Lieber dein eigenes Design statt das von souldew? Deine Browserquellen können den Run als JSON lesen – Teams, Links, Friedhof, Begegnungen, Orte –, bekommen jeden Fang, Tod und Levelaufstieg live und laden dieselben Sprites wie die App.",
++  "stream.apiText": "Lieber dein eigenes Design statt das von SM SoulLink? Deine Browserquellen können den Run als JSON lesen – Teams, Links, Friedhof, Begegnungen, Orte –, bekommen jeden Fang, Tod und Levelaufstieg live und laden dieselben Sprites wie die App.",
+   "stream.apiToken": "Token verlangen",
+   "stream.apiTokenHint": "Im Streamer-Modus verdeckt",
+   "team.empty": "Dein Team erscheint hier, sobald du Pokémon hast.",
+@@ -2113,7 +2113,7 @@
+   "upd.downloading": "Lade {version} herunter …",
+   "upd.errChecksum": "Der Download ist beschädigt oder wurde verändert – versuch es noch einmal.",
+   "upd.errCodeSignature": "Die Codesignatur der neuen Version lässt sich nicht bestätigen, deshalb wurde sie nicht installiert.",
+-  "upd.errDmg": "Das Disk-Image enthält nicht die erwartete Version von souldew.",
++  "upd.errDmg": "Das Disk-Image enthält nicht die erwartete Version von SM SoulLink.",
+   "upd.errFeed": "Die Update-Informationen vom Server sind ungültig.",
+   "upd.errHttp": "Der Update-Server hat mit einem Fehler geantwortet – versuch es später noch einmal.",
+   "upd.errInsecure": "Der Update-Server hat auf eine unsichere Adresse verwiesen, deshalb wurde das Update abgebrochen.",
+@@ -2125,19 +2125,19 @@
+   "upd.errSignatureFeed": "Das Update ließ sich nicht überprüfen: Die Signatur fehlt oder ist falsch, deshalb wurde es nicht installiert.",
+   "upd.errTimeout": "Der Update-Server hat nicht rechtzeitig geantwortet – prüfe die Internetverbindung und versuch es noch einmal.",
+   "upd.failed": "Update fehlgeschlagen",
+-  "upd.gatekeeper": "Wenn macOS meldet, dass die App nicht auf Schadsoftware geprüft werden kann, klick sie im Ordner Programme mit rechts an › Öffnen › Öffnen. Das ist einmal nötig, weil souldew nicht von Apple notarisiert ist.",
++  "upd.gatekeeper": "Wenn macOS meldet, dass die App nicht auf Schadsoftware geprüft werden kann, klick sie im Ordner Programme mit rechts an › Öffnen › Öffnen. Das ist einmal nötig, weil SM SoulLink nicht von Apple notarisiert ist.",
+   "upd.how": "Wie?",
+   "upd.install": "Laden & installieren",
+   "upd.installing": "Installiere {version} …",
+   "upd.later": "Später",
+   "upd.laterHint": "Das Update wird installiert, wenn du die App beendest.",
+   "upd.manual": "Fast fertig",
+-  "upd.manual1": "Beende souldew (⌘Q).",
+-  "upd.manual1Win": "Beende souldew ({keys}).",
+-  "upd.manual2": "Zieh souldew im geöffneten Finder-Fenster auf Programme und wähle „Ersetzen“.",
+-  "upd.manual2Linux": "Im geöffneten Ordner liegt {file}, schon ausführbar. Ersetze damit deine alte souldew-AppImage – unter dem alten Dateinamen, falls eine Steam- oder Desktop-Verknüpfung darauf zeigt.",
++  "upd.manual1": "Beende SM SoulLink (⌘Q).",
++  "upd.manual1Win": "Beende SM SoulLink ({keys}).",
++  "upd.manual2": "Zieh SM SoulLink im geöffneten Finder-Fenster auf Programme und wähle „Ersetzen“.",
++  "upd.manual2Linux": "Im geöffneten Ordner liegt {file}, schon ausführbar. Ersetze damit deine alte SM SoulLink-AppImage – unter dem alten Dateinamen, falls eine Steam- oder Desktop-Verknüpfung darauf zeigt.",
+   "upd.manual2Win": "Doppelklicke im geöffneten Explorer-Fenster auf {file}. Das installiert die neue Version, deine Daten bleiben erhalten.",
+-  "upd.manual3": "Öffne souldew wieder.",
++  "upd.manual3": "Öffne SM SoulLink wieder.",
+   "upd.manualText": "Version {version} ist heruntergeladen und geprüft. Ersetze die App von Hand, um fertig zu werden.",
+   "upd.manualTextWin": "Version {version} ist heruntergeladen und geprüft. Starte das Installationsprogramm, um fertig zu werden.",
+   "upd.manualTitle": "Version {version} installieren",
+@@ -2148,38 +2148,38 @@
+   "upd.page": "Download-Seite",
+   "upd.ready": "Update bereit",
+   "upd.readyText": "Starte neu, um Version {version} zu nutzen. Deine Runs, Spielstände und Einstellungen bleiben, wie sie sind.",
+-  "upd.readyTextWin": "Starte neu, um Version {version} zu installieren – das dauert ein paar Sekunden, dann öffnet sich souldew wieder. Deine Runs, Spielstände und Einstellungen bleiben, wie sie sind.",
++  "upd.readyTextWin": "Starte neu, um Version {version} zu installieren – das dauert ein paar Sekunden, dann öffnet sich SM SoulLink wieder. Deine Runs, Spielstände und Einstellungen bleiben, wie sie sind.",
+   "upd.reasonBlocked": "macOS hat der App nicht erlaubt, sich selbst zu ersetzen. Du kannst es unter Systemeinstellungen › Datenschutz & Sicherheit › App-Verwaltung erlauben oder die App von Hand ersetzen.",
+   "upd.reasonCopy": "Kopieren der neuen App fehlgeschlagen.",
+   "upd.reasonDmg": "Die App läuft vom Disk-Image statt aus dem Ordner Programme.",
+   "upd.reasonLaunch": "Das Installationsprogramm ließ sich nicht automatisch starten.",
+   "upd.reasonMinVersion": "Deine Version ist zu alt für ein automatisches Update.",
+-  "upd.reasonPortable": "Diese souldew-Kopie wurde nicht mit dem Installationsprogramm installiert (sie läuft aus einem entpackten Ordner), deshalb kann sie sich nicht selbst aktualisieren.",
++  "upd.reasonPortable": "Diese SM SoulLink-Kopie wurde nicht mit dem Installationsprogramm installiert (sie läuft aus einem entpackten Ordner), deshalb kann sie sich nicht selbst aktualisieren.",
+   "upd.reasonReadOnly": "Dein Benutzerkonto darf nicht in den Ordner der App schreiben.",
+   "upd.reasonSignature": "Die Signatur der neuen Version ließ sich nicht prüfen, deshalb wurde sie nicht automatisch installiert.",
+   "upd.reasonTranslocated": "Die App wurde direkt aus dem Download geöffnet statt aus dem Ordner Programme.",
+   "upd.restart": "Jetzt neu starten",
+   "upd.saveFirst": "Speichere zuerst im Spiel – der Neustart schließt es.",
+   "upd.showDownload": "Download anzeigen",
+-  "upd.smartscreen": "Wenn Windows SmartScreen meldet, dass dein PC geschützt wurde, klick auf „Weitere Informationen“ › „Trotzdem ausführen“. Das ist nötig, weil souldew nicht mit einem kostenpflichtigen Zertifikat signiert ist.",
++  "upd.smartscreen": "Wenn Windows SmartScreen meldet, dass dein PC geschützt wurde, klick auf „Weitere Informationen“ › „Trotzdem ausführen“. Das ist nötig, weil SM SoulLink nicht mit einem kostenpflichtigen Zertifikat signiert ist.",
+   "upd.stepCopy": "Neue App wird kopiert",
+-  "upd.stepLaunch": "Installationsprogramm startet – souldew schließt sich und öffnet sich von selbst wieder",
++  "upd.stepLaunch": "Installationsprogramm startet – SM SoulLink schließt sich und öffnet sich von selbst wieder",
+   "upd.stepMount": "Disk-Image wird geöffnet",
+   "upd.stepVerify": "Download wird geprüft",
+   "upd.upToDate": "Du hast die neueste Version.",
+-  "upd.updated": "souldew ist jetzt auf Version {version}.",
++  "upd.updated": "SM SoulLink ist jetzt auf Version {version}.",
+   "upd.updatedTitle": "Aktualisiert",
+   "upd.version": "Version {version}",
+   "upd.whatsNew": "Was ist neu",
+   "upd.youHave": "Du hast {version}.",
+-  "lib.hacksHint2": "Fan-Versionen. Wenn du eine Patch-Datei dafür hast, füge sie hier hinzu, und souldew wendet sie auf deine eigene ROM an.",
++  "lib.hacksHint2": "Fan-Versionen. Wenn du eine Patch-Datei dafür hast, füge sie hier hinzu, und SM SoulLink wendet sie auf deine eigene ROM an.",
+   "rules.battleHelp": "Kampfhilfe",
+   "rules.typeHelp": "Typ-Effektivität anzeigen",
+   "rules.typeHelpHint": "Im Kampf: wie deine Attacken wirken, was dich trifft und die Schwächen jedes Pokémon. Aus blendet das bei allen Spielern aus.",
+   "rules.typeHelpHintSolo": "Im Kampf: wie deine Attacken wirken, was dich trifft und die Schwächen jedes Pokémon. Aus für einen Run, in dem du das selbst im Kopf hast.",
+   "rules.hostOnlyName": "Nur {name} kann das ändern (Host).",
+   "rules.missedDupes": "Geflohene oder besiegte Encounter zählen als Dupes",
+-  "rules.missedDupesHint": "Wie ein Fang, sobald bekannt ist, welches Pokémon es war – souldew merkt es sich, wenn es den Kampf sieht.",
++  "rules.missedDupesHint": "Wie ein Fang, sobald bekannt ist, welches Pokémon es war – SM SoulLink merkt es sich, wenn es den Kampf sieht.",
+   "rules.notHostHere": "Nur der Computer, auf dem dieser Run erstellt wurde, kann seine Regeln ändern.",
+   "rules.notSaved": "Regeln nicht geändert",
+   "rules.hostOnly": "Nur der Host kann das ändern.",
+@@ -2188,11 +2188,11 @@
+   "feed.typeHelpOff": "hat die Typ-Effektivität für alle ausgeschaltet",
+   "feed.typeHelpOnSolo": "Typ-Effektivität für diesen Run eingeschaltet",
+   "feed.typeHelpOffSolo": "Typ-Effektivität für diesen Run ausgeschaltet",
+-  "nag.titlebar": "Bitte kauf eine souldew-Lizenz",
+-  "nag.thanks": "Danke, dass du souldew benutzt!",
+-  "nag.free": "souldew IST eine kostenlose Software.",
++  "nag.titlebar": "Bitte kauf eine SM SoulLink-Lizenz",
++  "nag.thanks": "Danke, dass du SM SoulLink benutzt!",
++  "nag.free": "SM SoulLink IST eine kostenlose Software.",
+   "nag.seriously": "(Echt jetzt.)",
+-  "nag.trial": "Du hast souldew {n}-mal geöffnet. Deine Testphase endet: nie. Nichts wird gesperrt – dieses Fenster ist das komplette Geschäftsmodell.|Du hast souldew {n}-mal geöffnet. Deine Testphase endet: nie. Nichts wird gesperrt – dieses Fenster ist das komplette Geschäftsmodell.",
++  "nag.trial": "Du hast SM SoulLink {n}-mal geöffnet. Deine Testphase endet: nie. Nichts wird gesperrt – dieses Fenster ist das komplette Geschäftsmodell.|Du hast SM SoulLink {n}-mal geöffnet. Deine Testphase endet: nie. Nichts wird gesperrt – dieses Fenster ist das komplette Geschäftsmodell.",
+   "nag.c1": "Unbegrenzt viele Pokémon-Tode",
+   "nag.c2": "Bereit für deinen 47. Nuzlocke-Versuch",
+   "nag.c3": "Die Schuld auf deinen Partner schieben – AES-256-verschlüsselt",
+@@ -2206,11 +2206,11 @@
+   "nag.offer": "Jetzt zugreifen, dieses Angebot gibt es nur einmal!",
+   "nag.remind": "Erinnere mich nach meinem nächsten Wipe",
+   "set.nag": "Ab und zu das Spaß-Lizenzfenster zeigen",
+-  "set.nagHint": "Eine Parodie auf alte Shareware-Nervfenster. souldew bleibt so oder so kostenlos.",
++  "set.nagHint": "Eine Parodie auf alte Shareware-Nervfenster. SM SoulLink bleibt so oder so kostenlos.",
+   "set.coffeePop": "Kaffee-Hinweis bei Legendären im Stream-Overlay",
+   "set.coffeePopHint": "Ab und zu poppt im Alerts-Overlay ein frecher Spruch zum Legendären auf – mit dem Kaffee-Link.",
+   "ach.allGens": "Zeitreisender",
+-  "ach.allGens.d": "Spiel einen Run in jeder Generation, die souldew kann (Gen 1–7).",
++  "ach.allGens.d": "Spiel einen Run in jeder Generation, die SM SoulLink kann (Gen 1–7).",
+   "ach.allTypes": "Typensammler",
+   "ach.allTypes.d": "Besitze Pokémon aller {n} klassischen Typen.",
+   "ach.atlas": "Atlas",
+@@ -2264,7 +2264,7 @@
+   "ach.dexKanto": "Kanto komplett",
+   "ach.dexKanto.d": "Fang jede Art von #1 bis #151 – ohne Event-Pokémon.",
+   "ach.dexNational": "Schnapp sie dir alle",
+-  "ach.dexNational.d": "Fang alle {n} Arten, die man in souldews Spielen fangen kann – ohne Event-Pokémon.",
++  "ach.dexNational.d": "Fang alle {n} Arten, die man in SM SoulLinks Spielen fangen kann – ohne Event-Pokémon.",
+   "ach.dexSinnoh": "Sinnoh komplett",
+   "ach.dexSinnoh.d": "Fang jede Art von #387 bis #493 – ohne Event-Pokémon.",
+   "ach.dexUnova": "Einall komplett",
+@@ -2417,7 +2417,7 @@
+   "ach.wins5.d": "Gewinne {n} Runs.",
+   "ach.zubat": "Nicht schon wieder Zubat",
+   "ach.zubat.d": "Fang in {n} verschiedenen Runs ein Zubat.",
+-  "app.startFailed": "souldew konnte nicht starten",
++  "app.startFailed": "SM SoulLink konnte nicht starten",
+   "dex.allTypes": "Alle Typen",
+   "dex.caught": "gefangen",
+   "dex.caughtTimes": "{n}× gefangen",
+@@ -2430,15 +2430,15 @@
+   "dex.fSeen": "Gesehen",
+   "dex.filter": "Zeigen",
+   "dex.firstCatch": "Erster Fang",
+-  "dex.genLocked": "Gen {gen} gibt es in souldews Spielen noch nicht",
++  "dex.genLocked": "Gen {gen} gibt es in SM SoulLinks Spielen noch nicht",
+   "dex.genRegion": "Gen {gen} · {region}",
+-  "dex.genSoon": "Noch nicht in souldews Spielen",
++  "dex.genSoon": "Noch nicht in SM SoulLinks Spielen",
+   "dex.generation": "Generation",
+   "dex.history": "Deine Geschichte",
+   "dex.how": "Wie",
+-  "dex.locked": "noch nicht in souldews Spielen",
++  "dex.locked": "noch nicht in SM SoulLinks Spielen",
+   "dex.lockedShort": "Noch nicht fangbar",
+-  "dex.lockedText": "Gen {gen} gibt es noch in keinem Spiel, das souldew spielt (souldew kann Gen 1–7). Das Pokémon steht der Vollständigkeit halber hier – fangbar wird es, sobald souldew seine Generation unterstützt.",
++  "dex.lockedText": "Gen {gen} gibt es noch in keinem Spiel, das SM SoulLink spielt (SM SoulLink kann Gen 1–7). Das Pokémon steht der Vollständigkeit halber hier – fangbar wird es, sobald SM SoulLink seine Generation unterstützt.",
+   "dex.lv": "Lv. {lv}",
+   "dex.national": "National",
+   "dex.nickname": "Spitzname",
+@@ -2517,8 +2517,8 @@
+   "trophy.title": "Trophäen",
+   "trophy.unlocked": "Erfolg freigeschaltet",
+   "play.liveHack": "Für diesen Hack noch nicht unterstützt",
+-  "play.liveHackRun": "Dieser ROM-Hack läuft auf einer erweiterten Engine (neue Pokémon-Nummern und ein anderer Speicheraufbau), die souldew noch nicht zuverlässig lesen kann – deshalb zeigt es lieber nichts als falsche Pokémon. Der Run funktioniert trotzdem: Trag Fänge von Hand ein.",
+-  "play.liveHackSolo": "Dieser ROM-Hack läuft auf einer erweiterten Engine (neue Pokémon-Nummern und ein anderer Speicheraufbau), die souldew noch nicht zuverlässig lesen kann – deshalb zeigt es lieber nichts als falsche Pokémon.",
++  "play.liveHackRun": "Dieser ROM-Hack läuft auf einer erweiterten Engine (neue Pokémon-Nummern und ein anderer Speicheraufbau), die SM SoulLink noch nicht zuverlässig lesen kann – deshalb zeigt es lieber nichts als falsche Pokémon. Der Run funktioniert trotzdem: Trag Fänge von Hand ein.",
++  "play.liveHackSolo": "Dieser ROM-Hack läuft auf einer erweiterten Engine (neue Pokémon-Nummern und ein anderer Speicheraufbau), die SM SoulLink noch nicht zuverlässig lesen kann – deshalb zeigt es lieber nichts als falsche Pokémon.",
+   "play.slowTitle": "Dieser Computer schafft das Spiel nur mit etwa {pct} % seiner Geschwindigkeit",
+   "play.slowWhyDs": "Deshalb ruckelt es und der Ton knackt. Der eingebaute Emulator rechnet den ganzen DS auf einem Prozessorkern und kann hier nicht schneller – die Grenze ist dein Computer, keine Einstellung.",
+   "play.slowWhyNative": "Deshalb ruckelt es und der Ton knackt. Das Spiel läuft schon im schnellen Player – hier ist dein Computer die Grenze, keine Einstellung.",
+@@ -2555,7 +2555,7 @@
+   "cap.eliteFour": "Top Vier",
+   "lib.patchedRom": "Deine ROM",
+   "lib.patchedRomHint": "Schon gepatcht – an ihrer Prüfsumme erkannt.",
+-  "battle.noChart": "souldew konnte die Typ-Tabelle dieses ROM-Hacks nicht lesen – es zeigt die Typen, aber keine Effektivität statt falscher Angaben.",
++  "battle.noChart": "SM SoulLink konnte die Typ-Tabelle dieses ROM-Hacks nicht lesen – es zeigt die Typen, aber keine Effektivität statt falscher Angaben.",
+   "buildLog.romLoaded": "Basis-ROM geladen ({mb} MB, CRC32 {crc})",
+   "buildLog.patchCached": "Gepatchtes ROM aus dem Cache (CRC32 {crc})",
+   "buildLog.patchApplying": "Wende den Patch an ({format}, {mb} MB) …",
+@@ -2583,13 +2583,13 @@
+   "reads.not": "Für dieses Spiel nicht: {list} – ausgeblendet statt geraten.",
+   "reads.nothing": "Nichts live – Fänge von Hand eintragen",
+   "reads.party": "Team",
+-  "reads.title": "souldew liest",
++  "reads.title": "SM SoulLink liest",
+   "reads.types": "Typen und Effektivität",
+   "reads.typesOnly": "Typen (ohne Effektivität)",
+   "lib.liveNote.cfru": "Team, Ort, Kämpfe und Fänge werden live gelesen, getragene Items mit den Namen aus dem Spiel, Typen und Effektivität aus der ROM. Ein Level-Cap wird nicht angezeigt – die Arenaleiter des Hacks lassen sich nicht sicher zuordnen –, und der Sonderbonbon-Cheat ist aus.",
+   "lib.liveNote.types": "Team, Ort, Kämpfe und Fänge werden live gelesen, die eigenen Typen des Hacks samt Effektivität aus der ROM. Der Sonderbonbon-Cheat ist aus.",
+-  "reads.error": "Diese ROM ließ sich nicht prüfen – was souldew liest, zeigt sich, sobald das Spiel läuft.",
+-  "reads.unknown": "Noch nicht bekannt – was souldew liest, zeigt sich, sobald das Spiel läuft.",
++  "reads.error": "Diese ROM ließ sich nicht prüfen – was SM SoulLink liest, zeigt sich, sobald das Spiel läuft.",
++  "reads.unknown": "Noch nicht bekannt – was SM SoulLink liest, zeigt sich, sobald das Spiel läuft.",
+   "lib.addedAlready": "Schon in deiner Bibliothek: {names}",
+   "lib.addedAnd": "{a} und {b}",
+   "lib.addedGameHint": "Es steht jetzt im Regal.",
+@@ -2599,19 +2599,19 @@
+   "lib.addedPatchHint": "Du findest ihn unter ROM-Hacks.",
+   "lib.addedPatchName": "{name} (Patch)",
+   "lib.addedPatches": "{count} Patch|{count} Patches",
+-  "lib.addedUnusable": "{count} Datei enthält kein Spiel und keinen Patch, den souldew nutzen kann.|{count} Dateien enthalten kein Spiel und keinen Patch, den souldew nutzen kann.",
++  "lib.addedUnusable": "{count} Datei enthält kein Spiel und keinen Patch, den SM SoulLink nutzen kann.|{count} Dateien enthalten kein Spiel und keinen Patch, den SM SoulLink nutzen kann.",
+   "lib.alreadyIn": "Schon in deiner Bibliothek",
+   "lib.nothingAdded": "Nichts hinzugefügt",
+   "lib.nothingAddedText": "In diesen Dateien wurde kein neues Spiel und kein neuer Patch gefunden.",
+   "lib.ownPatch": "Dein Patch",
+-  "lib.ownPatchText": "Ein ROM-Hack, der nicht in souldews Liste steht – souldew wendet deine Patch-Datei auf dein eigenes ROM an, wie bei den bekannten Hacks.",
++  "lib.ownPatchText": "Ein ROM-Hack, der nicht in SM SoulLinks Liste steht – SM SoulLink wendet deine Patch-Datei auf dein eigenes ROM an, wie bei den bekannten Hacks.",
+   "lib.patchNoBase": "Der Patch verrät nicht, welches ROM er braucht – wähle das Spiel beim Start eines Runs.",
+   "lib.patchUnreadable": "Diese Patch-Datei lässt sich nicht lesen: {error}",
+   "lib.patchVersion": "Version {v}",
+   "lib.unpacking": "{name} wird entpackt …",
+-  "lib.unpackingText": "{pct} % von {size} – souldew entpackt 3DS-Spiele einmal in deine Bibliothek",
++  "lib.unpackingText": "{pct} % von {size} – SM SoulLink entpackt 3DS-Spiele einmal in deine Bibliothek",
+   "lib.zippedTitle": "Gezipptes 3DS-Spiel|Gezippte 3DS-Spiele",
+-  "lib.zippedText": "souldew spielt 3DS-Spiele aus der entpackten Datei. Entpacke es einmal in deine Bibliothek – das Zip bleibt, wo es ist.|souldew spielt 3DS-Spiele aus der entpackten Datei. Entpacke sie einmal in deine Bibliothek – die Zips bleiben, wo sie sind.",
++  "lib.zippedText": "SM SoulLink spielt 3DS-Spiele aus der entpackten Datei. Entpacke es einmal in deine Bibliothek – das Zip bleibt, wo es ist.|SM SoulLink spielt 3DS-Spiele aus der entpackten Datei. Entpacke sie einmal in deine Bibliothek – die Zips bleiben, wo sie sind.",
+   "lib.unpack": "Entpacken",
+   "lib.unpackBusy": "Wird entpackt …",
+   "lib.unpackFailed": "{name} ließ sich nicht entpacken",
+@@ -2619,13 +2619,13 @@
+   "err.diskFull": "Nicht genug freier Speicherplatz für {name}: nötig sind {need}, frei sind {free}. Schaffe etwas Platz und versuche es noch einmal.",
+   "err.zipEntryUnsafe": "Das Zip enthält eine Datei mit unsicherem Namen ({name}) – nichts wurde entpackt",
+   "err.zipDamaged": "{name} ist im Zip beschädigt (die Prüfsumme stimmt nicht) – lade es noch einmal herunter",
+-  "err.zipMethod": "{name} ist so gepackt, dass souldew es nicht entpacken kann (verschlüsselt oder kein normales Zip) – entpacke es selbst und füge die Datei hinzu",
++  "err.zipMethod": "{name} ist so gepackt, dass SM SoulLink es nicht entpacken kann (verschlüsselt oder kein normales Zip) – entpacke es selbst und füge die Datei hinzu",
+   "err.unpackFailed": "{name} ließ sich nicht entpacken: {why}",
+   "lib.hackSuggest": "Sieht aus wie {hack} – verknüpfen?",
+   "lib.hackLink": "Verknüpfen",
+   "lib.hackNotIt": "Nein, ist es nicht",
+   "lib.isHack": "Das ist ein ROM-Hack …",
+-  "lib.isHackHint": "Ein schon gepatchtes ROM nennt in seinem Header noch das Originalspiel. Sag souldew, welcher Hack es ist – dann steht es auf der Seite des Hacks, und Runs bekommen die Einstellungen des Hacks.",
++  "lib.isHackHint": "Ein schon gepatchtes ROM nennt in seinem Header noch das Originalspiel. Sag SM SoulLink, welcher Hack es ist – dann steht es auf der Seite des Hacks, und Runs bekommen die Einstellungen des Hacks.",
+   "lib.hackPick": "Welcher Hack?",
+   "lib.hackOther": "Anderer / unbekannter Hack",
+   "lib.hackOtherName": "Name des Hacks",
+@@ -2635,7 +2635,7 @@
+   "lib.hackLinkedOther": "Es steht jetzt im Regal der ROM-Hacks.",
+   "lib.hackLinkFailed": "Das ließ sich nicht speichern",
+   "lib.hackMarked": "Du hast dieses ROM als diesen Hack markiert.",
+-  "lib.hackMarkedOther": "Du hast dieses ROM als ROM-Hack markiert, der nicht in souldews Liste steht.",
++  "lib.hackMarkedOther": "Du hast dieses ROM als ROM-Hack markiert, der nicht in SM SoulLinks Liste steht.",
+   "lib.hackUndo": "Rückgängig",
+   "lib.otherCopies": "Weitere Kopien",
+   "err.badRomHack": "Diese Hack-Auswahl ist ungültig",
+@@ -2655,12 +2655,12 @@
+   "err.teamEmpty": "Das Team darf nicht leer werden – mindestens ein Pokémon muss darin bleiben.",
+   "err.uprChecksum": "Der Download des Randomizers ist beschädigt – es wurde nichts installiert. Versuch es noch einmal.",
+   "err.uprDownload": "Der Download des Randomizers ist fehlgeschlagen ({detail}) – prüfe die Internetverbindung und versuch es noch einmal.",
+-  "err.uprMissing": "Der Randomizer (Universal Pokémon Randomizer ZX) fehlt – installiere souldew neu oder spiel ohne Randomizer.",
++  "err.uprMissing": "Der Randomizer (Universal Pokémon Randomizer ZX) fehlt – installiere SM SoulLink neu oder spiel ohne Randomizer.",
+   "err.wrongBaseRom": "Falsches Basis-ROM: {name} braucht das Spiel mit CRC32 {expected}, dieses hat {found}.",
+-  "join.ctrNote": "Ein randomisierter 3DS-Run: Dein Spiel wird aus deiner eigenen entschlüsselten Kopie neu gebaut – ein paar GB und ein paar Minuten. Danach prüft souldew, ob es Byte für Byte dem des Hosts entspricht.",
++  "join.ctrNote": "Ein randomisierter 3DS-Run: Dein Spiel wird aus deiner eigenen entschlüsselten Kopie neu gebaut – ein paar GB und ein paar Minuten. Danach prüft SM SoulLink, ob es Byte für Byte dem des Hosts entspricht.",
+   "join.shiny": "Dieser Run ändert die Shinys ({what}) – dein Spiel bekommt dasselbe.",
+   "new.ctrCompressed": "Komprimierte 3DS-Dateien (.zcci, .zcxi) lassen sich nicht randomisieren – füge die unkomprimierte Spieldatei hinzu (.3ds, .cci oder .cxi).",
+-  "new.ctrEncrypted": "Diese 3DS-Spieldatei ist verschlüsselt, deshalb kann der Randomizer sie nicht lesen. Er braucht eine entschlüsselte Kopie des Spiels (.3ds, .cci oder .cxi) – souldew entschlüsselt keine Spiele.",
++  "new.ctrEncrypted": "Diese 3DS-Spieldatei ist verschlüsselt, deshalb kann der Randomizer sie nicht lesen. Er braucht eine entschlüsselte Kopie des Spiels (.3ds, .cci oder .cxi) – SM SoulLink entschlüsselt keine Spiele.",
+   "new.ctrGames": "Damit werden {n} 3DS-Spiele auf diesem Computer gebaut{size}. „Nur ich“ baut nur deins – die anderen bauen ihr eigenes.",
+   "new.ctrNote": "Nintendo 3DS: Der Randomizer baut für jede Welt das ganze Spiel neu – etwa {gb} GB und ein paar Minuten pro Spiel.",
+   "new.ctrNoteNoSize": "Nintendo 3DS: Der Randomizer baut für jede Welt das ganze Spiel neu – ein paar GB und ein paar Minuten pro Spiel.",
+@@ -2702,23 +2702,23 @@
+   "rnd.typesFollowMegaEvolutions": "Mega-Entwicklungen behalten die Typen",
+   "new.progFinish": "Stelle die neue Spieldatei für {name} fertig …",
+   "rnd.shopItemsMod.help": "Es ändern sich nur die besonderen Läden: Kaufhaus-Etagen, Kräuter- und Vitaminhändler und der zweite Schalter eines Pokémon-Markts. Das normale Sortiment bleibt – in Feuerrot/Blattgrün ändern sich nur der 4. und 5. Stock des Kaufhauses in Prismania City. In Gen 1/2 keine Läden.",
+-  "set.gpuSafeNote": "souldew läuft im sicheren Grafikmodus (Software-Darstellung, langsamer). Bleibt das Fenster bei einem normalen Start leer, wähl hier eine andere Grafik-Schnittstelle – oft helfen Vulkan oder OpenGL – und starte dann normal neu.",
++  "set.gpuSafeNote": "SM SoulLink läuft im sicheren Grafikmodus (Software-Darstellung, langsamer). Bleibt das Fenster bei einem normalen Start leer, wähl hier eine andere Grafik-Schnittstelle – oft helfen Vulkan oder OpenGL – und starte dann normal neu.",
+   "set.gpuSafeRestart": "Normal neu starten",
+   "set.gpuSafeTitle": "Sicherer Grafikmodus",
+-  "set.gpuSafeToast": "souldew zeichnet diesmal ohne Grafikkarte (langsamer). Wähl unter Einstellungen › Allgemein eine andere Grafik-Schnittstelle und starte dann normal neu.",
+-  "set.gpuSafeToastMac": "souldew zeichnet diesmal ohne Grafikkarte (langsamer). Für den normalen Modus beenden und neu starten.",
++  "set.gpuSafeToast": "SM SoulLink zeichnet diesmal ohne Grafikkarte (langsamer). Wähl unter Einstellungen › Allgemein eine andere Grafik-Schnittstelle und starte dann normal neu.",
++  "set.gpuSafeToastMac": "SM SoulLink zeichnet diesmal ohne Grafikkarte (langsamer). Für den normalen Modus beenden und neu starten.",
+   "set.ctrRenderer": "3DS-Renderer",
+   "set.ctrRendererAuto": "Automatisch",
+   "set.ctrRendererCompat": "Vulkan (Kompatibilität)",
+   "set.ctrRendererSoftware": "Software",
+-  "set.ctrRendererHint": "Wie souldews eingebauter 3DS-Player das Spiel zeichnet. Automatisch startet mit Vulkan; bricht das Spiel direkt nach dem Start ab, wechselt es zu Vulkan (Kompatibilität) und dann zu Software und merkt sich das für diese Grafikkarte und diesen Treiber. Software läuft auf jedem PC, ist aber deutlich langsamer. Gilt ab dem nächsten 3DS-Spiel, das du startest.",
++  "set.ctrRendererHint": "Wie SM SoulLinks eingebauter 3DS-Player das Spiel zeichnet. Automatisch startet mit Vulkan; bricht das Spiel direkt nach dem Start ab, wechselt es zu Vulkan (Kompatibilität) und dann zu Software und merkt sich das für diese Grafikkarte und diesen Treiber. Software läuft auf jedem PC, ist aber deutlich langsamer. Gilt ab dem nächsten 3DS-Spiel, das du startest.",
+   "set.ctrRendererLearned": "Diese Grafikkarte spielt 3DS-Spiele gerade mit: {mode}",
+   "set.ctrScale": "3DS-Auflösung",
+   "set.ctrScale1": "1× (nativ)",
+   "set.ctrScaleHint": "Zeichnet die 3DS-Spiele in doppelter oder dreifacher Auflösung – schärfer und weniger pixelig, aber mehr Arbeit für die Grafikkarte. Gilt ab dem nächsten 3DS-Spiel, das du startest. Der Software-Renderer spielt immer in 1×, ebenso das automatische Zurückschalten nach einem Absturz.",
+   "ctr.rendererSwitched": "3DS-Player: jetzt mit {mode}",
+-  "ctr.rendererSwitchedSoftware": "Der Grafiktreiber konnte das Spiel nicht mit Vulkan ausführen, deshalb läuft es jetzt ohne Grafikkarte – langsamer, aber es läuft. souldew merkt sich das für diese Grafikkarte; ändern kannst du es unter Einstellungen › Emulatoren.",
+-  "ctr.rendererSwitchedCompat": "Das Spiel hat direkt nach dem Start aufgehört, deshalb hat souldew es in einem verträglicheren Vulkan-Modus neu gestartet. souldew merkt sich das für diese Grafikkarte; ändern kannst du es unter Einstellungen › Emulatoren.",
++  "ctr.rendererSwitchedSoftware": "Der Grafiktreiber konnte das Spiel nicht mit Vulkan ausführen, deshalb läuft es jetzt ohne Grafikkarte – langsamer, aber es läuft. SM SoulLink merkt sich das für diese Grafikkarte; ändern kannst du es unter Einstellungen › Emulatoren.",
++  "ctr.rendererSwitchedCompat": "Das Spiel hat direkt nach dem Start aufgehört, deshalb hat SM SoulLink es in einem verträglicheren Vulkan-Modus neu gestartet. SM SoulLink merkt sich das für diese Grafikkarte; ändern kannst du es unter Einstellungen › Emulatoren.",
+   "dialog.fileTypes": "ROMs, Patches & Archive",
+   "hof.already": "Schon in der Hall of Fame – von dir oder einem Partner gepostet.",
+   "hof.alreadyShort": "Schon in der Hall of Fame",
+@@ -2759,18 +2759,18 @@
+   "live.explain2": "Teile große Momente – einen Tod, einen Wipe – als Karte mit euren Teams in #live-runs im souldew-Discord, und einen gewonnenen Run mit eurem finalen Team in #hall-of-fame. Es wird nur gepostet, wenn du den Knopf drückst.",
+   "buildLog.shinyRate": "Shiny-Rate 1/{rate} eingebaut",
+   "buildLog.shinyTrainers": "Shiny-Rate 1/{rate} eingebaut (auch für Trainer-Pokémon)",
+-  "code.errNewer": "Dieser Run braucht ein neueres souldew. Aktualisiere souldew und lass dir dann einen neuen Code geben.",
+-  "err.packNewer": "Dieser Run braucht souldew {version} oder neuer – aktualisiere souldew, um mitzuspielen",
+-  "err.packNewerAny": "Dieser Run braucht ein neueres souldew – aktualisiere souldew, um mitzuspielen",
+-  "invite.needsVersion": "Für diesen Run braucht jeder souldew {version} oder neuer. Ältere Versionen können die Einladung nicht öffnen.",
+-  "invite.needsVersionShiny": "Dieser Run ändert die Shiny-Rate: Zum Mitspielen braucht jeder souldew {version} oder neuer. Ältere Versionen können die Einladung nicht öffnen.",
++  "code.errNewer": "Dieser Run braucht ein neueres SM SoulLink. Aktualisiere SM SoulLink und lass dir dann einen neuen Code geben.",
++  "err.packNewer": "Dieser Run braucht SM SoulLink {version} oder neuer – aktualisiere SM SoulLink, um mitzuspielen",
++  "err.packNewerAny": "Dieser Run braucht ein neueres SM SoulLink – aktualisiere SM SoulLink, um mitzuspielen",
++  "invite.needsVersion": "Für diesen Run braucht jeder SM SoulLink {version} oder neuer. Ältere Versionen können die Einladung nicht öffnen.",
++  "invite.needsVersionShiny": "Dieser Run ändert die Shiny-Rate: Zum Mitspielen braucht jeder SM SoulLink {version} oder neuer. Ältere Versionen können die Einladung nicht öffnen.",
+   "lives.usedUp": "Die bisherigen Tode verbrauchen diese Leben schon. Der Run geht weiter – der nächste Tod beendet ihn.",
+   "lives.usedUpNamed": "{name}: Die bisherigen Tode verbrauchen diese Leben schon. Der Run geht weiter – das nächste Pokémon, das {name} verliert, beendet ihn.",
+   "ctl.ffHold": "Vorspulen (halten)",
+   "ctl.ffToggle": "Vorspulen an / aus",
+   "ctl.hotkeyUnbindable": "Diese Taste kann nicht für dieses Kürzel belegt werden. Drück eine andere Taste.",
+   "ctl.alsoKey": "auch {key}",
+-  "ctl.menu": "{key} ist ein Kürzel aus dem Menü von souldew. Drück eine andere Taste.",
++  "ctl.menu": "{key} ist ein Kürzel aus dem Menü von SM SoulLink. Drück eine andere Taste.",
+   "ctl.movedTo": "„{action}“ liegt jetzt auf {key}.",
+   "ctl.noKey": "Keine Taste",
+   "ctl.noKeyNow": "„{action}“ hat jetzt keine Taste.",
+@@ -2790,23 +2790,57 @@
+   "play.loadConfirmKey": "Savestate {n} laden? Der Fortschritt seitdem geht verloren. Drück noch mal {key} oder klick auf Laden.",
+   "set.controlsText2": "Tastenbelegung für den eingebauten Emulator und seine Kürzel. Klick auf eine Taste und drück dann die neue – jede Taste kann auf jede Spieltaste oder jedes Kürzel, und Kürzel lassen sich auch ausschalten. Änderungen gelten sofort, auch für ein laufendes Spiel.",
+   "ctr.blackTitle": "Das 3DS-Spiel zeigt nur einen schwarzen Bildschirm",
+-  "ctr.blackText": "Bleibt er schwarz, ist die Spieldatei vielleicht unvollständig – entferne sie aus der Bibliothek und füge das Spiel noch einmal hinzu – oder dein Grafiktreiber kann es nicht zeichnen: Probiere Einstellungen › Emulatoren › 3DS-Renderer › Software. „Diagnose speichern“ im Ton-Menü hält fest, was souldew sieht.",
+-  "err.ctrIncomplete": "Diese 3DS-Spieldatei ist unvollständig – ein Teil des Spiels fehlt, deshalb würde es nur einen schwarzen Bildschirm zeigen. Das passiert, wenn das Kopieren unterbrochen wurde (souldew oder der Computer wurde dabei geschlossen) oder ein Download abgebrochen ist. Entferne die Datei aus der Bibliothek und füge das Spiel noch einmal hinzu.",
++  "ctr.blackText": "Bleibt er schwarz, ist die Spieldatei vielleicht unvollständig – entferne sie aus der Bibliothek und füge das Spiel noch einmal hinzu – oder dein Grafiktreiber kann es nicht zeichnen: Probiere Einstellungen › Emulatoren › 3DS-Renderer › Software. „Diagnose speichern“ im Ton-Menü hält fest, was SM SoulLink sieht.",
++  "err.ctrIncomplete": "Diese 3DS-Spieldatei ist unvollständig – ein Teil des Spiels fehlt, deshalb würde es nur einen schwarzen Bildschirm zeigen. Das passiert, wenn das Kopieren unterbrochen wurde (SM SoulLink oder der Computer wurde dabei geschlossen) oder ein Download abgebrochen ist. Entferne die Datei aus der Bibliothek und füge das Spiel noch einmal hinzu.",
+   "err.importFailed": "{name} konnte nicht in die Bibliothek kopiert werden ({why}). Vielleicht benutzt ein anderes Programm die Datei – schließe es (oder warte, bis der Virenscan fertig ist) und versuche es noch einmal.",
+   "err.importVerify": "Die Kopie von {name} stimmt nicht mit dem Original überein, deshalb wurde sie nicht hinzugefügt. Versuche es noch einmal – passiert es wieder, hat das Laufwerk vielleicht ein Problem.",
+-  "lib.skipArchive": "souldew kann .7z- und .rar-Archive nicht öffnen – entpacke das Spiel zuerst (zum Beispiel mit 7-Zip) und füge dann die .3ds-, .cci- oder .cxi-Datei hinzu.",
+-  "lib.skipType": "keine Spiel- oder Patch-Datei, die souldew kennt",
++  "lib.skipArchive": "SM SoulLink kann .7z- und .rar-Archive nicht öffnen – entpacke das Spiel zuerst (zum Beispiel mit 7-Zip) und füge dann die .3ds-, .cci- oder .cxi-Datei hinzu.",
++  "lib.skipType": "keine Spiel- oder Patch-Datei, die SM SoulLink kennt",
+   "restart.introTip": "Tipp: Speichere im Spiel, bevor du deinen Starter wählst, und wähle auf dem Board Dateien › „Als Intro-Spielstand nehmen“ – neue Versuche können dann das Intro überspringen.",
+-  "ext.saveUnreadable": "souldew kann die Spielstände dieses Spiels nicht lesen – dein Team wird nicht aktualisiert, solange du mit {emu} spielst.",
+-  "ext.saveNotYet": "souldew liest den Spielstand, sobald du {emu} von hier aus startest.",
++  "ext.saveUnreadable": "SM SoulLink kann die Spielstände dieses Spiels nicht lesen – dein Team wird nicht aktualisiert, solange du mit {emu} spielst.",
++  "ext.saveNotYet": "SM SoulLink liest den Spielstand, sobald du {emu} von hier aus startest.",
+   "ext.saveError": "{file} kann nicht gelesen werden: {error}",
+   "ext.saveWaiting": "Warte auf {file} – speichere einmal im Spiel.",
+   "ext.saveRead": "Liest {file} · zuletzt gelesen {when}",
+   "ext.saveWatching": "Liest {file}",
+   "play.missedDupe": "Wildes {species} entkommen – Dupes-Klausel, es zählt nicht.",
+   "ctl.keepKey": "{key} behalten",
+-  "ctl.ownerMenu": "das Menü von souldew",
++  "ctl.ownerMenu": "das Menü von SM SoulLink",
+   "ctl.ownerSystem": "das System",
+   "ctl.refusedNone": "{key}, deine Taste für „{action}“, gehört zu {owner} – es hat vorerst keine Taste. Klick darauf, um eine andere zu wählen.",
+-  "ctl.refusedNow": "{key}, deine Taste für „{action}“, gehört zu {owner} – es liegt vorerst auf {now}. Klick darauf, um eine andere zu wählen."
++  "ctl.refusedNow": "{key}, deine Taste für „{action}“, gehört zu {owner} – es liegt vorerst auf {now}. Klick darauf, um eine andere zu wählen.",
++  "ar.errEmpty": "Gib zuerst einen Code ein.",
++  "ar.errOdd": "Jede Zeile braucht zwei 8-stellige Blöcke.",
++  "ar.errWord": "„{w}“ ist kein 8-stelliger Hex-Block.",
++  "ar.waitGame": "Die Codes erscheinen, sobald das Spiel läuft.",
++  "ar.unnamed": "Code",
++  "ar.name": "Name",
++  "ar.namePh": "z. B. Max Repel",
++  "ar.code": "Action-Replay-Code",
++  "ar.save": "Speichern",
++  "ar.none": "Für dieses Spiel gibt es noch keine Codes.",
++  "ar.turnOff": "Ausschalten",
++  "ar.turnOn": "Einschalten",
++  "ar.empty": "Noch kein Code – auf ✎ klicken und einfügen",
++  "ar.edit": "Bearbeiten",
++  "ar.delete": "Löschen",
++  "ar.add": "Code hinzufügen",
++  "play.focusOn": "Großbild – Seitenleisten ausblenden",
++  "play.focusOff": "Seitenleisten wieder einblenden",
++  "new.ownRoms": "Schon fertig randomisierte ROMs? Dann lass das hier aus: Jeder spielt seine eigene ROM aus seiner Bibliothek, und ihr seid trotzdem gelinkt. Dein Partner wählt beim Beitreten seine ROM aus.",
++  "join.pickRom": "Welche deiner ROMs spielst du?",
++  "sm.buildOwn": "Dein Spiel wird aus deiner ROM gebaut. Deine Mitspieler treten mit dem Einladungscode bei und wählen ihre eigene ROM.",
++  "sm.noDesktop": "Geht nur in der Desktop-App",
++  "sm.pickFolder": "Ordner mit deinen ROMs wählen",
++  "sm.pickRom": "ROM auswählen",
++  "sm.folderAdded": "{n} ROMs hinzugefügt",
++  "sm.romAdded": "ROM hinzugefügt",
++  "sm.addFailed": "Die ROM ließ sich nicht hinzufügen",
++  "sm.addRom": "ROM-Datei hinzufügen",
++  "sm.addFolder": "Ganzen ROM-Ordner hinzufügen",
++  "sm.adding": "Wird hinzugefügt …",
++  "sm.search": "ROMs durchsuchen ({n})",
++  "sm.noMatch": "Keine ROM passt zur Suche.",
++  "sm.chosen": "Gewählt",
++  "sm.noRoms": "Noch keine ROM in deiner Bibliothek – füge oben eine hinzu."
+ }
+diff --git a/web/index.html b/web/index.html
+index 1ecca27..9b7d35d 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -3,7 +3,7 @@
+ <head>
+   <meta charset="utf-8" />
+   <meta name="viewport" content="width=device-width, initial-scale=1" />
+-  <title>souldew</title>
++  <title>Stefan Mario SoulLink</title>
+   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+   <link rel="stylesheet" href="/styles.css" />
+   <link rel="stylesheet" href="/session-info.css" />
+diff --git a/web/lib/run.mjs b/web/lib/run.mjs
+index 792b343..ab75f80 100644
+--- a/web/lib/run.mjs
++++ b/web/lib/run.mjs
+@@ -419,6 +419,16 @@ export function logCheat(doc, manifest, slot, { added }) {
+   return true;
+ }
+ 
++/** An Action Replay code was switched on (web/views/archeats.mjs) – logged like the Rare Candies. */
++export function logARCheat(doc, manifest, slot, name) {
++  if (!rules(doc, manifest).cheats) return false;
++  const what = String(name || 'Action Replay');
++  feedMsg(doc, manifest, { type: 'cheat', slot, cheat: 'ar', msg: slotsOf(manifest).length === 1
++    ? msg('feed.cheatSolo', 'Cheat used: {what}', { what })
++    : msg('feed.cheat', 'used a cheat: {what}', { what }) });
++  return true;
++}
++
+ /** The run's cheat rule was switched (`by` = slot) – logged like the cheats themselves. */
+ export function logCheatRule(doc, manifest, by, allowed) {
+   const solo = slotsOf(manifest).length === 1;
+diff --git a/web/styles.css b/web/styles.css
+index 86b58de..ec30457 100644
+--- a/web/styles.css
++++ b/web/styles.css
+@@ -1516,3 +1516,32 @@ html.pad-nav .cart:focus .cart-body { transform: translateY(-4px) rotate(-0.6deg
+ html.pad-nav .cart:focus .cart-slot { filter: drop-shadow(0 0 2px var(--focus)) drop-shadow(0 0 12px color-mix(in srgb, var(--focus) 70%, transparent)) drop-shadow(0 8px 12px #0008); }
+ html.pad-nav .cart:focus .cart-title { color: var(--focus); }
+ @media (prefers-reduced-motion: reduce) { html.pad-nav :focus { transition: none; } }
++
++/* ---- souldew (Stefan): big picture – the panels beside the game folded away, the game fills the window ---- */
++.session.full.focus { position: fixed; inset: 0; z-index: 45; padding: 10px 14px 12px; background: var(--bg-bottom, #0f0e13); }
++.session.focus .session-left, .session.focus .session-side { display: none; }
++.session.focus .session-body, .session.focus .session-body.has-left { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: none; padding-left: 0; }
++.session.focus .session-body > .session-stage, .session.focus .session-body.has-left > .session-stage { grid-area: auto; height: auto; order: 0; }
++.session.full.focus:not(.is-fs) .session-body { flex: 1; }
++.session-bar .btn.icon.on { color: #fff; background: #ffffff14; }
++
++/* ---- souldew (Stefan): Action Replay codes in the cheat menu ---- */
++.cheat-pop.ar-pop { width: min(340px, calc(100vw - 32px)); max-height: min(70vh, 560px); overflow: auto; }
++.ar-list, .ar-edit { display: flex; flex-direction: column; gap: 6px; }
++.ar-item { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; border-radius: 9px; background: #ffffff08; }
++.ar-item.on { background: #5fd38a1a; }
++.ar-name { display: flex; flex-direction: column; min-width: 0; }
++.ar-name .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++.ar-mini { width: 24px !important; height: 24px !important; min-width: 24px !important; padding: 0; font-size: 13px; }
++.ar-switch { flex: none; position: relative; width: 34px; height: 20px; border-radius: 999px; border: 0; padding: 0; cursor: pointer; background: #ffffff26; transition: background .15s; }
++.ar-switch span { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
++.ar-switch.on { background: #5fd38a; }
++.ar-switch.on span { transform: translateX(14px); }
++.ar-switch:disabled { opacity: .4; cursor: not-allowed; }
++.ar-code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; resize: vertical; }
++.ar-err { color: var(--warn, #e8a33d); }
++
++/* ---- Stefan Mario SoulLink: ROM picker in the new-run and join pages ---- */
++.rom-picker input[type='search'] { width: 100%; }
++.rom-picker .rom-list { width: 100%; min-height: 120px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; padding: 4px; }
++.rom-picker .rom-list option { padding: 4px 6px; border-radius: 4px; }
+diff --git a/web/views/archeats.mjs b/web/views/archeats.mjs
+new file mode 100644
+index 0000000..c19d505
+--- /dev/null
++++ b/web/views/archeats.mjs
+@@ -0,0 +1,170 @@
++// Action Replay codes in the game screen's cheat menu: a list per game, each code with its own switch. Switched-on codes
++// run a few times per second (shared/live/arcodes.mjs) – like a real Action Replay, but the switch is the activator
++// (no "press SELECT"). Codes are kept per game (the ROM's game code) in this computer's storage.
++import { html, useState, useEffect, useRef } from '/vendor/htm-preact.mjs';
++import { Icon } from '../lib/icons.mjs';
++import { t } from '../lib/i18n.mjs';
++import { parseAR, formatAR, runAR } from '/shared/live/arcodes.mjs';
++
++// Codes that come with souldew for a game (game code prefix → codes). Black 2: tested by Stefan on the German
++// European version (IRED). The "Pokémon" slot is left empty to fill in.
++const PRESETS = [
++  {
++    match: /^IRE/, // Pokémon Black 2 (all languages – tested on the German one)
++    codes: [
++      { id: 'b2-happy', name: 'Max Freundschaft', note: 'Getestet (Schwarz 2 EU)', code: '5201E65C BDF873B4\n0201E65C FAD0F7E3\nD0000000 00000000\n02001C00 73B4B4FF\n02001FFC BDF8BCFF\n02001CAC 733020FF' },
++      { id: 'b2-repel', name: 'Max Repel (255 Schritte)', note: 'Getestet (Schwarz 2 EU)', code: '94000130 FFFB0000\nB2000024 00000000\n2002224D 000000FF\nD2000000 00000000' },
++      { id: 'b2-candy', name: 'Unendlich Sonderbonbon', note: 'Getestet (Schwarz 2 EU)', code: '94000130 FFFB0000\nB2000024 00000000\n000194F8 FFFF0032\nD2000000 00000000' },
++      { id: 'b2-bp', name: 'Battle Points (9999)', note: 'Getestet (Schwarz 2 EU)', code: '94000130 FFFB0000\nB2000024 00000000\n10022420 0000270F\nD2000000 00000000' },
++      { id: 'b2-catch', name: '100 % Fangrate', note: 'Noch ungetestet', code: '521AF790 7820D203\n121AF790 000046C0\nD2000000 00000000' },
++      { id: 'b2-pokemon', name: 'Pokémon', note: 'Euren Code hier einfügen', code: '' },
++    ],
++  },
++];
++
++const storeKey = (game) => `sl-ar-${game}`;
++function load(game) {
++  try {
++    const v = JSON.parse(localStorage.getItem(storeKey(game)) || 'null');
++    if (v && Array.isArray(v.items)) return v.items;
++  } catch {
++    // broken entry: start over
++  }
++  const preset = PRESETS.find((p) => p.match.test(game));
++  return preset ? preset.codes.map((c) => ({ ...c, on: false })) : [];
++}
++function save(game, items) {
++  try {
++    localStorage.setItem(storeKey(game), JSON.stringify({ items }));
++  } catch {
++    // private mode
++  }
++}
++
++/** The ROM's game code ("IRED") from the header copy in main RAM, or null while the game isn't up yet. */
++function readGameCode(e) {
++  try {
++    const b = e?.read?.(0x023ffe0c, 4);
++    if (!b || b.length < 4) return null;
++    const s = String.fromCharCode(b[0], b[1], b[2], b[3]);
++    return /^[A-Z0-9]{4}$/.test(s) ? s : null;
++  } catch {
++    return null;
++  }
++}
++
++/**
++ * The codes of the running game and the loop that runs the switched-on ones.
++ * `emu`: () => the player's API ({ read, write }); `active`: may codes run right now (game running, rules allow it).
++ */
++export function useARCheats({ emu, fallbackKey, active, enabled }) {
++  const [game, setGame] = useState(null);
++  const [items, setItemsState] = useState([]);
++  // the game code: read once the game is up (the header copy is in main RAM), the run's / library's code until then
++  useEffect(() => {
++    if (!enabled) return undefined;
++    let done = false;
++    const id = setInterval(() => {
++      if (done) return;
++      const c = readGameCode(emu());
++      if (c) {
++        done = true;
++        setGame(c);
++      }
++    }, 1000);
++    return () => clearInterval(id);
++  }, [enabled]);
++  const key = game || fallbackKey || null;
++  useEffect(() => { if (key) setItemsState(load(key)); }, [key]);
++  const setItems = (next) => {
++    setItemsState(next);
++    if (key) save(key, next);
++  };
++
++  const ref = useRef({});
++  ref.current = { items, active };
++  const cache = useRef(new Map()); // code text → parsed lines
++  useEffect(() => {
++    if (!enabled) return undefined;
++    const id = setInterval(() => {
++      const { items: list, active: on } = ref.current;
++      if (!on || !list.some((c) => c.on)) return;
++      const e = emu();
++      if (!e?.read || !e?.write) return;
++      const mem = { read: e.read, write: e.write };
++      for (const c of list) {
++        if (!c.on) continue;
++        let p = cache.current.get(c.code);
++        if (!p) cache.current.set(c.code, (p = parseAR(c.code)));
++        if (!p.ok) continue;
++        try {
++          runAR(p.lines, mem);
++        } catch {
++          // a code that throws is skipped this time
++        }
++      }
++    }, 100);
++    return () => clearInterval(id);
++  }, [enabled]);
++  return { key, items, setItems };
++}
++
++const newId = () => `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
++const errText = (p) => (p.error === 'empty' ? t('ar.errEmpty', 'Enter a code first.')
++  : p.error === 'odd' ? t('ar.errOdd', 'Every line needs two 8-digit blocks.')
++    : t('ar.errWord', '“{w}” isn’t an 8-digit hex block.', { w: p.at }));
++
++/** The list with switches, plus adding / editing / deleting codes. */
++export function ARCheatList({ cheats, why, onToggled }) {
++  const { items, setItems, key } = cheats;
++  const [edit, setEdit] = useState(null); // { id|null, name, code, error }
++  if (!key) return html`<span class="tiny faint">${t('ar.waitGame', 'Codes show up once the game is running.')}</span>`;
++
++  const toggle = (c) => {
++    if (!c.on && !parseAR(c.code).ok) return setEdit({ id: c.id, name: c.name, code: c.code, error: null });
++    setItems(items.map((x) => (x.id === c.id ? { ...x, on: !x.on } : x)));
++    onToggled?.(c, !c.on);
++  };
++  const store = () => {
++    const p = parseAR(edit.code);
++    if (!p.ok) return setEdit({ ...edit, error: errText(p) });
++    const name = edit.name.trim() || t('ar.unnamed', 'Code');
++    const code = formatAR(edit.code);
++    setItems(edit.id ? items.map((x) => (x.id === edit.id ? { ...x, name, code } : x)) : [...items, { id: newId(), name, code, on: false }]);
++    setEdit(null);
++  };
++  const del = (c) => setItems(items.filter((x) => x.id !== c.id));
++
++  if (edit) {
++    return html`<div class="ar-edit">
++      <label class="tiny faint">${t('ar.name', 'Name')}</label>
++      <input type="text" value=${edit.name} placeholder=${t('ar.namePh', 'e.g. Max Repel')} onInput=${(e) => setEdit({ ...edit, name: e.target.value })} />
++      <label class="tiny faint">${t('ar.code', 'Action Replay code')}</label>
++      <textarea class="ar-code" rows="6" spellcheck="false" placeholder="94000130 FFFB0000&#10;B2000024 00000000&#10;…"
++        value=${edit.code} onInput=${(e) => setEdit({ ...edit, code: e.target.value, error: null })}></textarea>
++      ${edit.error && html`<span class="tiny ar-err">${edit.error}</span>`}
++      <div class="row nowrap" style="gap:6px">
++        <button class="btn small primary grow" onClick=${store}>${t('ar.save', 'Save')}</button>
++        <button class="btn small ghost" onClick=${() => setEdit(null)}>${t('common.cancel', 'Cancel')}</button>
++      </div>
++    </div>`;
++  }
++  return html`<div class="ar-list">
++    ${items.length === 0 && html`<span class="tiny faint">${t('ar.none', 'No codes for this game yet.')}</span>`}
++    ${items.map((c) => {
++      const ok = parseAR(c.code).ok;
++      return html`<div class=${`ar-item ${c.on ? 'on' : ''}`}>
++        <button class=${`ar-switch ${c.on ? 'on' : ''}`} role="switch" aria-checked=${!!c.on} disabled=${!!why && !c.on}
++          title=${c.on ? t('ar.turnOff', 'Turn off') : t('ar.turnOn', 'Turn on')} onClick=${() => toggle(c)}><span></span></button>
++        <span class="grow ar-name">
++          <span class="small">${c.name}</span>
++          ${(!ok || c.note) && html`<span class="tiny faint">${!ok ? t('ar.empty', 'No code yet – click ✎ to add it') : c.note}</span>`}
++        </span>
++        <button class="btn icon ghost ar-mini" title=${t('ar.edit', 'Edit')} onClick=${() => setEdit({ id: c.id, name: c.name, code: c.code, error: null })}>✎</button>
++        <button class="btn icon ghost ar-mini" title=${t('ar.delete', 'Delete')} onClick=${() => del(c)}><${Icon} name="close" size=${12} /></button>
++      </div>`;
++    })}
++    <button class="btn small ghost" onClick=${() => setEdit({ id: null, name: '', code: '', error: null })}>+ ${t('ar.add', 'Add code')}</button>
++    ${why && html`<span class="tiny faint">${why}</span>`}
++  </div>`;
++}
+diff --git a/web/views/play.mjs b/web/views/play.mjs
+index 02947f9..2353f09 100644
+--- a/web/views/play.mjs
++++ b/web/views/play.mjs
+@@ -8,9 +8,10 @@ import { t, ago } from '../lib/i18n.mjs';
+ import { api } from '../lib/api.mjs';
+ import { serverErrorText } from '../lib/errors.mjs';
+ import { gameById, gameTitle, speciesName, hackById, itemName, moveName } from '../lib/data.mjs';
+-import { players as getPlayers, live, othersOf, runMode, missedQuestion, openAreas, markMissed, locationChoices, areaForCatch, genOfRun, profileOf, rules as getRules, logCheat, dupeOf, areaForPlace, encounter } from '../lib/run.mjs';
++import { players as getPlayers, live, othersOf, runMode, missedQuestion, openAreas, markMissed, locationChoices, areaForCatch, genOfRun, profileOf, rules as getRules, logCheat, logARCheat, dupeOf, areaForPlace, encounter } from '../lib/run.mjs';
+ import { findEntry, readLiveParty, readLiveBattle, playerBattle, withBattleHp, confirmFaints, inBattleFlag, LiveTables, expandedEntry } from '/shared/live/parse.mjs';
+ import { addRareCandies, cheatSupported } from '/shared/live/cheats.mjs';
++import { useARCheats, ARCheatList } from './archeats.mjs';
+ import { MusicKeyTracker } from '/shared/live/location.mjs';
+ import { probeGen67 } from '/shared/live/gen67.mjs';
+ import { PlayHome } from './playhome.mjs';
+@@ -302,6 +303,9 @@ export function GameSession({ session, mode }) {
+   usePresence(status?.config?.presence !== false && phase === 'running' && !ctrFail
+     ? { system: target.system, mode: target.kind === 'run' ? runMode(manifest) : 'solo' } : null);
+   const [fs, setFs] = useState(false);
++  // "Big picture": the panels left and right (place, encounters, link pairs) folded away – the game fills the window
++  const [focus, setFocusState] = useState(() => ls.get('sl-focus', false) === true);
++  const setFocus = (v) => { setFocusState(v); ls.set('sl-focus', v); };
+   const [confirmReset, setConfirmReset] = useState(false);
+   const [rulesOpen, setRulesOpen] = useState(false);
+   const [panelPrefs, setPanelPrefs] = useBattlePanelPrefs();
+@@ -1355,6 +1359,12 @@ export function GameSession({ session, mode }) {
+     : !cheatsAllowed ? t('cheat.off', 'Cheats are off in this run’s rules.')
+       : liveState.status !== 'live' ? t('cheat.waiting', 'Available once live tracking has found your team.')
+         : battle?.enemy || demo ? t('cheat.inBattle', 'Not during a battle.') : null;
++  // Action Replay codes (DS): run while the game runs, the rules allow cheats and the game is up (live tracking found it,
++  // or the game has no live data) – before that the pointers the codes follow aren't set up yet.
++  const arWhy = !cheatsAllowed ? t('cheat.off', 'Cheats are off in this run’s rules.') : null;
++  const arActive = phase === 'running' && !paused && !arWhy && liveState.status !== 'searching';
++  const arCheats = useARCheats({ emu, fallbackKey: target.code || null, active: arActive, enabled: isDs });
++  const arToggled = (c, on) => { if (on && isRun) logARCheat(doc, manifest, me, c.name); diag('cheat', { cheat: 'ar', name: c.name, on }); };
+   const doCheat = async () => {
+     setConfirmCheat(false);
+     const e = emu();
+@@ -1390,7 +1400,7 @@ export function GameSession({ session, mode }) {
+   const battlePanel = html`<${BattlePanel} battle=${battle} mine=${myParty} gen=${gameGen} game=${liveGame} isRun=${isRun}
+     side=${panelSide} collapsed=${panelPrefs.collapsed} onPrefs=${setPanelPrefs} hitsOpen=${panelPrefs.hits} noMoves=${features?.moves === 'no'} />`;
+   const hasLeft = !!(isRun || here || (battle?.enemy && panelSide === 'left'));
+-  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${isDs ? 'ds' : ''}`} data-v=${docVersion}>
++  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${focus && mode === 'full' ? 'focus' : ''} ${isDs ? 'ds' : ''}`} data-v=${docVersion}>
+     <div class="mini-head">
+       <${Led} on=${phase === 'running' && !paused} color="green" /><span class="grow ellipsis">${target.label}</span>
+       ${btn('close', t('play.close', 'Close game'), actions.close)}
+@@ -1465,8 +1475,9 @@ export function GameSession({ session, mode }) {
+           ${btn('camera', t('keys.screenshot', 'Screenshot') + hint('screenshot'), actions.screenshot)}
+           <span class="cheat-wrap">
+             ${btn('candy', t('cheat.title', 'Cheats'), () => setCheatOpen(!cheatOpen), { 'aria-expanded': cheatOpen, 'aria-haspopup': 'dialog' })}
+-            ${cheatOpen && html`<div class="cheat-pop" role="dialog" aria-label=${t('cheat.title', 'Cheats')}>
++            ${cheatOpen && html`<div class=${`cheat-pop ${isDs ? 'ar-pop' : ''}`} role="dialog" aria-label=${t('cheat.title', 'Cheats')}>
+               <b class="small">${t('cheat.title', 'Cheats')}</b>
++              ${isDs && html`<${ARCheatList} cheats=${arCheats} why=${arWhy} onToggled=${arToggled} />`}
+               <button class="btn small" disabled=${!!cheatWhy} onClick=${() => { setCheatOpen(false); setConfirmCheat(true); }}>
+                 <${Icon} name="candy" size=${14} />${t('cheat.rareCandy', 'Add 99 Rare Candies')}</button>
+               <span class="tiny faint">${cheatWhy || (isRun && !solo ? t('cheat.hintRun', 'Everyone in the run sees it in the log. Save in the game to keep them.')
+@@ -1498,6 +1509,7 @@ export function GameSession({ session, mode }) {
+                 onClick=${() => saveDiagnostics({ turboAudio, speed: speed === MAX ? 'max' : speed, reach, steps: steps.map((x) => (x === MAX ? 'max' : x)), volume, perf: emu()?.perf?.() ?? null, audioGraph: emu()?.audioGraph?.() ?? null, pad: emu()?.padInfo?.() ?? null })}><${Icon} name="save" size=${14} />${t('play.diag', 'Save diagnostics')}</button>
+             </div>`}
+           </span>
++          ${btn(focus ? 'panelLeft' : 'eye', focus ? t('play.focusOff', 'Show the panels again') : t('play.focusOn', 'Big picture – hide the panels'), () => { setFocus(!focus); focusGame(); }, { 'aria-pressed': focus, class: `btn icon ${focus ? 'on' : ''}` })}
+           ${btn(fs ? 'shrink' : 'full', (fs ? t('play.exitFullscreen', 'Leave fullscreen') : t('keys.fullscreen', 'Fullscreen game')) + hint('fullscreen'), actions.fullscreen)}
+         </div>
+         ${slow && mode === 'full' && html`<${SlowNotice} slow=${slow} isDs=${isDs} native=${nativeOn} onClose=${() => { setSlow(null); focusGame(); }} />`}
+diff --git a/web/views/soullink.mjs b/web/views/soullink.mjs
+index 9720a43..9dc5e45 100644
+--- a/web/views/soullink.mjs
++++ b/web/views/soullink.mjs
+@@ -569,6 +569,57 @@ function ShinyOption({ support, gen, solo, hack, rate, trainers, onRate, onTrain
+ 
+ /** The new-run wizard of one mode: a SoulLink (2–4 players, invite at the end) or a solo Nuzlocke (rules step).
+  * A restart (`from`) always keeps the mode of the old run. */
++/**
++ * This build: pick the ROM for a run – already randomized ROMs, often many of the same game. Listed by file name (the
++ * game's title is the same for all of them), with a search field and buttons that add a ROM file or a whole folder of
++ * ROMs straight from here.
++ */
++function RomPicker({ roms, value, onPick, disabled, label }) {
++  const { library, reloadLibrary, toast } = useApp();
++  const [q, setQ] = useState('');
++  const [adding, setAdding] = useState(false);
++  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
++  const nameOf = (r) => String(r.name || r.title || r.id);
++  const list = [...(roms || [])].filter((r) => words.every((w) => nameOf(r).toLowerCase().includes(w)))
++    .sort((a, b) => nameOf(a).localeCompare(nameOf(b), undefined, { numeric: true }));
++  const add = async (folder) => {
++    if (!window.sls?.pickFiles) return toast?.({ kind: 'death', title: t('sm.noDesktop', 'Only in the desktop app'), text: '' });
++    const paths = await window.sls.pickFiles({ folder, title: folder ? t('sm.pickFolder', 'Choose the folder with your ROMs') : t('sm.pickRom', 'Choose a ROM') });
++    if (!paths?.length) return;
++    setAdding(true);
++    try {
++      const had = new Set((library?.roms || []).map((r) => r.id));
++      if (folder) await api.post('/api/library/folders', { add: paths[0] });
++      else await api.post('/api/library/import', { paths });
++      const after = await reloadLibrary();
++      const fresh = (after?.roms || []).filter((r) => !had.has(r.id));
++      const base = String(paths[0]).split(/[\\/]/).pop().replace(/\.[^.]+$/, '').toLowerCase();
++      const pick = folder ? null : fresh[0] || (after?.roms || []).find((r) => String(r.name || '').toLowerCase() === base);
++      if (pick) onPick(pick.id);
++      toast?.({ kind: 'ok', title: folder ? t('sm.folderAdded', '{n} ROMs added', { n: fresh.length }) : t('sm.romAdded', 'ROM added'), text: pick ? nameOf(pick) : '' });
++    } catch (e) {
++      toast?.({ kind: 'death', title: t('sm.addFailed', 'Could not add the ROM'), text: e.message });
++    }
++    setAdding(false);
++  };
++  return html`<div class="stack-s rom-picker">
++    ${label && html`<span class="small muted">${label}</span>`}
++    <div class="row" style="gap:8px;flex-wrap:wrap">
++      <button class="btn primary" disabled=${disabled || adding} onClick=${() => add(false)}><${Icon} name="plus" size=${16} />${t('sm.addRom', 'Add ROM file')}</button>
++      <button class="btn ghost" disabled=${disabled || adding} onClick=${() => add(true)}><${Icon} name="folder" size=${16} />${t('sm.addFolder', 'Add a whole ROM folder')}</button>
++      ${adding && html`<span class="small muted">${t('sm.adding', 'Adding …')}</span>`}
++    </div>
++    ${(roms || []).length > 0 ? html`
++      <input type="search" value=${q} placeholder=${t('sm.search', 'Search ROMs ({n})', { n: (roms || []).length })} onInput=${(e) => setQ(e.target.value)} />
++      <select class="rom-list" size=${Math.min(10, Math.max(3, list.length))} value=${value} disabled=${disabled} onChange=${(e) => onPick(e.target.value)}>
++        ${list.map((r) => html`<option value=${r.id} selected=${r.id === value}>${nameOf(r)}</option>`)}
++      </select>
++      ${list.length === 0 && html`<span class="small muted">${t('sm.noMatch', 'No ROM matches the search.')}</span>`}
++      ${value && html`<span class="small"><span class="chip ok">${t('sm.chosen', 'Chosen')}</span> <span class="mono">${nameOf((roms || []).find((r) => r.id === value) || {})}</span></span>`}`
++      : html`<p class="small muted">${t('sm.noRoms', 'No ROM in your library yet – add one with the button above.')}</p>`}
++  </div>`;
++}
++
+ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode }) {
+   const { status, navigate, reloadStatus, setRunId, setMe } = useApp();
+   const { roms, patchesFor, preferredPatch, patchById, hackMissing } = useGameChoices(gameId || null, hackId);
+@@ -580,7 +631,8 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+   const [patchId, setPatchId] = useState(() => (from ? (from.patch ? (patchesFor(rom).find((p) => p.sha1 && p.sha1 === from.patch.sha1) || preferredPatch(rom))?.id || null : null)
+     : (picked && patchesFor(rom).some((p) => p.id === picked.id) ? picked.id : preferredPatch(rom)?.id || null)));
+   const [inspect, setInspect] = useState(null);
+-  const [randomize, setRandomize] = useState(from ? from.randomizer?.enabled !== false : true);
++  // (this build: off by default – the ROMs come already randomized, every player brings their own)
++  const [randomize, setRandomize] = useState(false); // eslint-disable-line no-unused-vars
+   const oldValues = from?.randomizer?.values && Object.keys(from.randomizer.values).length ? from.randomizer.values : null;
+   // (the old run's generation: options of other generations – Gen 7's totems – don't decide which preset it was)
+   const fromGen = from ? gameById(from.game?.id)?.generation || genFromSystem(from.game) : null;
+@@ -609,7 +661,8 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+   const [seedMode, setSeedMode] = useState(from?.randomizer?.sharedSeed ? 'shared' : 'separate');
+   const [seeds, setSeeds] = useState(() => Object.fromEntries(ALL_SLOTS.map((s) => [s, randomSeed()])));
+   const [names, setNames] = useState(() => (from ? namesFrom(from, status?.config?.playerName || '') : { p1: status?.config?.playerName || '', p2: '', p3: '', p4: '' }));
+-  const [buildFor, setBuildFor] = useState('all');
++  // (this build: everyone builds their own game from their own ROM – the host only theirs)
++  const [buildFor, setBuildFor] = useState(mode === 'nuzlocke' ? 'all' : 'me'); // eslint-disable-line no-unused-vars
+   const [busy, setBusy] = useState(false);
+   const [log, setLog] = useState([]);
+   const [error, setError] = useState(null);
+@@ -625,13 +678,8 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+     let off = false;
+     setInspect(null);
+     setError(null); // an error of the previous pick (e.g. a patch that didn't fit) doesn't apply to this one
+-    api.post('/api/rom/inspect', { romId: rom.id, patchId }).then((r) => {
+-      // diagnostics: the game the randomizer's trial run stopped on, and where (a report then names the data it choked on)
+-      // – the patch by what it is (its hack, its checksum), never by its id: a library id is the file's absolute path
+-      if (r?.reason === 'randoCrash') diag('rando', { game: rom.gameId || null, code: rom.code || null, hack: rom.hackId || null, patch: patchDiag(patchesFor(rom).find((p) => p.id === patchId)), what: r.what || null, trace: r.trace || null });
+-      if (!off) setInspect(r);
+-    })
+-      .catch((e) => { if (!off) { setInspect({ failed: true, info: { unsupported: true } }); setError(e.message); } });
++    // (this build: no randomizer – the ROMs come randomized already; nothing to try out, the run can be built at once)
++    setInspect({ info: {}, skipped: true });
+     return () => { off = true; };
+   }, [rom?.id, patchId]);
+ 
+@@ -668,7 +716,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+   const ctr = inspect?.patched?.system === '3ds';
+   // the other title of the game's pair (HeartGold → SoulSilver): partners may play it in a run without randomizer or hack
+   const mate = !solo && game && !hack && !customHack && !patchId ? gameById(pairMate(game.variantOf || game.id)) : null;
+-  const step = { who: 1, game: 2, randomizer: 3, rules: 4, build: 5 };
++  const step = { who: 1, game: 2, rules: 3, build: 4 };
+   const seedSlots = solo || seedMode === 'shared' ? ['p1'] : slots;
+   // a randomized 3DS game is rebuilt per world: how many games this computer builds, and their size
+   const ctrGames = ctr && randomize && canRandomize ? (solo || buildFor !== 'all' ? 1 : seedMode === 'shared' ? 1 : count) : 0;
+@@ -756,81 +804,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+ 
+     <section class="panel stack">
+       <h2>${t('new.stepGame', '{n} · Game', { n: step.game })}</h2>
+-      <div class="grid-2">
+-        <label class="field"><span>${t('new.game', 'Game from your library')}</span>
+-          <select value=${rom?.id} onChange=${(e) => { setRomId(e.target.value); const r = roms.find((x) => x.id === e.target.value); setPatchId(preferredPatch(r)?.id || null); }}>
+-            ${roms.map((r) => html`<option value=${r.id}>${r.hackId && hackById(r.hackId) ? hackById(r.hackId).name : r.customHack || (gameById(r.gameId) ? gameTitle(gameById(r.gameId)) : r.title || r.name)}</option>`)}
+-          </select></label>
+-        <label class="field"><span>${t('new.hack', 'ROM hack (optional)')}</span>
+-          <select value=${patchId || ''} onChange=${(e) => setPatchId(e.target.value || null)}>
+-            <option value="">${t('new.noHack', 'Original game')}</option>
+-            ${patchesFor(rom).map((p, i, all) => html`<option value=${p.id}>${patchLabel(p, all)}</option>`)}
+-          </select></label>
+-      </div>
+-      ${missing && html`<p class="warning">${t('new.hackNoFit', '{hack} doesn’t fit this ROM – its patch needs another copy of the game (CRC32 {crc}). As it is, this run would be the original game.', { hack: missing.hack.name, crc: missing.crc })}</p>`}
+-      <p class="small muted">${!inspect ? t('new.checking', 'Checking the game …')
+-        : inspect.failed ? t('new.checkFailed', 'This combination of game and ROM hack doesn’t work – see the message above.')
+-        : inspect.info?.missingTool === 'java' ? (solo ? t('new.noJavaSolo', 'Java wasn’t found, so the randomizer can’t run. Install Java (e.g. Temurin 21 from adoptium.net) and restart the app – or play the Nuzlocke without the randomizer.')
+-          : t('new.noJava', 'Java wasn’t found, so the randomizer can’t run. Install Java (e.g. Temurin 21 from adoptium.net) and restart the app – or play a regular SoulLink.'))
+-        : inspect.info?.missingTool === 'upr' ? (solo ? t('new.noUprSolo', 'The randomizer (Universal Pokémon Randomizer ZX) is missing – you can still play the Nuzlocke without it.')
+-          : t('new.noUpr', 'The randomizer (Universal Pokémon Randomizer ZX) is missing – or play a regular SoulLink.'))
+-        : inspect.info?.reason === 'encrypted' ? t('new.ctrEncrypted', 'This 3DS game file is encrypted, so the randomizer can’t read it. It needs a decrypted copy of the game (.3ds, .cci or .cxi) – souldew doesn’t decrypt games.')
+-        : inspect.info?.reason === 'compressed' ? t('new.ctrCompressed', 'Compressed 3DS files (.zcci, .zcxi) can’t be randomized – add the uncompressed game file (.3ds, .cci or .cxi).')
+-        : inspect.info?.reason === 'randoCrash' ? (solo ? t('new.randoCrashSolo', 'The randomizer can’t build this game – its data isn’t where the randomizer expects it, as in some ROM hacks and releases. You can still play the Nuzlocke without the randomizer.')
+-          : t('new.randoCrash', 'The randomizer can’t build this game – its data isn’t where the randomizer expects it, as in some ROM hacks and releases. You can still play a regular SoulLink.'))
+-        : inspect.info?.unsupported || hackNoUpr ? (solo ? t('new.noRandomizerSolo', 'This game can’t be randomized – you can still play the Nuzlocke without the randomizer.')
+-          : t('new.noRandomizer', 'This game can’t be randomized – you can still play a regular SoulLink.'))
+-        : t('new.ok', '{n} Pokémon · randomizer supported', { n: inspect.info.pokemonCount })}${inspect && inspect.info && inspect.info.staticsSupported === false ? ` · ${t('new.noStatics', 'gifts & legendaries stay as in the hack')}` : ''}</p>
+-      ${mate && inspect && html`<p class="small muted">${randomize && canRandomize
+-        ? t('new.pairRandom', 'With the randomizer everyone needs {game}. Without it, your partners could also play {mate}.', { game: gameTitle(game), mate: gameTitle(mate) })
+-        : html`<span class="chip ok">${t('new.pairChip', 'Both editions')}</span> ${t('new.pairOk', 'Your partners may also play {mate} – in a run without randomizer or ROM hack, both editions work.', { mate: gameTitle(mate) })}`}</p>`}
+-      ${inspect && !inspect.failed && html`<${ShinyOption} support=${inspect.shiny} gen=${inspect.info?.generation} solo=${solo} hack=${!!(patch || hack || customHack)}
+-        rate=${shinyOk ? rateFits : NORMAL_RATE} trainers=${shinyTrainers} onRate=${setShinyRate} onTrainers=${setShinyTrainers} />`}
+-    </section>
+-
+-    <section class="panel stack">
+-      <div class="row"><h2>${t('new.stepRandomizer', '{n} · Randomizer', { n: step.randomizer })}</h2><span class="spacer"></span>
+-        <label class="check"><input type="checkbox" checked=${randomize && canRandomize} disabled=${!canRandomize} onChange=${(e) => setRandomize(e.target.checked)} /><span>${t('common.on', 'On')}</span></label></div>
+-      ${randomize && canRandomize && html`<div class="stack">
+-        ${ctr && html`<p class="small muted">${ctrGb ? t('new.ctrNote', 'Nintendo 3DS: the randomizer rebuilds the whole game for each world – about {gb} GB and a few minutes per game.', { gb: ctrGb })
+-          : t('new.ctrNoteNoSize', 'Nintendo 3DS: the randomizer rebuilds the whole game for each world – a few GB and a few minutes per game.')}
+-          ${' '}${t('new.ctrUpdate', 'Playing in Azahar itself? Remove the game’s update there for this run – an installed update replaces parts of the randomized game.')}</p>`}
+-        <div class="preset-list" role="radiogroup">
+-          ${rnd.presets.map((p) => html`<button class=${`preset ${presetId === p.id ? 'on' : ''}`} role="radio" aria-checked=${presetId === p.id} onClick=${() => pickPreset(p, false)}>
+-            <span class="radio"></span><span><b>${p.name}</b>${p.id === 'soullink' ? html` <span class="faint small">${t('new.recommended', 'recommended')}</span>` : ''}</span><span class="desc">${p.description}</span></button>`)}
+-          <${MyPresets} presets=${myPresets} setPresets=${setMyPresets} presetId=${presetId} basedOn=${basedOn} values=${values} groups=${rnd.groups} gen=${gen}
+-            onPick=${(p) => pickPreset(p, true)} />
+-        </div>
+-        ${!solo && html`<div class="seg">
+-          <button class=${seedMode === 'separate' ? 'on' : ''} aria-pressed=${seedMode === 'separate'} onClick=${() => setSeedMode('separate')}>${t('new.ownWorld', 'Each player gets their own world')}</button>
+-          <button class=${seedMode === 'shared' ? 'on' : ''} aria-pressed=${seedMode === 'shared'} onClick=${() => setSeedMode('shared')}>${count > 2 ? t('new.sameWorldAll', 'Same world for everyone') : t('new.sameWorld', 'Same world for both')}</button>
+-        </div>`}
+-        <details class="group"><summary>${t('new.advanced', 'Advanced settings')}</summary>
+-          <div class="stack" style="padding:4px 0 6px">
+-            ${rnd.groups.filter((g) => g.fields.some((f) => f.type !== 'head' && forGen(f, gen))).map((g) => html`<details class="group">
+-              <summary>${g.title}${changedIn(g) > 0 && html`<span class="faint small">${t('new.changedCount', '{n} changed', { n: changedIn(g) })}</span>`}</summary><div class="group-body">
+-              ${g.fields.filter((f) => forGen(f, gen)).map((f) => html`<${Field} f=${f} gen=${gen} values=${values} value=${values[f.key] ?? DEFAULT_VALUES[f.key]} disabled=${g.id === 'statics' && inspect?.info?.staticsSupported === false}
+-                onChange=${(v) => { setValues({ ...values, [f.key]: v }); setPresetId('custom'); }} />`)}
+-            </div></details>`)}
+-            <details class="group"><summary>${t('new.tweaks', 'Game tweaks')}</summary><div class="group-body">
+-              ${Object.entries(rnd.tweaks).filter(([k]) => !inspect?.info?.miscTweaks || inspect.info.miscTweaks.includes(k)).map(([k, label]) => html`<label class="check">
+-                <input type="checkbox" checked=${(values['@miscTweaks'] || []).includes(k)} onChange=${(e) => {
+-                  const set = new Set(values['@miscTweaks'] || []);
+-                  if (e.target.checked) set.add(k); else set.delete(k);
+-                  setValues({ ...values, '@miscTweaks': [...set] });
+-                  setPresetId('custom');
+-                }} /><span>${label}</span></label>`)}
+-            </div></details>
+-            <details class="group"><summary>${solo ? t('new.seed', 'Seed') : t('new.seeds', 'Seeds')}</summary><div class="stack" style="padding:4px 14px 12px">
+-              ${seedSlots.map((s) => html`<div class="row nowrap" key=${s}>
+-                <span class="small muted ellipsis" style="width:90px">${solo ? t('new.seed', 'Seed') : seedMode === 'shared' ? (count > 2 ? t('new.everyone', 'Everyone') : t('new.both', 'Both'))
+-                  : names[s].trim() || s.toUpperCase()}</span>
+-                <input type="text" class="mono grow" value=${seeds[s]} onInput=${(e) => setSeeds({ ...seeds, [s]: e.target.value.replace(/[^\d-]/g, '') })} />
+-                <button class="btn small ghost" onClick=${() => setSeeds({ ...seeds, [s]: randomSeed() })}>${t('new.reroll', 'Reroll')}</button></div>`)}
+-            </div></details>
+-          </div>
+-        </details>
+-      </div>`}
++      <${RomPicker} roms=${roms} value=${rom?.id} onPick=${(id) => { setRomId(id); setPatchId(null); }} disabled=${busy} />
+     </section>
+ 
+     <section class="panel stack">
+@@ -849,9 +823,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
+ 
+     <section class="panel stack">
+       <h2>${t('new.stepBuild', '{n} · Build', { n: step.build })}</h2>
+-      ${!solo && html`<div class="row small"><span class="muted">${t('new.buildFor', 'Build games for')}</span>
+-        <div class="seg" role="group" aria-label=${t('new.buildFor', 'Build games for')}><button class=${buildFor === 'all' ? 'on' : ''} aria-pressed=${buildFor === 'all'} onClick=${() => setBuildFor('all')}>${count > 2 ? t('new.forAll', 'All of us') : t('new.forBoth', 'Both of us')}</button>
+-          <button class=${buildFor === 'me' ? 'on' : ''} aria-pressed=${buildFor === 'me'} onClick=${() => setBuildFor('me')}>${t('new.forMe', 'Only me')}</button></div></div>`}
++      ${!solo && html`<p class="small muted">${t('sm.buildOwn', 'Your game is built from your ROM. Your partners join with the invite code and pick their own ROM.')}</p>`}
+       <${IntroSaveOption} intro=${intro} forget=${forgetIntro} on=${fromIntro} onChange=${setFromIntro} disabled=${busy} />
+       ${ctrGames > 1 && html`<p class="small muted">${t('new.ctrGames', 'This builds {n} 3DS games on this computer{size}. “Only me” builds just yours – the others build their own.', { n: ctrGames, size: ctrGb ? ` (≈ ${(ctrGames * Number(ctrGb)).toFixed(1)} GB)` : '' })}</p>`}
+       <div class="row">
+@@ -913,7 +885,10 @@ function JoinRun() {
+   // (by CRC32 – a 3DS game, which has none, by its game: never just the first 3DS file of the library)
+   const cat = catalog();
+   const rootOf = (id) => cat.games.find((g) => g.id === id)?.variantOf || id;
+-  const rom = pack ? baseRomsFor(pack, library?.roms, rootOf)[0] : undefined;
++  // every ROM of the run's game in the library – the player picks theirs (own, already randomized ROMs: each their own)
++  const romChoices = pack ? baseRomsFor(pack, library?.roms, rootOf) : [];
++  const [romPickId, setRomPickId] = useState(null);
++  const rom = romChoices.find((r) => r.id === romPickId) || romChoices[0];
+   // The release behind a CRC32, e.g. "Pokemon - Platinum Version (USA) (Rev 1)" – for messages a person can act on.
+   const releaseOf = (crc) => {
+     const c = String(crc || '').toUpperCase();
+@@ -1009,9 +984,10 @@ function JoinRun() {
+     </section>
+     ${pack && html`<section class="panel stack">
+       <h2>${t('join.step2', '2 · Your game')}</h2>
+-      ${rom ? html`<p class="small"><span class="chip ok">${t('join.found', 'Found in your library')}</span> <span class="mono">${rom.name}</span></p>
++      <${RomPicker} roms=${romChoices} value=${rom?.id} onPick=${setRomPickId} disabled=${busy} label=${t('join.pickRom', 'Which of your ROMs do you play?')} />
++      ${rom ? html`
+         ${pair && html`<p class="small"><span class="chip ok">${t('join.pairChip', 'Other edition')}</span> ${t('join.pairTitle', 'You play {yours}, the host plays {host} – that’s fine for a run without randomizer or ROM hack: everyone catches in their own game.', { yours: titleOf(pair.yours), host: titleOf(pair.host) })}</p>`}
+-        ${otherRelease && !pair && html`<p class="small muted">${t('join.otherRelease', 'Another release than the host’s ({host}) – that’s fine: everyone plays their own copy in this run.', { host: releaseOf(baseCrc) || `CRC32 ${baseCrc}` })}</p>`}`
++        `
+         : html`<p class="warning">${baseCrc && needsIdenticalRom(pack) ? t('join.missingExact', 'This run is {kind}, so everyone needs exactly the same release: {release}. Add it to your library first.', {
+             kind: pack.patch || pack.game?.hackId || pack.game?.hackName ? t('join.kindPatched', 'a ROM hack') : t('join.kindRandom', 'randomized'), release: releaseOf(baseCrc) || `CRC32 ${baseCrc}` })
+             + (ownReleases.length ? ' ' + t('join.youHave', 'You have: {list}.', { list: ownReleases.map((r) => releaseOf(r.crc) || r.name).join(', ') }) : '')
