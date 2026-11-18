@@ -1252,10 +1252,10 @@ index 792b343..ab75f80 100644
  export function logCheatRule(doc, manifest, by, allowed) {
    const solo = slotsOf(manifest).length === 1;
 diff --git a/web/styles.css b/web/styles.css
-index 86b58de..45fa494 100644
+index 86b58de..c4b73e2 100644
 --- a/web/styles.css
 +++ b/web/styles.css
-@@ -1516,3 +1516,53 @@ html.pad-nav .cart:focus .cart-body { transform: translateY(-4px) rotate(-0.6deg
+@@ -1516,3 +1516,57 @@ html.pad-nav .cart:focus .cart-body { transform: translateY(-4px) rotate(-0.6deg
  html.pad-nav .cart:focus .cart-slot { filter: drop-shadow(0 0 2px var(--focus)) drop-shadow(0 0 12px color-mix(in srgb, var(--focus) 70%, transparent)) drop-shadow(0 8px 12px #0008); }
  html.pad-nav .cart:focus .cart-title { color: var(--focus); }
  @media (prefers-reduced-motion: reduce) { html.pad-nav :focus { transition: none; } }
@@ -1289,26 +1289,30 @@ index 86b58de..45fa494 100644
 +.rom-picker .rom-list { width: 100%; min-height: 120px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; padding: 4px; }
 +.rom-picker .rom-list option { padding: 4px 6px; border-radius: 4px; }
 +
-+/* ---- Stefan Mario SoulLink: fullscreen – one slim bar above the game: the place, encounters and level cap on the left,
++/* ---- Stefan Mario SoulLink: game view (window and fullscreen) – one slim bar above the game: the place, encounters and level cap on the left,
 +   the live tracking next to it; the game below as big as it goes ---- */
-+.session.full.is-fs { padding: 4px 8px 4px; }
-+.session.is-fs .session-body, .session.is-fs .session-body.has-left { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
++html .session.full.smsl .session-body, html .session.full.smsl .session-body.has-left { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
 +  grid-template-areas: 'left side' 'stage stage'; gap: 4px 10px; padding-left: 0; }
-+.session.is-fs .session-body > .session-stage, .session.is-fs .session-body.has-left > .session-stage { grid-area: stage; min-height: 0; gap: 4px; }
++html .session.full.smsl .session-body > .session-stage, html .session.full.smsl .session-body.has-left > .session-stage { grid-area: stage; min-height: 0; gap: 4px; }
 +/* left part of the bar: sign, encounters and level cap side by side, scaled down */
-+.session.is-fs .session-body > .session-left.smsl-topbar, .session.is-fs .session-body.has-left > .session-left.smsl-topbar { grid-area: left; display: flex; flex-direction: row;
++html .session.full.smsl .session-body > .session-left.smsl-topbar, html .session.full.smsl .session-body.has-left > .session-left.smsl-topbar { grid-area: left; display: flex; flex-direction: row;
 +  align-items: center; gap: 8px; max-height: none; overflow: visible; zoom: .62; align-self: center; }
-+.session.is-fs .session-left.smsl-topbar > * { flex: none; margin: 0; }
++html .session.full.smsl .session-left.smsl-topbar > * { flex: none; margin: 0; }
 +/* right part: who's live, then the linked pairs side by side */
-+.session.is-fs .session-body > .session-side, .session.is-fs .session-body.has-left > .session-side { grid-area: side; flex-direction: row; flex-wrap: nowrap;
++html .session.full.smsl .session-body > .session-side, html .session.full.smsl .session-body.has-left > .session-side { grid-area: side; flex-direction: row; flex-wrap: nowrap;
 +  justify-content: center; align-items: center; gap: 8px; max-height: 92px; overflow: hidden; min-width: 0; }
-+.session.is-fs .session-side > section.screen { flex-direction: row !important; align-items: center; gap: 12px !important; padding: 4px 10px; max-width: 100%; min-width: 0; }
-+.session.is-fs .session-side > section.screen > .row { flex: none; flex-wrap: nowrap; gap: 6px; }
-+.session.is-fs .session-side .pairs { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 6px; overflow-x: auto; padding: 2px; border: 0; background: none; min-width: 0; }
-+.session.is-fs .session-side .pairs-head, .session.is-fs .session-side .grp-head { display: none; }
-+.session.is-fs .session-side .pair-row, .session.is-fs .session-side .grp-row { flex: none; min-width: 200px; margin: 0; }
-+.session.is-fs .session-side .pairs > p { margin: 0; white-space: nowrap; }
-+.session.is-fs .side-partner { max-height: 84px; overflow: hidden; }
++html .session.full.smsl .session-side > section.screen { flex-direction: row !important; align-items: center; gap: 12px !important; padding: 4px 10px; max-width: 100%; min-width: 0; }
++html .session.full.smsl .session-side > section.screen > .row { flex: none; flex-wrap: nowrap; gap: 6px; }
++html .session.full.smsl .session-side .pairs { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 6px; overflow-x: auto; padding: 2px; border: 0; background: none; min-width: 0; }
++html .session.full.smsl .session-side .pairs-head, html .session.full.smsl .session-side .grp-head { display: none; }
++html .session.full.smsl .session-side .pair-row, html .session.full.smsl .session-side .grp-row { flex: none; min-width: 200px; margin: 0; }
++html .session.full.smsl .session-side .pairs > p { margin: 0; white-space: nowrap; }
++html .session.full.smsl .side-partner { max-height: 84px; overflow: hidden; }
++html .session.full.smsl .session-body > .session-stage { order: 0; }
++@media (max-width: 860px) { html .session.full.smsl .session-body > .session-stage, html .session.full.smsl .session-body.has-left > .session-stage { height: min(72vh, 700px); } }
++.session.full.is-fs { padding: 4px 8px 4px; }
++/* the eye ("big picture"): the bar goes too */
++html .session.full.smsl.focus .session-body > .session-left, html .session.full.smsl.focus .session-body > .session-side { display: none !important; }
 diff --git a/web/views/archeats.mjs b/web/views/archeats.mjs
 new file mode 100644
 index 0000000..c19d505
@@ -1486,7 +1490,7 @@ index 0000000..c19d505
 +  </div>`;
 +}
 diff --git a/web/views/play.mjs b/web/views/play.mjs
-index 02947f9..226f631 100644
+index 02947f9..635b18f 100644
 --- a/web/views/play.mjs
 +++ b/web/views/play.mjs
 @@ -8,9 +8,10 @@ import { t, ago } from '../lib/i18n.mjs';
@@ -1542,13 +1546,13 @@ index 02947f9..226f631 100644
 -  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${isDs ? 'ds' : ''}`} data-v=${docVersion}>
 +  // Fullscreen (this build): the game as big as it goes – the place, encounters and level cap and the live tracking in
 +  // one slim bar above it
-+  const fsOverlay = fs && mode === 'full';
++  const fsOverlay = mode === 'full'; // (this build: in the window too, not only in fullscreen)
 +  const leftAside = (cls) => html`<aside class=${`session-left ${cls}`}>
 +        <${LocationSign} here=${here} live=${liveState.status === 'live'} isRun=${isRun} game=${liveRef.current?.entry} />
 +        ${isRun && names && html`<${RunStrip} mine=${myParty} onRules=${() => setRulesOpen(true)} />`}
 +        ${panelSide === 'left' && battlePanel}
 +      </aside>`;
-+  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${focus && mode === 'full' ? 'focus' : ''} ${isDs ? 'ds' : ''}`} data-v=${docVersion}>
++  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${focus && mode === 'full' ? 'focus' : ''} ${mode === 'full' ? 'smsl' : ''} ${isDs ? 'ds' : ''}`} data-v=${docVersion}>
 +    ${switchOpen && manifest && doc && html`<${RestartModal} r=${manifest} rules=${doc.get('rules')} onClose=${() => setSwitchOpen(false)} />`}
      <div class="mini-head">
        <${Led} on=${phase === 'running' && !paused} color="green" /><span class="grow ellipsis">${target.label}</span>
