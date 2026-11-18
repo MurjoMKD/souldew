@@ -243,7 +243,10 @@ export function mergeDocEntries(stored, incoming) {
     if (!src || typeof src !== 'object' || Array.isArray(src)) continue;
     for (const [k, raw] of Object.entries(src)) {
       if (UNSAFE_DOC_KEYS.has(k) || !valid(raw)) continue;
-      const e = { v: raw.v === undefined ? null : raw.v, t: Math.min(raw.t, maxT), by: typeof raw.by === 'string' ? raw.by.slice(0, DOC_MAX_BY) : '' };
+      const v = raw.v === undefined ? null : raw.v;
+      // the host's signed rules keep the timestamp they are signed for (the browser checked them before it stored them)
+      const exact = k === 'rules' && v && typeof v === 'object' && typeof v.sig === 'string' && v.rev === raw.t;
+      const e = { v, t: exact ? raw.t : Math.min(raw.t, maxT), by: typeof raw.by === 'string' ? raw.by.slice(0, DOC_MAX_BY) : '' };
       if (newer(e, out[k])) out[k] = e;
     }
   }

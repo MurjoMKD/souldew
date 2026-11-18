@@ -13,7 +13,7 @@ export { canEditRules };
  * timestamp, and a `host` announcement only with that same key.
  */
 export function hostGuard(doc, runId) {
-  const checked = new Map(); // payload + signature → true / false
+  const checked = new Map(); // payload + signature → 'signed' / true / false
   return (key, e) => {
     if (key === HOST_DOC_KEY) return !doc.hostKey || e.v?.key === doc.hostKey;
     if (key !== 'rules' || !doc.hostKey) return true;
@@ -21,8 +21,9 @@ export function hostGuard(doc, runId) {
     const id = `${e.v.sig}\n${rulesPayload(runId, e.v)}`;
     if (checked.has(id)) return checked.get(id);
     return verifyHostRules(runId, doc.hostKey, e.v, e.t).then((ok) => {
-      // (a browser without Ed25519 can't check – it takes a signed entry, as it took every entry before)
-      const yes = ok !== false;
+      // 'signed': the host's – taken at the exact timestamp it was signed for (RunDoc.merge doesn't clamp it then).
+      // A browser without Ed25519 can't check – it takes a signed entry, as it took every entry before (clamped).
+      const yes = ok === true ? 'signed' : ok !== false;
       if (checked.size > 200) checked.clear();
       checked.set(id, yes);
       return yes;
@@ -35,7 +36,9 @@ export function hostGuard(doc, runId) {
  * than anything in the doc, then written at it. Resolves to the stored value; throws when this computer isn't the host's.
  */
 export async function writeHostRules(doc, manifest, next, me) {
-  const res = await api.post(`/api/runs/${manifest.id}/rules`, { rules: unsigned(next), after: doc.clock || 0, me });
+  // newer than anything in the doc – and than the rules themselves, which may be signed for later than the doc's clock
+  const after = Math.max(doc.clock || 0, doc.entries.rules?.t || 0);
+  const res = await api.post(`/api/runs/${manifest.id}/rules`, { rules: unsigned(next), after, me });
   if (isHostKey(res.hostKey)) doc.hostKey = res.hostKey;
   doc.setAt('rules', res.rules, res.rules.rev);
   announceHost(doc, res.host, res.hostKey);
