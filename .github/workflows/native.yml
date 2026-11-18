@@ -88,9 +88,9 @@ jobs:
           key: native-win32-x64-${{ hashFiles('native/retro-host/**', 'native/ctr-host/compat.h', 'native/ctr-host/libretro.h', 'native/ctr-host/ffsound.h', 'scripts/build-native.mjs') }}
       - name: Tools
         # only the 64-bit MinGW toolchain (the mingw-w64 metapackage also pulls the 32-bit one: ~290 MB from a mirror
-        # that has been crawling), with retries and timeouts so a stalled mirror fails over instead of hanging the job
+        # that has been crawling: 93 MB took 17 min on 18.11.), with retries and timeouts so a stalled mirror fails over instead of hanging the job
         if: steps.cache.outputs.cache-hit != 'true'
-        timeout-minutes: 20
+        timeout-minutes: 45
         run: |
           APT="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           sudo apt-get $APT update -y
