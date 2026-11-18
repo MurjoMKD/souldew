@@ -22,7 +22,9 @@
   on or off, changed its speed, loaded a state, paused or changed the turbo sound setting, the 3DS player's sound fell a
   little further behind the picture – after a few switches a quarter of a second, so sound effects came clearly late,
   and it took minutes of play to catch up. Now the sound is back to about 60 ms behind the picture right after each of
-  these, and after a real hiccup of the computer within a few seconds. The sped-up sound with “Sped-up original” or
+  these, and after a real hiccup of the computer within seconds. A computer whose sound stalls again and again (every
+  few seconds) keeps a slightly bigger buffer while that goes on, so the sound doesn't break up at every stall – back
+  down within a minute once it stops. The sped-up sound with “Sped-up original” or
   “Plain” also comes sooner: about an eighth of a second behind the picture when the game holds its speed, instead of
   almost half a second, and never more than about a third of a second – when the game gets faster, it catches up within
   a moment instead of trailing the picture by seconds.

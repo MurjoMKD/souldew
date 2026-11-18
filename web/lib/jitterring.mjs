@@ -6,7 +6,8 @@
 // - Running dry: the last sample dies away over ~3 ms instead of dropping to zero (a step is a click), and the sound
 //   that comes back fades in over 4 ms. With `prime` (the 3DS page) it then waits until that many frames are there
 //   again, one short gap rather than a crackle of tiny ones – and every gap raises `prime` by half (up to `primeMax`),
-//   so a PC whose sound arrives late now and then gets a buffer that covers it; after CLEAN s without a gap it shrinks.
+//   so a PC whose sound arrives late now and then gets a buffer that covers it; after CLEAN s without a gap it shrinks
+//   (longer after repeated gaps, and not while it only just covers the stalls – it would be a gap again at the next).
 // - A break the player asked for (`rebase`: a speed step, turbo on / off, another sound mode, a loaded state, a reset,
 //   the game going on after a pause – and the first seconds of a game) is no gap: `prime` goes back to its base, running
 //   dry for a while after it counts for nothing, and whatever piles up behind it (the host catching up, the sound from
@@ -36,8 +37,11 @@ const LAND = 0.00025; // back at speed 1: the reading position drifts this much 
 const FADE_IN = 128; // frames
 const DECAY = 0.96; // per frame, of the last sample when running dry (−40 dB in ~110 frames, ~3 ms)
 const XFADE = 256; // frames of crossfade when skipping ahead
-const CLEAN = 6; // seconds without a gap before `prime` shrinks again (by SHRINK; until 2.8.2: 30 s, by 0.8)
+const CLEAN = 6; // seconds without a gap before `prime` shrinks again (by SHRINK; until 2.8.2: 30 s, by 0.8) – doubled for
+// each recent gap (STRIKES at most): a PC whose sound stalls every few seconds keeps the buffer that covers it
 const SHRINK = 0.7;
+const STRIKES = 3;
+const FORGIVE = 30; // seconds without a gap that take one of those back
 const GRACE = 1.5; // seconds after a break the player asked for (`rebase`) in which running dry is no gap …
 const START_GRACE = 3; // … and after the first sound (a game's first seconds: loading, shaders)
 const SETTLE = 0.03; // seconds above `prime` that are skipped within that time (the sound piled up behind the break)
@@ -104,7 +108,9 @@ export class JitterRing {
     this.fill = 0; // the buffered frames, averaged over ~0.4 s (the speed control's measure)
     this.draining = false;
     this.filling = false;
-    this.clean = 0; // frames played since the last gap
+    this.clean = 0; // frames played since the last gap (or since `prime` last shrank)
+    this.strikes = 0; // recent gaps (each doubles the time before `prime` shrinks)
+    this.calm = 0; // frames played since the last gap (or since a strike was taken back)
     this.grace = 0; // frames left in which running dry is no gap and a pile-up is skipped (see rebase)
     this.heard = false; // has any sound played since the ring was made (START_GRACE begins then)
     this.settle = Math.round(rate * SETTLE);
@@ -269,6 +275,9 @@ export class JitterRing {
   /** The next n frames into outL / outR. */
   take(outL, outR, n) {
     let lag = this.lag;
+    // a close call (the buffer nearly ran dry – a stall it only just covered): the larger `prime` was needed, it doesn't
+    // shrink yet (until 2.8.2's review it shrank 6 s after the last gap, and the next stall was a gap again)
+    if (this.started && !this.priming && !this.paused && this.grace <= 0 && lag < this.prime >> 2) this.clean = this.calm = 0;
     this.fill += (lag - this.fill) * Math.min(1, n / (this.rate * 0.4));
     if (this.priming && lag >= this.prime) {
       this.priming = false;
@@ -340,12 +349,14 @@ export class JitterRing {
           }
           this.started = true;
           this.clean++;
+          this.calm++;
         } else if (this.started) {
           // ran dry – a gap, unless the game is paused (then nothing was due) or right after a break the player asked for
           if (this.grace > 0) this.stats.breaks++;
           else if (!this.paused) {
             this.stats.underruns++;
-            this.clean = 0;
+            this.clean = this.calm = 0;
+            this.strikes = Math.min(STRIKES, this.strikes + 1);
             if (this.base) this.prime = Math.min(this.primeMax, Math.round(this.prime * 1.5));
           }
           this.halt();
@@ -368,9 +379,13 @@ export class JitterRing {
       }
     }
     if (this.grace > 0 && this.heard) this.grace = Math.max(0, this.grace - n);
-    if (this.base && this.prime > this.base && this.clean > this.rate * CLEAN) {
+    if (this.base && this.prime > this.base && this.clean > this.rate * CLEAN * 2 ** this.strikes) {
       this.prime = Math.max(this.base, Math.round(this.prime * SHRINK));
       this.clean = 0;
+    }
+    if (this.strikes && this.calm > this.rate * FORGIVE) {
+      this.strikes--;
+      this.calm = 0;
     }
   }
 }
