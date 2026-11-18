@@ -63,8 +63,12 @@ export class RomMusic {
    * `send(payload)`: a ROMREAD to the host (resolves false when it never got there). `tell(msg, transfer)`: to the
    * worklet. `ctx`: the AudioContext (decoding AAC, its rate). `log(e)`: the music log for "Save diagnostics".
    */
-  constructor({ send, tell, ctx = null, rate = 32728, log = () => {}, index = null, fetchBytes = null }) {
+  constructor({ send, tell, ctx = null, rate = 32728, log = () => {}, index = null, fetchBytes = null, ranges = null }) {
     this.send = send;
+    // `ranges(tag, pairs)`: where the music streams of a RomFS are ([start, end) in its level 3) – the core recognises the
+    // voices that play them and leaves them out of the game's sound while it fast-forwards (sound effects: sfxplayer.mjs)
+    this.ranges = ranges;
+    this.streamRanges = new Map(); // tag → Map(start → end)
     // the server's index of the game file's own streams (shared/ctr/musicindex.mjs) and its bytes over HTTP – used for
     // the RomFS whose tables are that file's (sig); any other RomFS (an update's, a mod's) is read through the core
     this.index = index; // Promise<index | null> | null
@@ -193,6 +197,8 @@ export class RomMusic {
           // its frames (read when the game first reads it), with the sound archive's loop from the index
           this.loops = idx.loops || {};
           const known = new Map(idx.streams.map((x) => [x.start, x]));
+          for (const x of idx.streams) this.addRange(need.tag, x.start, x.size);
+          this.tellRanges(need.tag);
           for (const f of files) {
             const k = known.get(f.start);
             if (!k) this.tracker.setInfo(need.tag, f, null);
@@ -207,6 +213,7 @@ export class RomMusic {
         let info = head ? sniffStream(head) : null;
         if (info?.codec === 'adts') info = await this.adtsInfo(need.tag, f, info);
         this.tracker.setInfo(need.tag, f, info);
+        if (info && this.addRange(need.tag, f.start, f.size)) this.tellRanges(need.tag);
         if (info) this.log({ type: 'stream', path: f.path, codec: info.codec, rate: info.rate, seconds: +(info.samples / info.rate).toFixed(1), loop: info.loop || null, jingle: isJingle(info, f.path) });
       }
     } catch (e) {
@@ -214,6 +221,31 @@ export class RomMusic {
       else this.tracker.setInfo(need.tag, need.file, null);
       this.log({ type: 'error', where: need.type, message: String(e?.message || e) });
     }
+  }
+
+  /** A music stream at [start, start + size) of RomFS `tag` (jingles too – they are music, not sound effects). */
+  addRange(tag, start, size) {
+    let m = this.streamRanges.get(tag);
+    if (!m) this.streamRanges.set(tag, (m = new Map()));
+    if (m.get(start) === start + size) return false;
+    m.set(start, start + size);
+    return true;
+  }
+
+  tellRanges(tag) {
+    const m = this.streamRanges.get(tag);
+    if (!this.ranges || !m) return;
+    try {
+      this.ranges(tag, [...m].sort((a, b) => a[0] - b[0]));
+    } catch {
+      // the page's problem
+    }
+  }
+
+  /** Has a track ever been ready to play (the worklet has the game's music)? */
+  get hasTrack() {
+    for (const t of this.tracks.values()) if (t.state === 'ready') return true;
+    return false;
   }
 
   /** An AAC stream: its frames (the whole file), its loop from the sound archive. */

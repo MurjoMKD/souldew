@@ -9,8 +9,11 @@
 // effect when the sound that arrived after them is played, not when they arrive. { type: 'ffsound', f } is the 3DS
 // host's own sound while it fast-forwards (interleaved stereo, the game's pace – ctrhost.c message 8): it goes straight to
 // the mixer's recording (TurboMixer.ffSound), not through the buffer – it is not played as it is, and there is k times
-// more of it than real time. { type: 'tap', frames } records what
-// comes out and sends it back with the buffer's numbers (tests, diagnostics); the numbers also go to the page once a
+// more of it than real time. { type: 'sfx', f, onsets, ok } is the same with the music voices left out by the core (ctrhost.c
+// message 11): the game's sound effects, played over the ROM track at their normal speed (TurboMixer.sfxSound,
+// sfxplayer.mjs). { type: 'tap', frames } records what
+// comes out and sends it back with the buffer's numbers (tests, diagnostics; `part: 'sfx'`: only what the sound effects add);
+// the numbers also go to the page once a
 // second ({ type: 'ring' }).
 import { TurboMixer } from './turboaudio.mjs';
 import { JitterRing } from './jitterring.mjs';
@@ -42,9 +45,11 @@ class NativeAudio extends AudioWorkletProcessor {
         return;
       }
       if (d?.type === 'ffsound') return this.ffSound(d.f);
+      if (d?.type === 'sfx') return this.sfxSound(d);
       if (d?.type === 'tap') {
         const n = Math.max(0, Math.min(d.frames | 0, sampleRate * 120));
-        this.tap = n ? { l: new Float32Array(n), r: new Float32Array(n), at: 0 } : null;
+        this.tap = n ? { l: new Float32Array(n), r: new Float32Array(n), at: 0, sfx: d.part === 'sfx' } : null;
+        this.mixer.sfxSolo = this.tap?.sfx ? { l: null, r: null, n: 0 } : null; // (only the sound effects' share)
         return;
       }
       if (d?.inband) this.inband.push({ at: this.ring.pushed, m: d });
@@ -82,6 +87,29 @@ class NativeAudio extends AudioWorkletProcessor {
     }
   }
 
+  /** The game's sound effects without its music (interleaved) into the mixer, split into its two channels. */
+  sfxSound(d) {
+    if (this.plain || this.broken || !(d.f instanceof Float32Array)) return;
+    const n = d.f.length >> 1;
+    this.split(d.f, n);
+    try {
+      this.mixer.sfxSound(this.ffL, this.ffR, n, d.onsets || [], d.ok !== false);
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  split(f, n) {
+    if (this.ffL.length < n) {
+      this.ffL = new Float32Array(n);
+      this.ffR = new Float32Array(n);
+    }
+    for (let i = 0; i < n; i++) {
+      this.ffL[i] = f[i * 2];
+      this.ffR[i] = f[i * 2 + 1];
+    }
+  }
+
   fail(err) {
     if (!this.broken) this.port.postMessage({ type: 'mixer', e: { type: 'error', message: String(err?.message || err) } });
     this.broken = true;
@@ -112,12 +140,22 @@ class NativeAudio extends AudioWorkletProcessor {
       if (R !== L) R.set(this.inR.subarray(0, n));
     }
     this.measure(L, R, n);
-    if (this.tap) this.record(L, R, n);
+    if (this.tap?.sfx) {
+      const x = this.mixer.sfxSolo;
+      if (x?.n === n) this.record(x.l, x.r, n);
+      else this.record(this.zeros(n), this.zeros(n), n);
+      if (x) x.n = 0;
+    } else if (this.tap) this.record(L, R, n);
     if ((this.told += n) >= sampleRate) {
       this.told = 0;
       this.port.postMessage({ type: 'ring', ring: this.ringStats() });
     }
     return true;
+  }
+
+  zeros(n) {
+    if (!this.zb || this.zb.length < n) this.zb = new Float32Array(n);
+    return this.zb.subarray(0, n);
   }
 
   /** The buffer's numbers so far (jitterring.mjs stats) and its state now. */
@@ -134,6 +172,7 @@ class NativeAudio extends AudioWorkletProcessor {
     t.at += k;
     if (t.at < t.l.length) return;
     this.tap = null;
+    this.mixer.sfxSolo = null;
     this.port.postMessage({ type: 'tap', l: t.l, r: t.r, sampleRate, ring: this.ringStats() }, [t.l.buffer, t.r.buffer]);
   }
 
