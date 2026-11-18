@@ -49,7 +49,7 @@
   you fast-forwarded. Now souldew tells the game's music apart from its other sounds inside the emulator and plays those
   sounds over the music: each one starts the moment it happens on screen and plays at its normal pitch – no chipmunk
   sounds, and nothing piles up or comes late, however long you fast-forward (a sound that goes on and on is cut to what
-  fits). Where souldew can't tell the music apart for sure, fast-forward sounds as before. “Sped-up original”, “Plain”
+  fits, and a held key the game repeats many times a second plays as one click instead of a buzz). Where souldew can't tell the music apart for sure, fast-forward sounds as before. “Sped-up original”, “Plain”
   and “Mute” are unchanged, and nothing changes at normal speed.
 - **DS and the other games in the fast player: steady fast-forward sound** (thanks to a player on Discord). With
   “Sped-up original” or “Plain” the sound jumped in pitch four times a second and left out bits whenever the computer
