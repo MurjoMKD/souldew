@@ -2803,5 +2803,10 @@
   "ext.saveWaiting": "En attente de {file} – sauvegarde une fois dans le jeu.",
   "ext.saveRead": "Lit {file} · dernière lecture {when}",
   "ext.saveWatching": "Lit {file}",
-  "play.missedDupe": "{species} sauvage s’est échappé – clause des doublons, il ne compte pas."
+  "play.missedDupe": "{species} sauvage s’est échappé – clause des doublons, il ne compte pas.",
+  "ctl.keepKey": "Garder {key}",
+  "ctl.ownerMenu": "le menu de souldew",
+  "ctl.ownerSystem": "le système",
+  "ctl.refusedNone": "{key}, ta touche pour « {action} », est prise par {owner} – pour l’instant elle n’a pas de touche. Clique dessus pour en choisir une autre.",
+  "ctl.refusedNow": "{key}, ta touche pour « {action} », est prise par {owner} – pour l’instant elle est sur {now}. Clique dessus pour en choisir une autre."
 }

@@ -303,6 +303,24 @@ export function resolveHotkeys(saved, lay = current, mac = isMac()) {
   return Object.fromEntries(HOTKEYS.map((h) => [h.id, out[h.id]]));
 }
 
+/**
+ * The keys the player set for a shortcut that it can't have here – one souldew's menu or the system has (a 2.8.1
+ * fast-forward key on F11, Windows / Linux fullscreen) – while it plays on another key now: [{ id, key, why }] (why:
+ * 'menu' / 'system'). Settings › Controls says so under the row, instead of the key quietly going back to Tab.
+ */
+export function refusedHotkeys(saved, lay = current, mac = isMac()) {
+  const out = [];
+  for (const h of HOTKEYS) {
+    const s = saved?.[h.id];
+    if (!s || isNone(s)) continue;
+    const keys = stored(s, lay, mac);
+    const bad = keys.filter((c) => hotkeyBindable(c.keyCode) && reservedCombo(c, mac));
+    // (only when none of its own keys is left: one that still works is no surprise)
+    if (bad.length && bad.length === keys.length) out.push({ id: h.id, key: bad[0], why: reservedCombo(bad[0], mac) });
+  }
+  return out;
+}
+
 /** The default keys of a shortcut (combos for this computer). */
 export const hotkeyDefaults = (id, mac = isMac()) => (HOTKEYS.find((h) => h.id === id)?.keys || []).map((k) => combo(k, mac));
 

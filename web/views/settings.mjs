@@ -7,7 +7,7 @@ import { api } from '../lib/api.mjs';
 import { applyTheme } from '../lib/theme.mjs';
 import { BUTTONS, PRESETS, bindable, keyLabel, keyFor, resolve as resolveControls, presetMap, activePreset, detectLayout, currentLayout,
   PAD_LABELS, PAD_PRESETS, PAD_HOTKEY_IDS, PAD_HOTKEY_DEFAULTS, padMap, padFamily, padLabel, pickPad, padKey, looksLikePad,
-  HOTKEY_IDS, HOTKEY_ROWS, isHotkeyId, resolveHotkeys, hotkeyBindable, sameCombo, plainCombo, combo, reservedCombo, assignKey, clearKey, changedBindings,
+  HOTKEY_IDS, HOTKEY_ROWS, isHotkeyId, resolveHotkeys, refusedHotkeys, hotkeyBindable, sameCombo, plainCombo, combo, reservedCombo, assignKey, clearKey, changedBindings,
   padHotkeys, assignPad, PAD_NONE } from '../lib/controls.mjs';
 import { buttonLabel, comboLabel, hotkeyLabel } from './guide.mjs';
 import { UpdateSection } from './update.mjs';
@@ -106,6 +106,22 @@ function ControlsSection({ saved, save }) {
   // the note under a row: while listening "press a key" with "No key" (shortcuts), else what the last change did
   const note = (at) => {
     const listening = listen && rowOf(listen) === at;
+    // a key the player set that this computer's menu or system has (a 2.8.1 fast-forward key on F11): said here, with
+    // the key it plays on now – until another key is picked, or that one is kept
+    const refused = !listening && msg?.at !== at && refusedHotkeys(saved).find((r) => rowOf(r.id) === at);
+    if (refused) {
+      const now = hot[refused.id];
+      const keep = () => {
+        const next = { ...saved };
+        delete next[refused.id];
+        store(Object.keys(next).length ? next : null);
+      };
+      return html`<tr class="ctl-note"><td colspan="3"><div class="note row" role="status"><span class="grow">${now.length
+        ? t('ctl.refusedNow', '{key}, your key for “{action}”, is taken by {owner} – it is on {now} for now. Click it to pick another key.', { key: comboLabel(refused.key), action: nameOf(refused.id), now: comboLabel(now[0]), owner: refused.why === 'menu' ? t('ctl.ownerMenu', 'souldew’s menu') : t('ctl.ownerSystem', 'the system') })
+        : t('ctl.refusedNone', '{key}, your key for “{action}”, is taken by {owner} – it has no key for now. Click it to pick another key.', { key: comboLabel(refused.key), action: nameOf(refused.id), owner: refused.why === 'menu' ? t('ctl.ownerMenu', 'souldew’s menu') : t('ctl.ownerSystem', 'the system') })}</span>
+        ${now.length > 0 && html`<button class="btn small" onClick=${keep}>${t('ctl.keepKey', 'Keep {key}', { key: comboLabel(now[0]) })}</button>`}
+      </div></td></tr>`;
+    }
     if (!listening && msg?.at !== at) return null;
     const text = msg?.at === at ? msg.text : t('ctl.pressFor', 'Press the new key for “{action}” – Esc cancels.', { action: nameOf(listen) });
     // (mousedown: the key cap keeps the focus, so it is still listening when the click arrives)
