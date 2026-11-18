@@ -116,7 +116,7 @@ test('a sound that goes on (ambience): natural pitch in pieces from where the ga
 });
 
 test('a newer sound cuts the older one at the latest where it began – at most three at once, nothing queued', () => {
-  const p = new SfxPlayer(SR);
+  const p = new SfxPlayer(SR, { burst: 0 }); // (all six arrive at one moment of real time: no burst merging here)
   const L = new Float32Array(FRAME).fill(0.3);
   for (let i = 0; i < 6; i++) {
     p.push(L, L, FRAME, [0]);
@@ -132,6 +132,54 @@ test('a newer sound cuts the older one at the latest where it began – at most 
   // the older readers never play past the start of the next sound
   const starts = p.readers.map((x) => x.start);
   for (let i = 0; i + 1 < p.readers.length; i++) assert.ok(p.readers[i].end <= starts[i + 1]);
+});
+
+test('a held cursor key repeating at 17× (a key-on every 34 ms of game time, ~2 ms real): one sound per press, no buzz, never dragging on', () => {
+  const k = 17;
+  const p = new SfxPlayer(SR);
+  const click = Math.round(0.02 * SR); // each repeat: a 20 ms 1 kHz click
+  const rep = Math.round(0.034 * SR);
+  const pressAt = [0.5, 1.5]; // wall seconds; each tap holds the key for 120 ms of real time = ~2 s of game time
+  const hold = 0.12 * k * SR;
+  const blocks = Math.ceil((2.5 * SR) / N);
+  const out = new Float32Array(blocks * N);
+  const L = new Float32Array(FRAME);
+  const oL = new Float32Array(N);
+  let made = 0;
+  let due = 0;
+  for (let b = 0; b < blocks; b++) {
+    due += k * N;
+    while (due >= FRAME) {
+      const onsets = [];
+      L.fill(0);
+      for (const tp of pressAt) {
+        const g0 = Math.round(tp * k * SR);
+        for (let g = g0; g < g0 + hold; g += rep) {
+          if (g >= made && g < made + FRAME) onsets.push(g - made);
+          for (let i = Math.max(0, g - made); i < FRAME && made + i < g + click; i++) L[i] += 0.5 * Math.sin((2 * Math.PI * 1000 * (made + i - g)) / SR);
+        }
+      }
+      p.push(L, L, FRAME, onsets);
+      made += FRAME;
+      due -= FRAME;
+    }
+    oL.fill(0);
+    p.render(oL, oL, N);
+    out.set(oL, b * N);
+  }
+  assert.equal(p.stats.started, 2, `started ${p.stats.started} (one per press)`);
+  assert.ok(p.stats.merged > 60, `merged ${p.stats.merged}`);
+  for (const tp of pressAt) {
+    const s0 = Math.round(tp * SR);
+    let s = s0;
+    while (Math.abs(out[s]) < 0.05) s++;
+    assert.ok((s - s0) / SR < 0.03, `first click ${(((s - s0) / SR) * 1000).toFixed(1)} ms after the press`);
+    // the press's sound lasts at most burstCap (0.3 s) plus a fade – then quiet until the next press
+    let last = s;
+    for (let i = s; i < Math.min(out.length, s0 + Math.round(0.9 * SR)); i++) if (Math.abs(out[i]) > 0.01) last = i;
+    assert.ok((last - s0) / SR < 0.35, `sound of the press ends ${((last - s0) / SR).toFixed(2)} s after it`);
+    assert.ok(Math.max(...out.subarray(s0, s0 + Math.round(0.4 * SR)).map(Math.abs)) < 1, 'no pile-up (clipping)');
+  }
 });
 
 test('where the core kept the music in (unsure), nothing is played', () => {

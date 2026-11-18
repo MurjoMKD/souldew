@@ -25,14 +25,15 @@
 // Plain DSP without Web Audio types (AudioWorklet, node --test).
 
 export class SfxPlayer {
-  constructor(sampleRate, { seconds = 24, voices = 3, maxEvent = 1.2, overlap = 0.25, merge = 0.03, fadeIn = 0.002, fadeOut = 0.015, xfade = 0.02, lead = 0.01 } = {}) {
+  constructor(sampleRate, { seconds = 24, voices = 3, maxEvent = 1.2, overlap = 0.25, merge = 0.03, burst = 0.15, burstCap = 0.3, fadeIn = 0.002, fadeOut = 0.015, xfade = 0.02, lead = 0.01 } = {}) {
     const S = (s) => Math.max(1, Math.round(s * sampleRate));
     this.sr = sampleRate;
     this.cap = S(seconds);
     this.l = new Float32Array(this.cap);
     this.r = new Float32Array(this.cap);
     this.written = 0; // samples of the game's sound ever pushed (its own pace)
-    this.k = { voices, maxEvent: S(maxEvent), overlap: S(overlap), merge: S(merge), fadeIn: S(fadeIn), fadeOut: S(fadeOut), xfade: S(xfade), lead: S(lead) };
+    this.rendered = 0; // samples of real time rendered so far (the clock for `burst`)
+    this.k = { voices, burst: burst > 0 ? S(burst) : 0, burstCap: S(burstCap), maxEvent: S(maxEvent), overlap: S(overlap), merge: S(merge), fadeIn: S(fadeIn), fadeOut: S(fadeOut), xfade: S(xfade), lead: S(lead) };
     this.readers = []; // { start, pos, end, g, gs, played, cutIn, cont, done }
     this.newest = null;
     this.stats = { onsets: 0, merged: 0, started: 0, conts: 0, dropped: 0, underruns: 0 };
@@ -78,6 +79,14 @@ export class SfxPlayer {
       this.stats.merged++; // (a few voices keyed on together: one sound – the reader plays all of it)
       return;
     }
+    // a burst of key-ons within a few ms of real time – a held cursor key repeating at the game's 17× pace, a key-on
+    // every ~2 ms here: cutting the reader at each one buzzes (~100 Hz). The burst's first key-on started the sound right
+    // away; the rest are part of it – it plays on at 1× for at most `burstCap` of the game's sound, never dragging on
+    if (nw && !nw.done && !nw.cont && this.rendered - nw.realStart < this.k.burst) {
+      this.stats.merged++;
+      nw.end = Math.min(nw.end, nw.start + this.k.burstCap);
+      return;
+    }
     if (nw && !nw.done) {
       nw.end = Math.min(nw.end, at);
       nw.cutIn = Math.min(nw.cutIn, this.k.overlap);
@@ -91,7 +100,7 @@ export class SfxPlayer {
   }
 
   start(at, cont, fadeIn) {
-    const x = { start: at, pos: at, end: Infinity, g: 0, gs: 1 / Math.max(1, fadeIn), played: 0, cutIn: Infinity, cont, done: false };
+    const x = { start: at, realStart: this.rendered, pos: at, end: Infinity, g: 0, gs: 1 / Math.max(1, fadeIn), played: 0, cutIn: Infinity, cont, done: false };
     this.readers.push(x);
     this.newest = x;
     this.stats[cont ? 'conts' : 'started']++;
@@ -105,6 +114,7 @@ export class SfxPlayer {
 
   /** Adds the sound effects into out (n samples), at a gain going from g0 to g1 over the block. */
   render(outL, outR, n, g0 = 1, g1 = g0) {
+    this.rendered += n;
     if (!this.readers.length) return;
     const k = this.k;
     const mono = outR === outL;
