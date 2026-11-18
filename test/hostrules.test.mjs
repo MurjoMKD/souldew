@@ -354,6 +354,50 @@ test('the server signs only on the host’s computer; a joined run learns a key 
   }
 });
 
+test('a run from before 2.8.2: the partner learns the host key only from an announcement that can be the host’s', async () => {
+  const realFetch = globalThis.fetch;
+  const metaCalls = [];
+  globalThis.fetch = (u, o) => {
+    metaCalls.push([u, JSON.parse(o.body)]);
+    return Promise.resolve(new Response('{}', { headers: { 'content-type': 'application/json' } }));
+  };
+  try {
+    const built = await build();
+    const legacy = { ...structuredClone(built), imported: true, rules: { lives: 0 } };
+    delete legacy.hostKey;
+    delete legacy.host;
+    const key = built.hostKey;
+    const other = (await build()).hostKey;
+    const t = Date.now();
+    const setup = () => {
+      const d = mkDoc('me-dev', legacy.id);
+      WH.setupHostRules(d, legacy, { me: 'p2' });
+      return d;
+    };
+    // another player announcing themselves as the host (their own slot), or for this computer's player: ignored
+    let d = setup();
+    d.merge({ [H.HOST_DOC_KEY]: { v: { slot: 'p2', key: other }, t, by: 'partner-dev' } });
+    assert.equal(d.hostKey, null, 'not the run’s host player (p1, the creator)');
+    // from this very device (a copy of an old doc): ignored
+    d = setup();
+    d.merge({ [H.HOST_DOC_KEY]: { v: { slot: 'p1', key: other }, t, by: 'me-dev' } });
+    assert.equal(d.hostKey, null);
+    // a device that isn't the one playing the host's player: ignored – the one that is: taken
+    d = setup();
+    d.merge({ 'live:p1': { v: { party: [] }, t, by: 'host-dev' } });
+    d.merge({ [H.HOST_DOC_KEY]: { v: { slot: 'p1', key: other }, t, by: 'p3-dev' } });
+    assert.equal(d.hostKey, null, 'p1 is played on another device');
+    d.merge({ [H.HOST_DOC_KEY]: { v: { slot: 'p1', key }, t: t + 1, by: 'host-dev' } });
+    assert.equal(d.hostKey, key);
+    // learned once: never another
+    d.merge({ [H.HOST_DOC_KEY]: { v: { slot: 'p1', key: other }, t: t + 2, by: 'host-dev' } });
+    assert.equal(d.hostKey, key);
+    assert.deepEqual(metaCalls.map(([, b]) => b), [{ hostKey: key, host: 'p1' }]);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 // ---- the log -------------------------------------------------------------------------------------------------------
 
 test('every change of the host goes to the log, in clear words', () => {

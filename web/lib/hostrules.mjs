@@ -83,13 +83,21 @@ export function setupHostRules(doc, manifest, { me, reload = () => {} } = {}) {
       .catch(() => {}); // (server busy: the next time the run opens)
     return () => {};
   }
-  // another player's computer: learn the key from the host's announcement (a run from before 2.8.2)
+  // another player's computer: learn the key from the host's announcement (a run from before 2.8.2) – trust on first
+  // use, so only an announcement that can be the host's: for the run's host player (`host`, older runs: p1 – the
+  // creator), not for this computer's own player, not from this device, and – when the doc knows which device plays the
+  // host's player (its live team, `live:<slot>`) – from that device. (Device ids aren't proof: the run from before
+  // 2.8.2 has nothing signed to check against. A new run's invite carries the key, nothing is learned then.)
+  const hostSlot = hostSlotOf(manifest);
   const adopt = () => {
-    const v = doc.get(HOST_DOC_KEY);
-    if (doc.hostKey || !isHostKey(v?.key)) return;
+    const e = doc.entries[HOST_DOC_KEY];
+    const v = e?.v;
+    if (doc.hostKey || !isHostKey(v?.key) || v.slot !== hostSlot || (me && v.slot === me) || e.by === doc.by) return;
+    const plays = doc.entries[`live:${hostSlot}`]?.by;
+    if (plays && plays !== e.by) return;
     doc.hostKey = v.key;
     api.post(`/api/runs/${manifest.id}/meta`, { hostKey: v.key, host: v.slot }).then(reload, () => {});
   };
   adopt();
-  return doc.subscribe((keys) => keys.includes(HOST_DOC_KEY) && adopt());
+  return doc.subscribe((keys) => (keys.includes(HOST_DOC_KEY) || keys.includes(`live:${hostSlot}`)) && adopt());
 }
