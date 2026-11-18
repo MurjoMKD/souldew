@@ -1211,7 +1211,7 @@ index 792b343..ab75f80 100644
  export function logCheatRule(doc, manifest, by, allowed) {
    const solo = slotsOf(manifest).length === 1;
 diff --git a/web/styles.css b/web/styles.css
-index 86b58de..e0b83b1 100644
+index 86b58de..45fa494 100644
 --- a/web/styles.css
 +++ b/web/styles.css
 @@ -1516,3 +1516,53 @@ html.pad-nav .cart:focus .cart-body { transform: translateY(-4px) rotate(-0.6deg
@@ -1255,9 +1255,9 @@ index 86b58de..e0b83b1 100644
 +  grid-template-areas: 'left side' 'stage stage'; gap: 4px 10px; padding-left: 0; }
 +.session.is-fs .session-body > .session-stage, .session.is-fs .session-body.has-left > .session-stage { grid-area: stage; min-height: 0; gap: 4px; }
 +/* left part of the bar: sign, encounters and level cap side by side, scaled down */
-+.session.is-fs .session-body > .session-left.fs-bar, .session.is-fs .session-body.has-left > .session-left.fs-bar { grid-area: left; display: flex; flex-direction: row;
++.session.is-fs .session-body > .session-left.smsl-topbar, .session.is-fs .session-body.has-left > .session-left.smsl-topbar { grid-area: left; display: flex; flex-direction: row;
 +  align-items: center; gap: 8px; max-height: none; overflow: visible; zoom: .62; align-self: center; }
-+.session.is-fs .session-left.fs-bar > * { flex: none; margin: 0; }
++.session.is-fs .session-left.smsl-topbar > * { flex: none; margin: 0; }
 +/* right part: who's live, then the linked pairs side by side */
 +.session.is-fs .session-body > .session-side, .session.is-fs .session-body.has-left > .session-side { grid-area: side; flex-direction: row; flex-wrap: nowrap;
 +  justify-content: center; align-items: center; gap: 8px; max-height: 92px; overflow: hidden; min-width: 0; }
@@ -1445,7 +1445,7 @@ index 0000000..c19d505
 +  </div>`;
 +}
 diff --git a/web/views/play.mjs b/web/views/play.mjs
-index 02947f9..dcabf4e 100644
+index 02947f9..9124ca1 100644
 --- a/web/views/play.mjs
 +++ b/web/views/play.mjs
 @@ -8,9 +8,10 @@ import { t, ago } from '../lib/i18n.mjs';
@@ -1509,7 +1509,7 @@ index 02947f9..dcabf4e 100644
 -        ${isRun && names && html`<${RunStrip} mine=${myParty} onRules=${() => setRulesOpen(true)} />`}
 -        ${panelSide === 'left' && battlePanel}
 -      </aside>`}
-+      ${hasLeft && leftAside(fsOverlay ? 'fs-bar' : '')}
++      ${hasLeft && leftAside(fsOverlay ? 'smsl-topbar' : '')}
        <div class="session-stage">
          <div class="session-screen" onClick=${focusGame}>
            <div class="console-screen" style=${`--arn:${arn}`}>
