@@ -475,7 +475,7 @@ index 0000000..17a3f6d
 +        return;
 +    const uint64_t end = offset + len;
 +    // the streams this read touches (sorted, non-overlapping files)
-+    auto r = std::upper_bound(it->r.begin(), it->r.end(), std::make_pair(offset, ~0ull));
++    auto r = std::upper_bound(it->r.begin(), it->r.end(), std::pair<uint64_t, uint64_t>{offset, ~uint64_t{0}});
 +    if (r != it->r.begin())
 +        --r;
 +    for (; r != it->r.end() && r->first < end; ++r) {
