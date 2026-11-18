@@ -355,7 +355,7 @@ function pcmTrack(seconds, seed, loop = null) {
   for (let i = 0; i < n; i++) {
     a = a * 0.9 + (r() - 0.5) * 6000; // (low-passed noise: music-like, not white)
     l[i] = Math.round(a);
-    rr[i] = Math.round(-a * 0.8);
+    rr[i] = Math.round(a * 0.8);
   }
   return { l, r: rr, rate: SR, loop };
 }
@@ -470,7 +470,9 @@ test('alignLag finds the game\'s place in the track to the sample, and says so w
   const src = new PcmSource(A);
   const game = new Float32Array(2046);
   for (let i = 0; i < game.length; i++) game[i] = (A.l[20000 + i] + A.r[20000 + i]) / 65536;
-  assert.deepEqual(alignLag(game, src, 20000 - 777), { d: 777, score: 1 });
+  const a1 = alignLag(game, src, 20000 - 777);
+  assert.equal(a1.d, 777);
+  assert.equal(a1.score, 1);
   assert.deepEqual(alignLag(game, src, 20000 + 1500).d, -1500);
   assert.equal(alignLag(new Float32Array(2046), src, 20000), null); // (silence)
   const r = alignLag(game, src, 20000 + 30000, 2048); // (out of range: a poor match, not a wrong certainty)
@@ -740,4 +742,125 @@ test('a real game\'s music: every stream decodes, its loop is seamless', { skip:
   } finally {
     closeSync(fd);
   }
+});
+
+// ---- X/Y's AAC reader (Windows verification, Pokémon Y): aligned, overlapping reads; a lead of its own ----------------
+/** An AAC stream of `n` frames (lengths around 1 KB) and the game's reads of it: 20 KB from an offset aligned down to
+ * 0x200 (overlapping the read before), three at once to start, then one whenever the sound reaches the data's end minus
+ * `lead` (in samples). Returns { file, frames, reads, startFrame }. */
+function aacGame({ n = 1100, lead = 70000, from = 1000, seconds = 20, loopBack = null } = {}) {
+  const r = rng(77);
+  const lens = Array.from({ length: n }, () => 980 + Math.floor(r() * 90));
+  const file = makeAdts(lens);
+  const frames = adtsFrames(file);
+  const info = { codec: 'adts', rate: 48000, channels: 2, samples: frames.samples - 1024, priming: 1024, frames, loop: loopBack };
+  const spf = 48000 * FRAME_SEC;
+  const start = from + 5; // the sound starts a few frames after the first read
+  const reads = [];
+  let B = 0;
+  let base = 0; // (samples of the loops taken: the unwrapped line)
+  const through = (b) => Math.max(0, adtsSamplesThrough(frames, b) - 1024);
+  for (let k = 0; ; k++) {
+    const at = B & ~0x1ff;
+    const len = Math.min(20480 + (B - at), file.length - at);
+    let frame;
+    if (k < 3) frame = from + k;
+    else frame = Math.ceil(start + (base + through(B) - lead) / spf);
+    if (frame > from + seconds / FRAME_SEC) break;
+    reads.push({ tag: 1, off: at, len, frame: Math.max(frame, (reads.at(-1)?.frame ?? 0) + 1) });
+    B = at + len;
+    if (B >= file.length) {
+      if (!loopBack) break;
+      base += loopBack.end - loopBack.start;
+      B = frames.offsets[Math.floor((loopBack.start + 1024) / 1024)]; // the frame holding the loop start
+    }
+  }
+  return { file, info, reads, start, spf };
+}
+
+test('X/Y\'s AAC reader (aligned reads that overlap): one start, steady reads, the line follows the frames', () => {
+  const g = aacGame({ seconds: 15 });
+  const files = [{ path: 'sound/zz.aac', start: 0, size: g.file.length }];
+  const ev = [];
+  const t = new RomMusicTracker({ onEvent: (e) => ev.push(e) });
+  for (const n of t.reads(g.reads.slice(0, 1))) if (n.type === 'files') for (const m of t.setFiles(1, files)) t.setInfo(1, m.file, g.info);
+  for (const r of g.reads.slice(1)) t.reads([r]);
+  assert.equal(ev.filter((e) => e.type === 'start').length, 1, 'one start, not one per read');
+  const st = t.cur;
+  assert.ok(st && !st.anchor.guess && st.steady > 10, `steady ${st?.steady}`);
+  // placed with the default lead (1.76 s): off by default − real lead; the game's sound fixes that (nudge) – and it stays
+  const f = g.reads.at(-1).frame;
+  const truth = (fr) => (fr - g.start) * g.spf;
+  const off = t.playing(f).u - truth(f);
+  assert.ok(Math.abs(off - (70000 - defaultLead(g.info))) < 1500, `off ${off}`);
+  t.nudge(-off, { codec: 'adts' });
+  assert.ok(ev.some((e) => e.type === 'anchor' && e.heard));
+  const g2 = aacGame({ seconds: 25 });
+  for (const r of g2.reads.filter((x) => x.frame > f)) t.reads([r]);
+  const f2 = g2.reads.at(-1).frame;
+  assert.ok(Math.abs(t.playing(f2).u - truth(f2)) < 1100, `after the nudge: ${t.playing(f2).u - truth(f2)}`); // (≈ one AAC frame: what a read can tell)
+  assert.ok(Math.abs(t.leadOf(g.info) - 70000) < 1100, `lead ${t.leadOf(g.info)}`);
+});
+
+test('X/Y\'s AAC reader: the read back to the loop start is the loop (from the sound archive), never a restart', () => {
+  const loop = { start: 292584, end: 600000 };
+  const g = aacGame({ n: 700, seconds: 30, loopBack: loop });
+  assert.ok(g.reads.some((r, i) => i && r.off < g.reads[i - 1].off), 'the reads go back');
+  const files = [{ path: 'x/y', start: 0, size: g.file.length }];
+  const ev = [];
+  const t = new RomMusicTracker({ onEvent: (e) => ev.push(e) });
+  for (const n of t.reads(g.reads.slice(0, 1))) if (n.type === 'files') for (const m of t.setFiles(1, files)) t.setInfo(1, m.file, g.info);
+  for (const r of g.reads.slice(1)) t.reads([r]);
+  assert.equal(ev.filter((e) => e.type === 'start').length, 1);
+  assert.ok(ev.filter((e) => e.type === 'loop').length >= 1);
+  const p = t.playing(g.reads.at(-1).frame);
+  assert.ok(p.pos >= loop.start && p.pos < loop.end && p.loops >= 1);
+});
+
+test('calibration: AAC\'s different decoder still lines up (the band below 2 kHz), and the line is moved by it', () => {
+  const A = pcmTrack(8, 41);
+  const rm = new RomMusic({ send: () => true, tell: () => {}, rate: SR });
+  // the game's sound: the track from 2.0 s on, with a top end of its own (another decoder): full-band below 0.85
+  const noise = rng(3);
+  const G0 = Math.round(2 * SR);
+  const len = Math.round(3.2 * SR);
+  const f = new Float32Array(len * 2);
+  for (let i = 0; i < len; i++) {
+    const hiss = (noise() - 0.5) * 0.24;
+    f[2 * i] = A.l[G0 + i] / 32768 + hiss;
+    f[2 * i + 1] = A.r[G0 + i] / 32768 + hiss;
+  }
+  rm.onGameSound(f);
+  rm.game.frameAt = rm.game.at;
+  const truthEnd = G0 + len;
+  const t = { pcm: { l: A.l, r: A.r }, ratio: 1, voicePos: (x) => x };
+  const p = { pos: truthEnd + 900, u: truthEnd + 900, info: { codec: 'adts', rate: SR } }; // the tracker: 900 samples ahead
+  const r = rm.calibrate(p, t, { range: 0.8 });
+  assert.ok(Math.abs(r.err + 900) <= 2, `err ${r.err}`);
+  assert.ok(r.full < 0.85, `full ${r.full}`);
+  assert.ok(r.band >= 0.9 && r.score >= 0.9, `band ${r.band} full ${r.full}`);
+  // the tracker takes it (a line placed only by the start: as it is)
+  const tr = new RomMusicTracker();
+  tr.cur = { key: 'k', info: { codec: 'adts', rate: SR }, anchor: { frame: 0, u: 1000, guess: true }, errs: [] };
+  assert.ok(tr.nudge(r.err, { codec: 'adts' }));
+  assert.deepEqual({ ...tr.cur.anchor }, { frame: 0, u: 1000 + r.err, guess: false, heard: true });
+});
+
+test('the music log: a stream that restarts on every read is told once, then summed up – not 117 lines', () => {
+  const logs = [];
+  const rm = new RomMusic({ send: () => true, tell: () => {}, log: (e) => logs.push(e) });
+  let now = 0;
+  rm.now = () => now;
+  for (let i = 0; i < 117; i++) {
+    rm.onTrack({ type: 'start', key: '1:5', path: 'sound/bgm.aac', at: i * 20480, frame: 1000 + i * 25 });
+    now += 25 * FRAME_SEC * 1000;
+  }
+  rm.onTrack({ type: 'track', key: '1:5', path: 'sound/bgm.aac' });
+  assert.equal(logs.filter((e) => e.type === 'rom-start').length, 1);
+  assert.ok(logs.filter((e) => e.type === 'rom-restarts').length <= 6);
+  assert.equal(logs.filter((e) => e.type === 'rom-restarts').reduce((a, e) => a + e.count, 0) <= 116, true);
+  assert.equal(logs.at(-1).type, 'rom-track');
+  // another track's start is told at once
+  rm.onTrack({ type: 'start', key: '1:9', path: 'sound/b.aac', at: 0, frame: 5000 });
+  assert.equal(logs.at(-1).type, 'rom-start');
 });

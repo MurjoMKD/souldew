@@ -21,9 +21,16 @@ const CHUNK = 1024 * 1024; // one ROMREAD (ctrhost.c ROMREAD_MAX)
 const MAX_TRACK = 64 * 1024 * 1024; // a stream file bigger than this isn't loaded
 /** AAC encoder delay: the first 1024 decoded samples come before the stream's sample 0 (BCSAR loop points don't count them). */
 export const AAC_PRIMING = 1024;
+const LOG_EVERY = 10000; // ms: repeated restarts of one stream are summed up this often in the music log
 const CAL_DECIM = 8; // the calibration compares the sound at a eighth of the rate (~4 kHz), then refines at full rate
 const CAL_WIN = 1.0; // seconds of the game's sound compared
-const CAL_RANGE = 0.4; // ± seconds searched around the tracker's position
+const CAL_RANGE = 0.4; // ± seconds searched around the tracker's position (0.8 while it is only placed by the start)
+/**
+ * How alike the game's sound and the track must be to take the measurement. The score is the better of the full-band
+ * correlation and the one below ~2 kHz: the game's AAC decoder and resampler (Azahar's) and the browser's don't give the
+ * same top end – Pokémon Y measured 0.83 full-band where a BCSTM gives 1.000 – while the music underneath is the same.
+ */
+export const CAL_SCORE = { cstm: 0.85, adts: 0.7 };
 
 /** Parses a ROMFS payload: { frame, fast (that frame was fast-forwarded), reads: [{ serial, tag, off, len, frame }] }. */
 export function parseRomfs(p) {
@@ -77,6 +84,8 @@ export class RomMusic {
     this.game = { l: new Float32Array(Math.round(this.rate * 4)), at: 0, frame: -1, frameAt: 0 }; // the game's 1× sound (mono), for calibrate
     this.cal = new Map(); // codec → { tries, done }
     this.busy = false;
+    this.starts = new Map(); // stream key → when it last (re)started (onTrack)
+    this.now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   }
 
   // ---- talking to the host ---------------------------------------------------------------------------------------
@@ -314,7 +323,26 @@ export class RomMusic {
     return { l, r };
   }
 
+  /**
+   * The tracker's events to the music log ("Save diagnostics") – the changes only: a new track, a stop, a loop, the
+   * line moved by the game's sound, a loop learned. A stream that (re)starts again and again (a reader the tracker
+   * doesn't follow) is told once, then summed up every LOG_EVERY ms – it must not push everything else out of the log.
+   */
   onTrack(e) {
+    const now = this.now();
+    if (e.type === 'start') {
+      const last = this.starts.get(e.key);
+      this.starts.set(e.key, now);
+      if (last != null && now - last < LOG_EVERY * 3) {
+        this.restarts = (this.restarts || 0) + 1;
+        if (now - (this.restartsAt || 0) >= LOG_EVERY) {
+          this.log({ type: 'rom-restarts', key: e.key, count: this.restarts, at: e.at, frame: e.frame });
+          this.restarts = 0;
+          this.restartsAt = now;
+        }
+        return;
+      }
+    }
     this.log({ ...e, type: `rom-${e.type}` });
   }
 
@@ -365,24 +393,28 @@ export class RomMusic {
   }
 
   maybeCalibrate(p, t) {
-    const c = this.cal.get(p.info.codec) || { tries: 0, done: false, next: 0 };
+    const c = this.cal.get(p.info.codec) || { tries: 0, done: false, next: 0, good: 0 };
     this.cal.set(p.info.codec, c);
-    if (c.done || this.busy || c.tries >= 20 || performance.now() < c.next) return;
     const st = this.tracker.cur;
-    if (!st || st.anchor?.guess || st.steady < 3) return; // (only once the reads are steady)
-    if (this.game.at < this.rate * (CAL_WIN + CAL_RANGE) * 2) return;
+    if (!st || this.busy || performance.now() < c.next) return;
+    // (a line placed only by the start is measured until it is heard right – whatever the codec's state)
+    if ((c.done || c.tries >= 20) && !st.anchor?.guess) return;
+    if (p.u < this.rate * CAL_WIN || this.game.at < this.rate * (CAL_WIN + CAL_RANGE) * 2) return;
     c.tries++;
     c.next = performance.now() + 3000;
     this.busy = true;
+    // (what the game played up to this frame, and where the tracker says that is – taken now, measured a moment later)
+    const end = this.game.frameAt;
+    const range = st.anchor?.guess ? 2 * CAL_RANGE : CAL_RANGE;
     setTimeout(() => {
       try {
-        const r = this.calibrate(p, t);
+        const r = this.calibrate(p, t, { end, range });
         if (r) {
-          this.log({ type: 'rom-calibrated', codec: p.info.codec, offsetMs: Math.round((r.err / p.info.rate) * 1000), score: +r.score.toFixed(3) });
-          if (r.score >= 0.85) {
-            const lead = this.tracker.leadOf(p.info) - r.err;
-            this.tracker.setLead(p.info.codec, lead / p.info.rate);
-            if (Math.abs(r.err) < 0.01 * p.info.rate) c.done = true; // (agrees: no more tries needed)
+          const ok = r.score >= (CAL_SCORE[p.info.codec] ?? 0.85);
+          this.log({ type: 'rom-calibrated', codec: p.info.codec, offsetMs: Math.round((r.err / p.info.rate) * 1000), score: +r.score.toFixed(3), full: +r.full.toFixed(3), band: +r.band.toFixed(3), taken: ok });
+          if (ok && this.tracker.cur === st) {
+            this.tracker.nudge(r.err, { codec: p.info.codec });
+            if (Math.abs(r.err) < 0.01 * p.info.rate && ++c.good >= 2) c.done = true; // (agrees twice: no more tries)
           }
         }
       } catch (e) {
@@ -396,18 +428,17 @@ export class RomMusic {
    * Where the game's sound really is in the track: the last CAL_WIN seconds of the game's 1× sound against the track
    * around the tracker's position. { err (track samples: true − tracker), score } or null.
    */
-  calibrate(p, t) {
+  calibrate(p, t, { end = this.game.frameAt, range: rangeSec = CAL_RANGE } = {}) {
     const g = this.game;
     const cap = g.l.length;
     const rate = this.rate; // the game's sound is at the context's rate (= the core's)
     const win = Math.round(CAL_WIN * rate);
-    const end = g.frameAt; // the sound before this frame's
     if (end < win + 16) return null;
     const game = new Float32Array(win);
     for (let i = 0; i < win; i++) game[i] = g.l[(end - win + i) % cap];
     // the tracker's position at the start of this frame's sound, in the voice's samples (= the context's rate here)
     const posAtEnd = t.voicePos(p.pos);
-    const range = Math.round(CAL_RANGE * rate);
+    const range = Math.round(rangeSec * rate);
     const from = Math.round(posAtEnd - win - range);
     const track = this.trackSamples(t, p, from, win + 2 * range);
     if (!track) return null;
@@ -415,7 +446,7 @@ export class RomMusic {
     if (!r) return null;
     // track[r.lag] lines up with game[0]: the game's sound started at track position from + lag (voice samples)
     const truth = from + r.lag + win;
-    return { err: (truth - posAtEnd) / t.ratio, score: r.score };
+    return { err: (truth - posAtEnd) / t.ratio, score: Math.max(r.score, r.band), full: r.score, band: r.band };
   }
 
   /** Mono samples [from, from + n) of a track (voice samples), loop taken into account; null when not decodable. */
@@ -504,7 +535,20 @@ export function bestLag(a, b, decim = 8) {
     const c = num / Math.sqrt(fa * eb + 1e-12);
     if (c > fine) [fine, at] = [c, o];
   }
-  return { lag: at, score: fine };
+  // the same place below ~2 kHz (every `decim` samples averaged): decoders that differ in the top end still agree here
+  return { lag: at, score: fine, band: corrAt(da, db, Math.round(at / decim)) };
+}
+
+function corrAt(a, b, o) {
+  let num = 0;
+  let ea = 0;
+  let eb = 0;
+  for (let i = 0; i < a.length && o + i < b.length; i++) {
+    num += a[i] * b[o + i];
+    ea += a[i] * a[i];
+    eb += b[o + i] * b[o + i];
+  }
+  return num / Math.sqrt(ea * eb + 1e-12);
 }
 
 function decimate(x, d) {

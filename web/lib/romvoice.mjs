@@ -324,5 +324,22 @@ export function alignLag(game, src, p0, range = 2048) {
     const c = corr(o, 1);
     if (c > fine) [fine, fat] = [c, o];
   }
-  return { d: lo + fat - Math.floor(p0), score: fine };
+  // the better of the full-band match and the one below ~4 kHz (4 samples averaged): the game's AAC decoder and
+  // resampler differ from the browser's in the top end, the music underneath is the same
+  let num = 0;
+  let ea = 0;
+  let et = 0;
+  for (let i = 0; i + D <= W; i += D) {
+    let x = 0;
+    let y = 0;
+    for (let k = 0; k < D; k++) {
+      x += game[i + k];
+      y += t[fat + i + k];
+    }
+    num += x * y;
+    ea += x * x;
+    et += y * y;
+  }
+  const band = et > 0 && ea > 0 ? num / Math.sqrt(ea * et) : 0;
+  return { d: lo + fat - Math.floor(p0), score: Math.max(fine, band), full: fine, band };
 }
