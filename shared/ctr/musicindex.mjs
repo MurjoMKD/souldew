@@ -58,8 +58,14 @@ export function musicIndex(readAt, { maxSar = 64 * 1024 * 1024 } = {}) {
     }
     // the sound archives' stream loops – only their STRG and INFO blocks (the rest is waves)
     const loops = {};
+    // (a game has one or two; files that share one place are one archive – and what is read in all is bounded)
+    const done = new Set();
+    let budget = 2 * maxSar;
     for (const f of sars) {
+      if (done.has(f.start) || done.size >= 8 || budget <= 0) continue;
+      done.add(f.start);
       const h = readAt(fs.base + f.start, 0x40);
+      if (!h || h.length < 0x40) continue;
       let end = 0x40;
       const n = h[0x10] | (h[0x11] << 8);
       for (let i = 0; i < Math.min(n, 3); i++) {
@@ -69,6 +75,7 @@ export function musicIndex(readAt, { maxSar = 64 * 1024 * 1024 } = {}) {
         if ((type === 0x2000 || type === 0x2001) && u32(o + 4) !== 0xffffffff) end = Math.max(end, u32(o + 4) + u32(o + 8)); // (no STRG: 0xFFFFFFFF)
       }
       if (end > maxSar) continue;
+      budget -= Math.min(end, f.size);
       for (const [k, v] of bcsarStreams(readAt(fs.base + f.start, Math.min(end, f.size)))) loops[k] = v.loop;
     }
     return { base: fs.base, sig: filesSig(fs.files), streams, loops };

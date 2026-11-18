@@ -373,6 +373,7 @@ function startRomMusic(rate) {
     },
   });
   audio.rom.enabled = st.turboAudio === 'music';
+  audio.rom.pause(st.paused);
 }
 // browsers keep sound asleep until the first click / key in the frame
 const wake = () => audio.ctx?.state === 'suspended' && audio.ctx.resume().catch(() => {});
@@ -510,7 +511,11 @@ function onEvent(p) {
     st.sfxCore = !!e.sfx && q.get('sfx') !== '0';
     st.sfxWant = false; // (a new host: it knows nothing yet)
     if (e.romfs && !audio.rom && q.get('rommusic') !== '0') startRomMusic(e.sampleRate);
-    else if (audio.rom) for (const tag of audio.rom.streamRanges.keys()) audio.rom.tellRanges(tag); // (a new host)
+    else if (audio.rom) {
+      // (a new host: what the old one was asked never comes – asked again; it knows nothing of the music's ranges)
+      audio.rom.hostRestarted();
+      for (const tag of audio.rom.streamRanges.keys()) audio.rom.tellRanges(tag);
+    }
     startAudio(e.sampleRate);
     // a second "loaded" with another renderer: the server started the host again with a safer one (renderer "auto",
     // server/lib/ctrrenderer.mjs) – the play view says so
@@ -791,11 +796,13 @@ window.__emu = {
   paused: () => st.paused,
   pause() {
     st.paused = true;
+    audio.rom?.pause(true); // (the host answers no ROMREAD while paused: none times out)
     cmd(CMD.SPEED, f32(0));
     tellAudio({ type: 'paused', paused: true });
   },
   resume() {
     st.paused = false;
+    audio.rom?.pause(false);
     cmd(CMD.SPEED, f32(st.speed === Infinity ? 1000 : st.speed));
     tellAudio({ type: 'paused', paused: false });
   },

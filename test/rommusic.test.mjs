@@ -933,7 +933,7 @@ test('AAC calibration with real AAC frames: near the line, and far off it (wide 
   for (let i = 0; i < 2; i++) {
     rm.cal.get('adts') && (rm.cal.get('adts').next = 0);
     rm.maybeCalibrate(p, track);
-    await new Promise((res) => setTimeout(res, 20));
+    await rm.calJob; // (the measurement runs in slices, off the frame's task)
   }
   const cal = logs.filter((e) => e.type === 'rom-calibrated');
   assert.equal(cal.length, 2);

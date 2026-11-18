@@ -24,6 +24,11 @@ const allZero = (b) => {
 
 /** Level-3 blocks sampled (spread evenly; the first and the last always). */
 export const CTR_SAMPLES = 40;
+/**
+ * The most bytes a header hash region is read and hashed for (real ones: 0x200 for the ExeFS, a few KB for the RomFS).
+ * A header that says more is damaged or made up – its region is left unchecked instead of read and hashed in one go.
+ */
+export const CTR_MAX_HASH_REGION = 1024 * 1024;
 
 /**
  * { state, why } – state 'ok' (every hash checked matched), 'damaged' (the game is missing parts: the file ends early, or
@@ -56,7 +61,7 @@ export function ctrIntegrity(readAt, fileSize, sha256, { samples = CTR_SAMPLES }
     const exefsOff = u32(h, 0x1a0) * unit;
     const exefsHash = u32(h, 0x1a8) * unit;
     let mismatch = null;
-    if (exefsOff && exefsHash) {
+    if (exefsOff && exefsHash && exefsHash <= CTR_MAX_HASH_REGION) {
       const at = n + exefsOff;
       if (at + exefsHash > fileSize) return res('damaged', 'truncated');
       const b = readAt(at, exefsHash);
@@ -67,7 +72,7 @@ export function ctrIntegrity(readAt, fileSize, sha256, { samples = CTR_SAMPLES }
       }
     }
     const romfsOff = u32(h, 0x1b0) * unit;
-    const romfsHash = u32(h, 0x1b8) * unit;
+    const romfsHash = u32(h, 0x1b8) * unit <= CTR_MAX_HASH_REGION ? u32(h, 0x1b8) * unit : 0; // (too big: unchecked)
     if (!romfsOff || !u32(h, 0x1b4)) return res(mismatch ? 'mismatch' : 'ok', mismatch);
     const rf = n + romfsOff;
     if (rf + Math.max(romfsHash, 0x60) > fileSize) return res('damaged', 'truncated');

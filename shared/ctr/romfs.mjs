@@ -74,37 +74,56 @@ export function romfsHeader(b) {
   return h;
 }
 
+/** A RomFS name is at most 255 UTF-16 units (the 3DS' FS limit) – a longer length field is damage. */
+export const MAX_NAME = 255;
+/** A path deeper or longer than this isn't walked further (no game nests more than a handful of folders). */
+const MAX_DEPTH = 64;
+const MAX_PATH = 1024;
+/** All the paths of a walk together, in characters (Sun: ~1.2 M for ~30 000 files) – the rest is damage. */
+const MAX_CHARS = 32 * 1024 * 1024;
+
 const name16 = (b, o, len) => {
+  const n = Math.min(len >>> 1, MAX_NAME, Math.max(0, (b.length - o) >> 1));
   let s = '';
-  for (let i = 0; i + 1 < len && o + i + 1 < b.length; i += 2) s += String.fromCharCode(u16(b, o + i));
+  for (let i = 0; i < n; i++) s += String.fromCharCode(u16(b, o + i * 2));
   return s;
 };
 
 /**
  * Every file of the RomFS: [{ path ('sound/bgm_xy_starting.aac', no leading slash), start, size }] sorted by start –
  * `start` from the beginning of level 3, as the emulator reports reads. `dirs` / `files`: the two metadata tables.
- * Damaged entries end the walk of their directory, never throw. At most `max` files.
+ * Damaged entries end the walk of their directory, never throw: every directory and file entry is visited once at most
+ * (a sibling list that points back into itself ends there), names are cut at MAX_NAME, paths at MAX_PATH, the whole walk
+ * at `max` files and MAX_CHARS characters – damaged or hostile tables cost no more than a real game's.
  */
 export function romfsFiles(header, dirs, files, { max = 200000 } = {}) {
   const out = [];
   if (!header || !dirs || !files) return out;
-  const seen = new Set();
+  const seenDirs = new Set();
+  const seenFiles = new Set();
+  let chars = 0;
+  let dirsLeft = 100000;
+  const full = () => out.length >= max || chars > MAX_CHARS;
   const walk = (dir, prefix, depth) => {
-    if (depth > 64 || seen.has(dir) || dir + 0x18 > dirs.length) return;
-    seen.add(dir);
-    for (let f = u32(dirs, dir + 0x0c), guard = 0; f !== NONE && guard < max && out.length < max; guard++) {
-      if (f + 0x20 > files.length) break;
-      const name = name16(files, f + 0x20, u32(files, f + 0x1c));
-      out.push({ path: prefix + name, start: header.data + u64(files, f + 0x08), size: u64(files, f + 0x10) });
-      f = u32(files, f + 0x04);
+    for (let f = u32(dirs, dir + 0x0c); f !== NONE && !full(); f = u32(files, f + 0x04)) {
+      if (f + 0x20 > files.length || seenFiles.has(f)) break;
+      seenFiles.add(f);
+      const path = prefix + name16(files, f + 0x20, u32(files, f + 0x1c));
+      chars += path.length;
+      out.push({ path, start: header.data + u64(files, f + 0x08), size: u64(files, f + 0x10) });
     }
-    for (let d = u32(dirs, dir + 0x08), guard = 0; d !== NONE && guard < 100000; guard++) {
-      if (d + 0x18 > dirs.length) break;
-      walk(d, `${prefix}${name16(dirs, d + 0x18, u32(dirs, d + 0x14))}/`, depth + 1);
-      d = u32(dirs, d + 0x04);
+    if (depth >= MAX_DEPTH || prefix.length > MAX_PATH) return;
+    for (let d = u32(dirs, dir + 0x08); d !== NONE && !full(); d = u32(dirs, d + 0x04)) {
+      // (checked before its name is built: a list that loops costs one look per entry, not a name per turn)
+      if (d + 0x18 > dirs.length || seenDirs.has(d) || --dirsLeft < 0) break;
+      seenDirs.add(d);
+      const sub = `${prefix}${name16(dirs, d + 0x18, u32(dirs, d + 0x14))}/`;
+      chars += sub.length;
+      walk(d, sub, depth + 1);
     }
   };
-  walk(0, '', 0);
+  seenDirs.add(0);
+  if (dirs.length >= 0x18) walk(0, '', 0);
   return out.sort((a, b) => a.start - b.start);
 }
 

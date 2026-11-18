@@ -88,10 +88,37 @@ export function cstmInfo(b) {
         out.hist.push([s16(b, dsp + 0x22), s16(b, dsp + 0x24)]);
       }
     }
-    return out;
+    // the sizes are what the player allocates (a block decoded per channel): they must fit the bytes they describe
+    return cstmSane(out, u32(b, 0x0c) || Infinity) ? out : null;
   } catch {
     return null;
   }
+}
+
+/** The biggest block (bytes per channel) taken – Nintendo's streams use 0x2000. */
+export const CSTM_MAX_BLOCK = 0x40000;
+/** Samples `n` bytes of a block hold. */
+const samplesIn = (format, n) => (format === 'dsp' ? Math.floor(n / 8) * 14 : format === 'pcm16' ? Math.floor(n / 2) : n);
+
+/**
+ * Do a BCSTM info's sizes make sense – for a file of `length` bytes (Infinity: not known)? Every size the player
+ * allocates from is bounded: a block at most CSTM_MAX_BLOCK bytes, its samples what those bytes can hold, the last block
+ * no bigger than the others, the samples no more than the blocks hold, the data inside the file (a block's slack
+ * allowed). A damaged or hostile header is no stream – never a gigabyte allocation in the sound worklet.
+ */
+export function cstmSane(s, length = Infinity) {
+  if (!s || s.codec !== 'cstm') return false;
+  const ints = [s.channels, s.blocks, s.blockSize, s.blockSamples, s.lastBlockSize, s.lastBlockSamples, s.lastBlockPadded, s.samples, s.dataStart];
+  if (!ints.every((n) => Number.isSafeInteger(n) && n >= 0)) return false;
+  if (!s.channels || s.channels > 8 || !s.blocks || !s.samples) return false;
+  if (!['dsp', 'pcm16', 'pcm8'].includes(s.format) || (s.format === 'dsp' && !(s.coefs?.length >= s.channels && s.hist?.length >= s.channels))) return false;
+  if (!s.blockSize || s.blockSize > CSTM_MAX_BLOCK || !s.blockSamples || s.blockSamples > samplesIn(s.format, s.blockSize)) return false;
+  if (s.lastBlockPadded > s.blockSize || s.lastBlockSize > s.lastBlockPadded || s.lastBlockSamples > s.blockSamples) return false;
+  if (s.lastBlockSamples > samplesIn(s.format, s.lastBlockPadded)) return false;
+  if (s.samples > s.blocks * s.blockSamples) return false;
+  if (s.loop && !(s.loop.start >= 0 && s.loop.start < s.loop.end && s.loop.end <= s.samples)) return false;
+  const end = s.dataStart + (s.blocks - 1) * s.blockSize * s.channels + s.lastBlockPadded * s.channels;
+  return end <= length + s.blockSize;
 }
 
 /** Bytes per channel of block `i` (the last one is shorter, padded to 32 bytes). */
@@ -344,15 +371,13 @@ export function bcsarStreams(b) {
     // file id → external path
     const nFiles = Math.min(u32(b, filesAt), 100000);
     const paths = new Array(nFiles).fill(null);
-    for (let i = 0; i < nFiles; i++) {
+    const budget = { left: BCSAR_CHARS };
+    for (let i = 0; i < nFiles && budget.left > 0; i++) {
       const e = table(filesAt, i);
       if (!fits(b, e, 8) || u16(b, e) !== 0x220d) continue;
-      let p = e + u32(b, e + 4);
-      let s = '';
-      while (p < b.length && b[p] && s.length < 256) s += String.fromCharCode(b[p++]);
-      paths[i] = s;
+      paths[i] = cString(b, e + u32(b, e + 4), budget);
     }
-    const names = strg >= 0 ? bcsarStrings(b, strg) : [];
+    const names = strg >= 0 ? bcsarStrings(b, strg, budget) : [];
     const nSounds = Math.min(u32(b, sounds), 100000);
     for (let i = 0; i < nSounds; i++) {
       const e = table(sounds, i);
@@ -374,8 +399,22 @@ export function bcsarStreams(b) {
   return out;
 }
 
+/** A BCSAR's strings (paths, labels) are at most this long – longer is damage (real ones: under 64 characters). */
+const BCSAR_STR = 256;
+/** The characters read from one BCSAR's strings together: thousands of entries pointing at one long run cost no more. */
+const BCSAR_CHARS = 4 * 1024 * 1024;
+
+/** The NUL-terminated string at `o` (at most BCSAR_STR characters, `len` when given), counted against `budget`. */
+function cString(b, o, budget, len = BCSAR_STR) {
+  const n = Math.min(len, BCSAR_STR, budget.left, Math.max(0, b.length - o));
+  let s = '';
+  for (let k = 0; k < n && b[o + k]; k++) s += String.fromCharCode(b[o + k]);
+  budget.left -= s.length + 1;
+  return s;
+}
+
 /** The STRG block's string table (labels, in item order), or []. */
-function bcsarStrings(b, strg) {
+function bcsarStrings(b, strg, budget = { left: BCSAR_CHARS }) {
   const out = [];
   try {
     if (!fits(b, strg, 0x18) || tag(b, strg) !== 'STRG') return out;
@@ -383,14 +422,11 @@ function bcsarStrings(b, strg) {
     if (u16(b, body) !== 0x2400) return out;
     const t = body + u32(b, body + 4);
     const n = Math.min(u32(b, t), 100000);
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < n && budget.left > 0; i++) {
       const e = t + 4 + i * 12;
       if (!fits(b, e, 12)) break;
       const o = t + u32(b, e + 4);
-      const len = u32(b, e + 8);
-      let s = '';
-      for (let k = 0; k < len && fits(b, o + k, 1) && b[o + k]; k++) s += String.fromCharCode(b[o + k]);
-      out.push(s);
+      out.push(o >= 0 && o < b.length ? cString(b, o, budget, u32(b, e + 8)) : '');
     }
   } catch {
     // keep what was read
