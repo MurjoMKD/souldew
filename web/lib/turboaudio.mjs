@@ -635,10 +635,12 @@ export class TurboMixer {
 
   /** Plays the ROM track from `pos` (its samples), crossfading `xfade` seconds. */
   romPlay(id, pos, xfade) {
+    const was = this.rom.id;
     if (!this.rom.play(id, pos, xfade)) return false;
     this.romJumps++;
     this.al.n = 0; // (a recording for the alignment that spans the jump is useless)
-    this.emit({ type: 'rom', id, pos: Math.round(pos), turbo: this.turbo });
+    // (told when the track changes or fast-forward takes it – not every small correction at 1×: the log stays readable)
+    if (id !== was || this.turbo) this.emit({ type: 'rom', id, pos: Math.round(pos), turbo: this.turbo });
     return true;
   }
 

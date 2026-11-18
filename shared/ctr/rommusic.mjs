@@ -179,34 +179,40 @@ export class RomMusicTracker {
     const key = `${t}:${file.start}`;
     let st = this.streams.get(key);
     if (!st) {
-      st = { key, tag: t, file, info, jingle: isJingle(info, file.path), active: false, u: 0, base: 0, end: 0, anchor: null, errs: [], steady: 0, lastFrame: -1, started: 0, loops: 0 };
+      st = { key, tag: t, file, info, jingle: isJingle(info, file.path), active: false, u: 0, base: 0, end: 0, last: 0, chunk: 0, anchor: null, errs: [], steady: 0, lastFrame: -1, started: 0, loops: 0 };
       this.streams.set(key, st);
     }
     const spf = info.rate * this.frameSec;
     const gap = st.active ? (r.frame - st.lastFrame) * this.frameSec : Infinity;
     st.lastFrame = r.frame;
-    // where this read is on the unwrapped line: a read back to the loop start goes on after the loop end
+    st.chunk = Math.max(st.chunk, span.e - span.s); // (what one read brings – a block pair, ~20 AAC frames)
+    // where this read is on the unwrapped line: a read back to the loop start goes on after the loop end. A read may
+    // overlap the one before (X/Y's AAC reader starts at an aligned offset, a frame or so back): that is no jump –
+    // only a read before the last one's start is
     let u = st.base + span.s;
-    if (st.active && u < st.end - 64) {
+    if (st.active && u < st.last - 64) {
       const l = info.loop || this.learnLoop(st, span);
-      if (l && span.s <= l.start && l.start < span.e && st.end >= st.base + l.end - info.blockSamples * 2) {
+      if (l && span.s <= l.start && l.start < span.e && st.end >= st.base + l.end - this.slack(st)) {
         st.base += l.end - l.start; // the loop: the line goes on
         st.loops++;
         u = st.base + span.s;
         st.end = Math.max(st.end, st.base + span.e);
+        st.last = u;
         st.steady = -2; // (the first read after the loop comes early: the last block was short)
         this.emit({ type: 'loop', key, at: wrap(info, u) });
         return;
       }
       st.active = false; // read from somewhere else: a restart (or the game seeked)
     }
-    if (st.active && gap > 3 + this.leadOf(info) / info.rate && u >= st.end - 64) st.active = false; // (a long pause, then on: a resume)
+    if (st.active && u > st.end + this.slack(st)) st.active = false; // (a jump ahead: the game seeked)
+    if (st.active && gap > 3 + this.leadOf(info) / info.rate) st.active = false; // (a long pause, then on: a resume)
     if (!st.active) {
       // (re)start: the first read of a burst is what plays next, a few frames later
       st.active = true;
       st.base = 0;
       u = span.s;
       st.end = span.e;
+      st.last = u;
       st.anchor = { frame: r.frame + START_FRAMES, u, guess: true };
       st.errs = [];
       st.steady = -1; // the prefill burst isn't steady yet – the first read after it is
@@ -214,8 +220,11 @@ export class RomMusicTracker {
       this.emit({ type: 'start', key, path: file.path, at: span.s, frame: r.frame, jingle: st.jingle });
       return;
     }
-    const contiguous = Math.abs(u - st.end) <= 64;
+    // the new part of this read starts where the reads so far ended (the same as u for block reads)
+    const fresh = Math.max(u, st.end);
+    const contiguous = u <= st.end + 64 && st.base + span.e > st.end;
     st.end = Math.max(st.end, st.base + span.e);
+    st.last = u;
     if (!contiguous) return;
     // a burst (the prefill, or catching up after the loop) comes within a few frames of the read before: not steady
     if (gap < 0.25) {
@@ -227,8 +236,8 @@ export class RomMusicTracker {
       if (st.steady < 0) return;
     }
     st.steady++;
-    // a steady read of the block at u: the frame's sound starts at u − lead
-    const want = u - this.leadOf(info);
+    // a steady read of the data from `fresh` on: the frame's sound starts at fresh − lead
+    const want = fresh - this.leadOf(info);
     const err = want - this.lineAt(st, r.frame, spf);
     if (st.anchor.guess) {
       // the first steady read beats the guess from the start (that is off by up to 15 frames, a steady read by ±300 samples)
@@ -250,14 +259,34 @@ export class RomMusicTracker {
     }
   }
 
+  /** How far from the end a read back still counts as the loop (two reads' worth – blocks or AAC frames). */
+  slack(st) {
+    return 2 * Math.max(st.info.blockSamples || 0, st.chunk || 0) + 2048;
+  }
+
   /** A stream without loop points that reads back: its loop from the reads (the block read back to, the end of the data). */
   learnLoop(st, span) {
     const info = st.info;
     const endSample = st.end - st.base;
-    if (endSample < info.samples - info.blockSamples * 2 - 64) return null; // (not at its end: a seek)
+    if (endSample < info.samples - this.slack(st)) return null; // (not at its end: a seek)
     info.loop = { start: span.s, end: info.samples, learned: true };
     this.emit({ type: 'learned', key: st.key, loop: info.loop });
     return info.loop;
+  }
+
+  /**
+   * The game's own sound says the line is `err` samples off (web/lib/rommusic.mjs calibrate – measured at `frame`). A
+   * line placed only by the start (no steady reads yet – or a reader whose reads don't show it) takes it as it is; one
+   * placed by steady reads moves too, and the lead with it, so the next steady reads agree.
+   */
+  nudge(err, { codec = null } = {}) {
+    const st = this.cur;
+    if (!st?.anchor || !Number.isFinite(err)) return false;
+    if (!st.anchor.guess && (codec == null || codec === st.info.codec)) this.setLead(st.info.codec, (this.leadOf(st.info) - err) / st.info.rate);
+    st.anchor = { frame: st.anchor.frame, u: st.anchor.u + err, guess: false, heard: true };
+    st.errs = [];
+    this.emit({ type: 'anchor', key: st.key, err: Math.round(err), heard: true });
+    return true;
   }
 
   lineAt(st, frame, spf = st.info.rate * this.frameSec) {
