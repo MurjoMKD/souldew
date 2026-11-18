@@ -51,6 +51,7 @@ int main(int argc, char **argv) {
   const double sr = 32728, fps = 59.83;
   const double base = atof(argv[1]), swing = atof(argv[2]), period = atof(argv[3]), jitter = atof(argv[4]), seconds = atof(argv[5]);
   const double start = argc > 6 ? atof(argv[6]) : 4; // the asked-for speed (16: "Max")
+  const double stepAt = argc > 7 ? atof(argv[7]) : 1e9, after = argc > 8 ? atof(argv[8]) : 0; // the speed steps to after
   const size_t per = (size_t)(sr / fps); // samples per emulated frame
   audio_buf = calloc(per * 2, sizeof *audio_buf);
   ff_reset(start);
@@ -59,7 +60,7 @@ int main(int argc, char **argv) {
   while (now_t < seconds) {
     // the speed the game runs at now: a slow swing plus frame-to-frame jitter (some frames take far longer: a scene's
     // shaders, the picture going out)
-    double sp = base + swing * sin(2 * 3.14159265358979 * now_t / period);
+    double sp = (now_t >= stepAt ? after : base) + swing * sin(2 * 3.14159265358979 * now_t / period);
     sp *= 1 + jitter * (urand() * 2 - 1);
     if (urand() < 0.01) sp *= 0.25;
     if (sp < 0.3) sp = 0.3;
@@ -71,10 +72,11 @@ int main(int argc, char **argv) {
     last = now_t;
     if ((int)(now_t * 10) != qlast) { // the queue: how late the sped-up sound comes (s), ten times a second
       qlast = (int)(now_t * 10);
-      printf("q %.5f %.5f\n", now_t, ((double)ff.n - ff.pos) / ff.k / sr);
+      printf("q %.5f %.5f %u\n", now_t, ((double)ff.n - ff.pos) / ff.k / sr, ff.holes);
     }
   }
   printf("h %u\n", ff.holes);
+  printf("s %u\n", ff.skips);
   return 0;
 }
 `;
@@ -98,22 +100,24 @@ test.after(() => {
 });
 
 /** Runs the driver; returns the ratio in use over time ([t, k]), the output's pace and the times the queue ran dry. */
-function run({ base, swing, period, jitter, seconds, start = 4, pre = '' }) {
+function run({ base, swing, period, jitter, seconds, start = 4, pre = '', stepAt = 1e9, after = 0 }) {
   const { exe } = build(pre);
-  const r = spawnSync(exe, [base, swing, period, jitter, seconds, start].map(String), { encoding: 'utf8', maxBuffer: 64 << 20 });
+  const r = spawnSync(exe, [base, swing, period, jitter, seconds, start, stepAt, after].map(String), { encoding: 'utf8', maxBuffer: 64 << 20 });
   assert.equal(r.status, 0, r.stderr);
   const ks = [[0, start]];
   const outs = [];
   const queue = [];
   let holes = 0;
+  let skips = 0;
   for (const line of r.stdout.split('\n')) {
     const p = line.split(' ');
     if (p[0] === 'e' && line.includes('"ffrate"')) ks.push([+p[1], +/"k":([\d.]+)/.exec(line)[1]]);
     else if (p[0] === 'o') outs.push([+p[1], +p[2]]);
-    else if (p[0] === 'q') queue.push([+p[1], +p[2]]);
+    else if (p[0] === 'q') queue.push([+p[1], +p[2], +p[3]]);
     else if (p[0] === 'h') holes = +p[1];
+    else if (p[0] === 's') skips = +p[1];
   }
-  return { ks, outs, queue, holes };
+  return { ks, outs, queue, holes, skips };
 }
 
 /** The ratio at time t (the last one announced before it). */
@@ -132,7 +136,9 @@ test('3DS fast-forward sound: a speed that swings from frame to frame doesn’t 
   // semitone, up and down every second or so, as the ratio followed every swing
   const { ks, outs, holes } = run({ base: 2.6, swing: 0.9, period: 1.6, jitter: 0.35, seconds: 40 });
   // how far the pitch moves within any half second, after the first 5 s (the ratio settling from the asked-for 4×)
-  // (until 2.8.1: 900–1300 cents most of the time in this simulation; a rare hole may still jump once)
+  // (until 2.8.1: 900–1300 cents most of the time in this simulation; a rare hole may still jump once. The first 2.8.2
+  // builds kept up to 0.45 s of queue for this and moved ~50 cents at the 95th percentile – now at most 0.2 s, so the
+  // sped-up sound stays within 0.3 s of the picture: ~75–90)
   const moves = [];
   for (let t = 5; t < 39.5; t += 0.05) {
     let lo = Infinity;
@@ -147,7 +153,7 @@ test('3DS fast-forward sound: a speed that swings from frame to frame doesn’t 
   moves.sort((a, b) => a - b);
   const p50 = moves[Math.floor(moves.length / 2)];
   const p95 = moves[Math.floor(moves.length * 0.95)];
-  assert.ok(p50 < 40 && p95 < 60, `the pitch moves ${p50.toFixed(0)} cents within half a second, ${p95.toFixed(0)} at most 1 time in 20 (a semitone is 100)`);
+  assert.ok(p50 < 40 && p95 < 95, `the pitch moves ${p50.toFixed(0)} cents within half a second, ${p95.toFixed(0)} at most 1 time in 20 (a semitone is 100)`);
   // still exactly real time, without holes: the output keeps pace with the clock
   const late = outs.filter(([t]) => t > 5).map(([t, n]) => t - n / 32728);
   const drift = Math.max(...late) - Math.min(...late);
@@ -210,7 +216,7 @@ test('fast player (retrohost.c, melonDS): its shallower queue keeps the pitch st
   moves.sort((a, b) => a - b);
   const p50 = moves[Math.floor(moves.length / 2)];
   const p95 = moves[Math.floor(moves.length * 0.95)];
-  assert.ok(p50 < 45 && p95 < 80, `the pitch moves ${p50.toFixed(0)} cents within half a second (${p95.toFixed(0)} at the 95th percentile)`);
+  assert.ok(p50 < 45 && p95 < 95, `the pitch moves ${p50.toFixed(0)} cents within half a second (${p95.toFixed(0)} at the 95th percentile)`);
   assert.ok(holes <= 2, `the queue ran dry ${holes} times`);
   // the sound never trails the picture by more than the queue: the output keeps pace with real time
   const late = outs.filter(([t]) => t > 5).map(([t, n]) => t - n / 32728);
@@ -231,7 +237,31 @@ test('the queue is only as deep as the speed makes it swing: a steady 4× keeps 
   assert.ok(q > 0.15 && q < 0.33, `swinging: ${(q * 1000).toFixed(0)} ms`);
 });
 
-// a tone sped up at "Max" (the game at 20×, the sound at the 16× FF_MAXK) – its output, int16 stereo
+test('the sped-up sound stays close to the picture when the game gets faster: at most ~0.3 s behind, only for a moment (until 2.8.2: seconds)', { skip: !cc && 'no C compiler' }, () => {
+  // the review of 2.8.2: k followed a step up over 5 s and the queue only skipped above 16× – the sped-up sound trailed
+  // the picture by 1.5 s after 2× → 8× and by ~5 s after 2× → 30× (and stayed > 0.5 s behind for the next 20 s)
+  for (const [base, after, start] of [[2, 8, 8], [1.7, 3.7, 4], [1.5, 14, 16], [3, 12, 16], [2, 30, 16]]) {
+    const { queue, skips } = run({ base, swing: 0, period: 1, jitter: 0.1, seconds: 25, start, stepAt: 10, after });
+    const holes = queue.at(-1)[2] - queue.find(([t]) => t > 10)[2]; // (after the step – the start from the asked-for speed has its own)
+    const late = queue.filter(([t]) => t > 10).map(([, q]) => q);
+    const worst = Math.max(...late);
+    const over = late.filter((q) => q > 0.25).length * 0.1; // (sampled ten times a second)
+    const settled = queue.filter(([t]) => t > 20).map(([, q]) => q);
+    const mean = settled.reduce((a, b) => a + b, 0) / settled.length;
+    const what = `${base}× → ${after}×: up to ${(worst * 1000).toFixed(0)} ms behind, > 0.25 s for ${over.toFixed(1)} s, then ${(mean * 1000).toFixed(0)} ms (${skips} skips, ${holes} holes)`;
+    assert.ok(worst < 0.36, what);
+    assert.ok(over <= 0.5, what);
+    assert.ok(mean < (after > 16 ? 0.25 : 0.17), what);
+    assert.ok(holes <= 3, what);
+    if (after <= 16) assert.ok(skips <= 15, `${what} – k follows, the queue doesn't keep skipping`);
+  }
+  // slower again: smooth, never deep
+  const down = run({ base: 8, swing: 0, period: 1, jitter: 0.1, seconds: 25, start: 8, stepAt: 10, after: 2 });
+  assert.ok(Math.max(...down.queue.filter(([t]) => t > 10).map(([, q]) => q)) < 0.25);
+  assert.equal(down.skips, 0);
+});
+
+// a tone sped up at "Max" (the sound at the 16× FF_MAXK) – its output, int16 stereo
 const ALIAS_DRIVER = String.raw`
 #include <stdio.h>
 #include <stdlib.h>
@@ -303,7 +333,7 @@ function spectrum(file) {
   return Array.from({ length: N / 2 }, (_, i) => (2 * Math.hypot(re[i], im[i])) / wsum);
 }
 
-test('fast-forward sound at "Max" (20×) is clean: what is sped up past the new Nyquist frequency doesn’t fold back (until 2.8.2: aliases at −28 to −49 dB)', { skip: !cc && 'no C compiler' }, () => {
+test('fast-forward sound at "Max" (16×) is clean: what is sped up past the new Nyquist frequency doesn’t fold back (until 2.8.2: aliases at −28 to −49 dB)', { skip: !cc && 'no C compiler' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'souldew-ffa-'));
   try {
     const c = join(dir, 'a.c');
@@ -312,10 +342,12 @@ test('fast-forward sound at "Max" (20×) is clean: what is sped up past the new 
     const r = spawnSync(cc, ['-O2', '-std=c11', '-o', exe, c, '-lm'], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     const SR = 32728;
-    const k = 16; // (the game at 20×: the sound at FF_MAXK)
+    // (the game at 16×, the sound at FF_MAXK. Faster than that the queue skips ahead every half second or so, crossfaded –
+    // that it stays close to the picture there is the step-up test's)
+    const k = 16;
     const peak = (hz) => {
       const f = join(dir, 'out.raw');
-      assert.equal(spawnSync(exe, ['20', String(hz), '8', f]).status, 0);
+      assert.equal(spawnSync(exe, ['16', String(hz), '8', f]).status, 0);
       const m = spectrum(f);
       let p = 0;
       for (let i = 4; i < m.length; i++) p = Math.max(p, m[i]);
