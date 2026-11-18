@@ -974,7 +974,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
         && (p.device == null || (typeof p.device === 'string' && p.device.length <= 200 && !/[\u0000-\u001f]/.test(p.device))));
       if (!ok) delete allowed.pads;
       else if (p) {
-        allowed.pads = { ...(p.preset ? { preset: p.preset } : {}), ...(p.map ? { map: Object.fromEntries(Object.entries(p.map).filter(([k]) => /^[a-z]{1,8}$/.test(k))) } : {}),
+        allowed.pads = { ...(p.preset ? { preset: p.preset } : {}), ...(p.map ? { map: Object.fromEntries(Object.entries(p.map).filter(([k]) => PAD_MAP_IDS.has(k))) } : {}),
           ...(p.device ? { device: p.device.trim() } : {}) };
       }
     }
@@ -1922,6 +1922,10 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     });
   });
 }
+
+/** What config.pads.map may bind (web/lib/controls.mjs): the game buttons (BUTTONS) and the controller shortcuts
+ *  (PAD_HOTKEY_IDS – fast-forward hold/toggle, turbo, pause). test/server-fixes.test.mjs keeps the two lists equal. */
+export const PAD_MAP_IDS = new Set(['up', 'down', 'left', 'right', 'a', 'b', 'x', 'y', 'l', 'r', 'start', 'select', 'ffHold', 'ffToggle', 'turbo', 'pause']);
 
 /**
  * The run's doc.json, or null when there is none. A damaged file is kept as doc.json.corrupt-<time> and reads as
