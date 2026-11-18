@@ -228,6 +228,19 @@ test('config: theme and controller settings are stored only in a valid shape', a
     assert.equal(c.fullTurbo, false);
     c = await post({ pads: { map: { a: 'BUTTON_2', 'x-y': 'BUTTON_1' } } });
     assert.deepEqual(c.pads, { map: { a: 'BUTTON_2' } }, 'odd button names are dropped');
+    // the controller shortcuts are kept – fast-forward on a button too (2.8.2 dropped ffHold / ffToggle here)
+    const C = await import('../web/lib/controls.mjs');
+    let pads = C.assignPad(null, 'turbo', 'LEFT_BOTTOM_SHOULDER').next;
+    pads = C.assignPad(pads, 'ffHold', 'LEFT_STICK').next;
+    pads = C.assignPad(pads, 'ffToggle', 'RIGHT_STICK').next;
+    c = await post({ pads });
+    assert.deepEqual(c.pads, pads, 'every binding the Settings page can make is stored');
+    assert.equal(C.padHotkeys(c.pads).ffHold, 'LEFT_STICK');
+    assert.equal(C.padHotkeys(c.pads).ffToggle, 'RIGHT_STICK');
+    c = await post({ pads: { map: { a: 'BUTTON_2', toString: 'BUTTON_1', constructor: 'BUTTON_3', FFHOLD: 'BUTTON_4' } } });
+    assert.deepEqual(c.pads, { map: { a: 'BUTTON_2' } }, 'only the real buttons and shortcuts');
+    const { PAD_MAP_IDS } = await import('../server/app.mjs');
+    assert.deepEqual([...PAD_MAP_IDS].sort(), [...C.BUTTONS.map((b) => b.id), ...C.PAD_HOTKEY_IDS].sort(), 'the server knows every binding');
     // the controller chosen in Settings › Controller (issue #2) is remembered by the id the browser reports
     const ps5 = 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)';
     c = await post({ pads: { preset: 'xbox', device: ps5 } });

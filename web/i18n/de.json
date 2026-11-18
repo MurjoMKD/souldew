@@ -2803,5 +2803,10 @@
   "ext.saveWaiting": "Warte auf {file} – speichere einmal im Spiel.",
   "ext.saveRead": "Liest {file} · zuletzt gelesen {when}",
   "ext.saveWatching": "Liest {file}",
-  "play.missedDupe": "Wildes {species} entkommen – Dupes-Klausel, es zählt nicht."
+  "play.missedDupe": "Wildes {species} entkommen – Dupes-Klausel, es zählt nicht.",
+  "ctl.keepKey": "{key} behalten",
+  "ctl.ownerMenu": "das Menü von souldew",
+  "ctl.ownerSystem": "das System",
+  "ctl.refusedNone": "{key}, deine Taste für „{action}“, gehört zu {owner} – es hat vorerst keine Taste. Klick darauf, um eine andere zu wählen.",
+  "ctl.refusedNow": "{key}, deine Taste für „{action}“, gehört zu {owner} – es liegt vorerst auf {now}. Klick darauf, um eine andere zu wählen."
 }

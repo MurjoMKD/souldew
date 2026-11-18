@@ -2803,5 +2803,10 @@
   "ext.saveWaiting": "Esperando {file}: guarda una vez en el juego.",
   "ext.saveRead": "Lee {file} · última lectura {when}",
   "ext.saveWatching": "Lee {file}",
-  "play.missedDupe": "{species} salvaje escapó – cláusula de duplicados, no cuenta."
+  "play.missedDupe": "{species} salvaje escapó – cláusula de duplicados, no cuenta.",
+  "ctl.keepKey": "Mantener {key}",
+  "ctl.ownerMenu": "el menú de souldew",
+  "ctl.ownerSystem": "el sistema",
+  "ctl.refusedNone": "{key}, tu tecla para «{action}», la usa {owner}: por ahora no tiene tecla. Haz clic en ella para elegir otra.",
+  "ctl.refusedNow": "{key}, tu tecla para «{action}», la usa {owner}: por ahora está en {now}. Haz clic en ella para elegir otra."
 }

@@ -92,16 +92,56 @@ function readMeta(id) {
   }
 }
 
+/**
+ * The new intro save `tmp` becomes intro save `id`: the old one is moved aside first, the new one renamed into its
+ * place, and only then is the old one deleted. (Until 2.8.2 the old one was deleted before the rename – a rename that
+ * failed then, a virus scanner holding the folder on Windows, lost both.) A rename that fails puts the old one back; one
+ * interrupted between the two renames is put back the next time the intro saves are read (recoverAside).
+ */
+export function swapIn(tmp, id, { rename = renameSync } = {}) {
+  const dir = join(INTRO_DIR, id);
+  const aside = existsSync(dir) ? join(INTRO_DIR, `.old-${id}-${randomBytes(4).toString('hex')}`) : null;
+  try {
+    if (aside) rename(dir, aside);
+    rename(tmp, dir);
+  } catch (e) {
+    if (aside && !existsSync(dir) && existsSync(aside)) {
+      try {
+        renameSync(aside, dir);
+      } catch { /* recoverAside puts it back later */ }
+    }
+    rmSync(tmp, { recursive: true, force: true });
+    throw e;
+  }
+  if (aside) rmSync(aside, { recursive: true, force: true });
+}
+
+/** An old intro save left aside by an interrupted swapIn: back where it was when nothing took its place, else gone. */
+function recoverAside() {
+  if (!existsSync(INTRO_DIR)) return;
+  for (const d of readdirSync(INTRO_DIR)) {
+    const m = /^\.old-([a-f0-9]{16})-[a-f0-9]{8}$/.exec(d);
+    if (!m) continue;
+    try {
+      if (existsSync(join(INTRO_DIR, m[1]))) rmSync(join(INTRO_DIR, d), { recursive: true, force: true });
+      else renameSync(join(INTRO_DIR, d), join(INTRO_DIR, m[1]));
+    } catch { /* (held by another program: the next time) */ }
+  }
+}
+
 /** Every intro save on this computer, newest first. */
 export function listIntroSaves() {
   if (!existsSync(INTRO_DIR)) return [];
+  recoverAside();
   return readdirSync(INTRO_DIR).filter((d) => ID.test(d)).map(readMeta).filter(Boolean)
     .sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)));
 }
 
 /** The intro save kept for `key`, or null. */
 export function introFor(key) {
-  return key ? readMeta(idOf(key)) : null;
+  if (!key) return null;
+  if (!existsSync(join(INTRO_DIR, idOf(key)))) recoverAside();
+  return readMeta(idOf(key));
 }
 
 /** For the page: what it shows of an intro save (the Pokémon keys stay on this computer's server). */
@@ -190,12 +230,11 @@ export function keepIntroSave(m, slot, { savePath }) {
       writeFileAtomic(join(tmp, SAVE), readFileSync(saveFile));
     }
     writeFileAtomic(join(tmp, 'meta.json'), JSON.stringify(meta, null, 2));
-    rmSync(join(INTRO_DIR, id), { recursive: true, force: true });
-    renameSync(tmp, join(INTRO_DIR, id));
   } catch (e) {
     rmSync(tmp, { recursive: true, force: true });
     throw e;
   }
+  swapIn(tmp, id);
   return meta;
 }
 

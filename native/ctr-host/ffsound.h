@@ -21,20 +21,25 @@
 // Until 2.8.1 k followed the speed within 0.15 s and pulled hard on the queue (60 % faster or slower at a full target's
 // error): a Windows player's Pokémon Y video (4× asked, the PC at ≈1.7–3.7×) had the sped-up sound warble by about a
 // semitone, up and down every second or so – the pitch followed every swing of the speed. Now k follows the speed it
-// holds over a few seconds (FF_FOLLOW), and the queue (three times as deep) takes up the swings; it is only pulled on gently
+// holds over a few seconds (FF_FOLLOW), and the queue takes up the swings; it is only pulled on gently
 // (FF_PULL) – hard only near empty or full, where a hole or a skip would be worse than a short change of pitch.
 // The resampler is a windowed-sinc low-pass stretched by k (the sped-up sound's new Nyquist frequency) – every output
 // sample its own weighted sum of the queue. Until 2.8.2 a 4th-order Butterworth went first (two biquads) and a 4-point
 // Hermite read the queue: at "Max" (≈20× on a Windows player's PC, k 16) the overtones folded back down at only 28–48 dB
 // below the sound (measured: a tone sped up past the new Nyquist frequency came out as an alias at −28 dB at 16 kHz,
 // −42 dB at 8 kHz, −49 dB at 3 kHz) – aliased mush; now the aliases stay below −70 dB (test/ctrffsound.test.mjs).
-// Above FF_MAXK× the queue overflows and skips ahead, with a short crossfade.
+// The queue never gets deeper than FF_LAG (0.3 s): until 2.8.2 k followed a step up of the speed over FF_FOLLOW seconds
+// too, and the queue only skipped above FF_MAXK× – after 2× → 8× the sped-up sound trailed the picture by 1.5 s, after
+// 2× → 30× by 4.7 s, and the 3DS host kept up to 0.45 s for a swinging speed. Now it skips ahead (a short crossfade)
+// once it is deeper than FF_LAG, at any k, and a step up makes k follow within a fraction of a second (FF_RISE): the
+// sped-up sound is at most ~0.3 s behind, after a step up only for a moment (test/ctrffsound.test.mjs).
+// Above FF_MAXK× k can't follow: the queue skips ahead every now and then, crossfaded.
 // That low-pass leaves a k-th of the bandwidth: slowed back down by the mixer ("Music continues" while a song has no
 // loop yet), 4× sound kept nothing above ~1.8 kHz – muffled music. So each frame's sound also goes out as it is
 // (message 8, FFSOUND), and the mixer records that one: the music at its own pace and pitch, nothing resampled.
 #define FF_MAXK 16.0
-#ifndef FF_TARGET // (a host may keep less: the fast player's cores hold their speed better than a 3DS does)
-#define FF_TARGET 0.45 // seconds of output kept in the queue at most (for a speed that swings hard) …
+#ifndef FF_TARGET // (a host may keep less)
+#define FF_TARGET 0.2  // seconds of output kept in the queue at most (for a speed that swings hard; until 2.8.2: 0.45) …
 #endif
 #ifndef FF_TMIN
 #define FF_TMIN 0.12   // … and at least (a steady speed)
@@ -46,6 +51,18 @@
 #define FF_GLIDE 0.6   // seconds k takes to get where it is headed (time constant)
 #define FF_PULL 0.08   // how much faster / slower k goes for a queue a whole target too full / too empty …
 #define FF_EDGE 0.6    // … and, beyond this share of the target off, how much more for the rest (near empty or full)
+#ifndef FF_LAG
+#define FF_LAG 0.3     // seconds of output in the queue at most: deeper (the game got faster) and it skips ahead
+#endif
+#define FF_RISE 0.25   // the speed of the last this many seconds is what k jumps to when the game got faster (time constant) …
+#define FF_CATCH 1.5   // … and for this many seconds k follows the speed that fast
+#ifndef FF_HOP
+#define FF_HOP 0.02    // seconds of output a skip leaves out (small: the pull on k hardly changes – no jump in pitch)
+#endif
+#ifndef FF_STEP
+#define FF_STEP 0.08   // this many seconds skipped within about a second: the game got faster (not a swing of its speed)
+#endif
+#define FF_TMAX (FF_TARGET < FF_LAG * 0.67 ? FF_TARGET : FF_LAG * 0.67) // the queue's target at most
 #define FF_XFADE 256   // output frames of crossfade where the queue skips ahead
 #define FF_PI 3.14159265358979323846
 // the resampler's kernel: a Kaiser-windowed sinc FF_ZC output samples either side (2 · FF_ZC · k taps per output
@@ -65,6 +82,9 @@ static struct {
   double k;         // the ratio in use (announced)
   double glide;     // where k is gliding
   double kin;       // the speed the sound comes in at (smoothed)
+  double kfast;     // … and over the last FF_RISE seconds (what k goes to when the game got faster)
+  double rise;      // seconds k still follows the speed fast (the game got faster)
+  double hopped;    // seconds of output skipped lately (fading over a second)
   double due;       // output frames owed to wall-clock time
   double age;       // seconds since turbo began (the speed isn't known yet at first: k follows it faster)
   double target;    // seconds of output the queue is kept at (FF_TMIN … FF_TARGET; kept from one fast-forward to the next)
@@ -77,6 +97,7 @@ static struct {
   int16_t *out;
   size_t ocap;
   uint32_t holes;   // times the queue ran dry (diagnostics: stats)
+  uint32_t skips;   // times it skipped ahead
 } ff;
 
 static double ff_bessel0(double x) {
@@ -108,10 +129,12 @@ static void ff_reset(double k) {
   ff.due = 0;
   ff.primed = 0;
   ff.xleft = 0;
-  ff.k = ff.glide = ff.kin = k;
+  ff.k = ff.glide = ff.kin = ff.kfast = k;
+  ff.rise = 0;
+  ff.hopped = 0;
   ff.age = 0;
   ff.swing = 0;
-  if (!(ff.target >= FF_TMIN && ff.target <= FF_TARGET)) ff.target = FF_TARGET; // (the first time: deep, to be safe)
+  if (!(ff.target >= FF_TMIN && ff.target <= FF_TMAX)) ff.target = FF_TMAX; // (the first time: deep, to be safe)
   if (!ff.kt_ready) ff_kernel();
 }
 
@@ -212,26 +235,39 @@ static size_t ff_make(size_t want) {
 
 /** Fast-forward, after a frame: its sound into the queue, and the sped-up sound for `dt` seconds out to souldew. */
 static void ff_frame(double dt, double sample_rate) {
+  if (!(dt > 0)) dt = 0; // (a clock that went back: no time passed)
   ff_push(audio_buf, audio_n / 2);
   ff.due += dt * sample_rate;
   if (ff.due > sample_rate * 0.1) ff.due = sample_rate * 0.1; // stalled (loading): the page went without meanwhile
   double fill = ((double)ff.n - 1 - ff_reach(ff.k) - ff.pos) / ff.k / sample_rate; // seconds of output in the queue
-  if (fill > ff.target * 3 && ff.k >= FF_MAXK * 0.99 && !ff.xleft) {
-    // faster than FF_MAXK×: skip ahead to the target (crossfaded)
+  int skipped = 0;
+  if (fill > (ff.rise > 0 ? FF_LAG * 0.8 : FF_LAG) && !ff.xleft) { // (k catching up with a step up: sooner)
+    // more than FF_LAG behind (the game got faster than k follows, or faster than FF_MAXK×): skip ahead to the target,
+    // crossfaded – the sped-up sound never trails the picture by more than that
     ff.xpos = ff.pos;
     ff.xleft = FF_XFADE;
-    ff.pos += (fill - ff.target) * ff.k * sample_rate;
-    fill = ff.target;
+    // (a little below FF_LAG – a swing of the speed passes, or k follows meanwhile; while k catches up with a step up
+    // down to the target, and faster than FF_MAXK× – where k can't follow – down to FF_TMIN: fewer skips)
+    const int pinned = ff.k >= FF_MAXK * 0.99;
+    double hop = pinned ? fill - FF_TMIN : ff.rise > 0 || ff.hopped > FF_STEP ? fill - ff.target : fill - FF_LAG + FF_HOP;
+    if (!pinned && hop > fill - ff.target) hop = fill - ff.target;
+    if (hop < 0) hop = 0;
+    ff.pos += hop * ff.k * sample_rate;
+    fill -= hop;
+    ff.hopped += hop;
+    ff.skips++;
+    skipped = 1;
   }
   // how deep the queue needs to be: as deep as the speed makes it swing (a 3DS game whose speed swings needs the most;
   // a steady one keeps only FF_TMIN – the sped-up sound that much closer to the picture). Until 2.8.2 it was always
-  // FF_TARGET deep: ~0.4 s behind the picture at any speed (at 4×: 1.6 s of the game).
-  if (ff.primed) {
+  // FF_TARGET deep: ~0.4 s behind the picture at any speed (at 4×: 1.6 s of the game). Never more than two thirds of
+  // FF_LAG: the swings have room before it skips.
+  if (ff.primed && ff.rise <= 0) { // (not while k catches up with a step up of the speed: that's no swing)
     const double dev = fabs(fill - ff.target);
     ff.swing = dev > ff.swing ? dev : ff.swing * (1 - (dt < FF_SWING ? dt / FF_SWING : 1));
     double want = FF_DEPTH * ff.swing;
     if (want < FF_TMIN) want = FF_TMIN;
-    if (want > FF_TARGET) want = FF_TARGET;
+    if (want > FF_TMAX) want = FF_TMAX;
     if (want > ff.target) ff.target += (want - ff.target) * (dt < 1 ? dt : 1);
     else ff.target = want > ff.target - FF_SINK * dt ? want : ff.target - FF_SINK * dt;
   }
@@ -240,9 +276,27 @@ static void ff_frame(double dt, double sample_rate) {
   // (right after the switch k starts at the asked-for speed, which the PC may not reach: it follows faster at first, so
   // the queue doesn't run dry while it gets there)
   ff.age += dt;
-  const double follow = ff.age < FF_FOLLOW ? 0.25 + ff.age * (FF_FOLLOW - 0.25) / FF_FOLLOW : FF_FOLLOW;
-  const double glide = ff.age < FF_FOLLOW ? 0.15 + ff.age * (FF_GLIDE - 0.15) / FF_FOLLOW : FF_GLIDE;
-  if (dt > 0) ff.kin += ((double)(audio_n / 2) / (dt * sample_rate) - ff.kin) * (dt < follow ? dt / follow : 1);
+  // The game got faster: the queue skipped again and again (more than FF_STEP within about a second – a swing of the
+  // speed makes it skip once in a while at most) – k goes straight to the speed of the last moment and, for FF_CATCH
+  // seconds, follows it within FF_RISE. Until 2.8.2 k only followed over FF_FOLLOW seconds, and the queue only skipped
+  // above FF_MAXK×: after a step up the sped-up sound trailed the picture by seconds (2× → 8×: 1.5 s, 2× → 30×: 4.7 s).
+  // Slower again: k comes down gently, the queue takes it up.
+  ff.hopped *= 1 - (dt < 1 ? dt : 1);
+  if (skipped && ff.hopped > FF_STEP && ff.kfast > ff.kin) {
+    ff.kin = ff.kfast > FF_MAXK ? FF_MAXK : ff.kfast;
+    ff.rise = FF_CATCH;
+    ff.swing = 0;
+  }
+  const int catching = ff.rise > 0;
+  if (catching) ff.rise -= dt;
+  const double follow = catching ? FF_RISE : ff.age < FF_FOLLOW ? 0.25 + ff.age * (FF_FOLLOW - 0.25) / FF_FOLLOW : FF_FOLLOW;
+  double glide = ff.age < FF_FOLLOW ? 0.15 + ff.age * (FF_GLIDE - 0.15) / FF_FOLLOW : FF_GLIDE;
+  if (catching && glide > FF_RISE * 0.4) glide = FF_RISE * 0.4;
+  if (dt > 0) {
+    const double in = (double)(audio_n / 2) / (dt * sample_rate);
+    ff.kin += (in - ff.kin) * (dt < follow ? dt / follow : 1);
+    ff.kfast += (in - ff.kfast) * (dt < FF_RISE ? dt / FF_RISE : 1);
+  }
   double e = (fill - ff.target) / ff.target;
   if (e < -1) e = -1;
   if (e > 1.5) e = 1.5;

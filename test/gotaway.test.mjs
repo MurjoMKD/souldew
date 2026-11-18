@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { findEntry, readLiveParty, readLiveBattle, playerBattle, LiveTables } from '../shared/live/parse.mjs';
 import { encryptPK4 } from '../shared/gen4save.mjs';
-import { MissedTracker, MISSED_WAIT, openQuestions, wildBattle } from '../web/lib/missed.mjs';
+import { MissedTracker, MISSED_WAIT, MAX_WAITING, openQuestions, queueQuestions, dropQuestion, wildBattle } from '../web/lib/missed.mjs';
 
 const ROOT = new URL('../', import.meta.url).href;
 registerHooks({
@@ -124,6 +124,54 @@ test('the questions: oldest first, one per area, gone once caught or entered', (
   assert.deepEqual(openQuestions(list, { areaOf }).map((x) => x.id), [1, 3, 4, 5], 'Route 204\'s second miss waits behind its first');
   assert.deepEqual(openQuestions(list, { areaOf, stillOpen: (x) => x.id !== 1 }).map((x) => x.id), [2, 3, 4, 5], '"doesn\'t count" for the first: the next one there is asked');
   assert.deepEqual(openQuestions(list, { areaOf, caughtAt: (x) => (x.id === 3 ? 9 : 0) }).map((x) => x.id), [1, 4, 5]);
+});
+
+test('a route full of grass, nothing answered: one question for the area – one "No" and it is gone; a few areas at most', () => {
+  // 30 wild battles on Route 204, 20 s apart, none answered (the area stays open): the play view's tick each second
+  const tr = new MissedTracker();
+  const here = { gen: 4, id: 204 };
+  const areaOf = (q) => (q.here ? `m4-${q.here.id}` : null);
+  let qs = [];
+  let now = 1e6;
+  const tick = () => {
+    qs = queueQuestions(qs, tr.due(now), { areaOf });
+  };
+  for (let i = 0; i < 30; i++) {
+    for (let k = 0; k < 6; k++) {
+      tr.see({ kind: 'wild', enemy: { species: 396 + (i % 3), level: 4 } }, now, here);
+      now += 700;
+      tick();
+    }
+    tr.see(null, now, here);
+    for (let k = 0; k < 15; k++) {
+      now += 1000;
+      tick();
+    }
+  }
+  assert.equal(qs.length, 1, 'one waiting question for the area (2.8.2 kept all 30)');
+  assert.equal(qs[0].foe.species, 396, 'the first encounter there');
+  qs = dropQuestion(qs, qs[0], { areaOf });
+  assert.deepEqual(qs, [], 'one "No" answers it');
+  // the area is still open: the next battle that gets away there is asked about again
+  tr.see({ kind: 'wild', enemy: { species: 399, level: 4 } }, now, here);
+  tr.see(null, (now += 700), here);
+  now += MISSED_WAIT;
+  tick();
+  assert.equal(qs.length, 1);
+
+  // "No" drops the questions of that area only; one without a known area counts on its own
+  const q = (id, area) => ({ id, area });
+  const byArea = (x) => x.area;
+  const list = [q(1, 'a'), q(2, 'b'), q(3, null), q(4, 'a')];
+  assert.deepEqual(queueQuestions([], list, { areaOf: byArea }).map((x) => x.id), [1, 2, 3]);
+  assert.deepEqual(dropQuestion(list, list[0], { areaOf: byArea }).map((x) => x.id), [2, 3]);
+  assert.deepEqual(dropQuestion(list, list[2], { areaOf: byArea }).map((x) => x.id), [1, 2, 4]);
+  // many areas: a few wait at most (the oldest stay), answered ones and closed areas make room
+  const many = Array.from({ length: 10 }, (_, i) => q(i + 1, `r${i}`));
+  const held = queueQuestions([], many, { areaOf: byArea });
+  assert.equal(held.length, MAX_WAITING);
+  assert.deepEqual(held.map((x) => x.id), [1, 2, 3, 4]);
+  assert.deepEqual(queueQuestions(held, [q(11, 'r10')], { areaOf: byArea, stillOpen: (x) => x.id !== 2 }).map((x) => x.id), [1, 3, 4, 11]);
 });
 
 // ---- end to end on the run logic: a Platinum SoulLink (two players), as the play view uses it ----

@@ -2803,5 +2803,10 @@
   "ext.saveWaiting": "In attesa di {file} – salva una volta nel gioco.",
   "ext.saveRead": "Legge {file} · ultima lettura {when}",
   "ext.saveWatching": "Legge {file}",
-  "play.missedDupe": "{species} selvatico è fuggito – clausola dei doppioni, non conta."
+  "play.missedDupe": "{species} selvatico è fuggito – clausola dei doppioni, non conta.",
+  "ctl.keepKey": "Tieni {key}",
+  "ctl.ownerMenu": "il menu di souldew",
+  "ctl.ownerSystem": "il sistema",
+  "ctl.refusedNone": "{key}, il tuo tasto per «{action}», è usato da {owner}: per ora non ha un tasto. Cliccaci per sceglierne un altro.",
+  "ctl.refusedNow": "{key}, il tuo tasto per «{action}», è usato da {owner}: per ora è su {now}. Cliccaci per sceglierne un altro."
 }

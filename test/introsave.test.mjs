@@ -3,7 +3,7 @@
 // only for that game, applies it to new runs (randomized or not) and never puts it into a run pack.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, openSync, writeSync, closeSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, openSync, writeSync, closeSync, renameSync as renameSyncReal } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { registerHooks } from 'node:module';
@@ -487,4 +487,35 @@ test('the server: keep, offer, build with "Start from my intro save", remove', a
     server.closeAllConnections();
     server.close();
   }
+});
+
+test('replacing an intro save never loses both: the old one is moved aside, not deleted, until the new one is in place', () => {
+  const { INTRO_DIR, swapIn, listIntroSaves } = intro;
+  const id = 'abcdef0123456789';
+  const put = (dir, n) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify({ id, key: 'k', savedAt: `2026-01-0${n}T00:00:00Z`, n }));
+  };
+  const meta = () => JSON.parse(readFileSync(join(INTRO_DIR, id, 'meta.json'), 'utf8')).n;
+  put(join(INTRO_DIR, id), 1);
+  // the rename of the new one fails (Windows: a virus scanner holds the folder): the old one is still there
+  put(join(INTRO_DIR, '.new-a'), 2);
+  let calls = 0;
+  const failing = (a, b) => {
+    if (++calls === 2) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+    return renameSyncReal(a, b);
+  };
+  assert.throws(() => swapIn(join(INTRO_DIR, '.new-a'), id, { rename: failing }), /EPERM/);
+  assert.equal(meta(), 1, 'the old intro save is kept');
+  assert.equal(existsSync(join(INTRO_DIR, '.new-a')), false, 'the new copy is cleaned up');
+  // interrupted between the two renames (the app closed): put back the next time they are read
+  const aside = join(INTRO_DIR, `.old-${id}-0badf00d`);
+  renameSyncReal(join(INTRO_DIR, id), aside);
+  assert.equal(listIntroSaves().find((m) => m.id === id)?.n, 1);
+  assert.equal(existsSync(aside), false);
+  // and the normal case: the new one in place, nothing left aside
+  put(join(INTRO_DIR, '.new-b'), 3);
+  swapIn(join(INTRO_DIR, '.new-b'), id);
+  assert.equal(meta(), 3);
+  assert.deepEqual(readdirSync(INTRO_DIR).filter((d) => d.startsWith('.')), []);
 });

@@ -447,3 +447,30 @@ test('controller shortcuts: ZR turbo, ZL pause, fast-forward none – all re-bin
   assert.deepEqual(poll([11, 6], true), ['pause:true']);
   assert.deepEqual(poll([], true), ['ffHold:false'], 'a release never hurts');
 });
+
+test('a 2.8.1 fast-forward key souldew’s menu has here (F11 on Windows / Linux) is said, not quietly put back on Tab; one that works stays', async () => {
+  const { refusedHotkeys } = await import('../web/lib/controls.mjs');
+  const F11 = { keyCode: 122, key: 'F11', code: 'F11' };
+  const saved = { ffHold: F11 };
+  // Windows / Linux: F11 is the menu's fullscreen – it plays on Tab for now, and Settings says why
+  assert.deepEqual(resolveHotkeys(saved, QWERTY, false).ffHold.map((c) => c.keyCode), [9]);
+  assert.deepEqual(refusedHotkeys(saved, QWERTY, false), [{ id: 'ffHold', key: { keyCode: 122, key: 'F11', code: 'F11' }, why: 'menu' }]);
+  // a Mac: F11 is free – kept, nothing to say
+  assert.deepEqual(resolveHotkeys(saved, QWERTY, true).ffHold.map((c) => c.keyCode), [122]);
+  assert.deepEqual(refusedHotkeys(saved, QWERTY, true), []);
+  // any other 2.8.1 key stays as it was
+  const g = { ffHold: { keyCode: 71, key: 'g' }, ffToggle: { keyCode: 71, key: 'g', shift: true } };
+  for (const mac of [true, false]) {
+    assert.deepEqual(resolveHotkeys(g, QWERTY, mac).ffHold.map((c) => c.keyCode), [71]);
+    assert.deepEqual(refusedHotkeys(g, QWERTY, mac), []);
+  }
+  // switched off, or not set: nothing to say
+  assert.deepEqual(refusedHotkeys({ ffHold: { none: true } }, QWERTY, false), []);
+  assert.deepEqual(refusedHotkeys(null, QWERTY, false), []);
+  // the Settings row says it in all five languages
+  const { readFileSync } = await import('node:fs');
+  for (const lang of ['en', 'de', 'fr', 'es', 'it']) {
+    const j = JSON.parse(readFileSync(new URL(`../web/i18n/${lang}.json`, import.meta.url), 'utf8'));
+    for (const k of ['ctl.refusedNow', 'ctl.refusedNone', 'ctl.keepKey', 'ctl.ownerMenu', 'ctl.ownerSystem']) assert.ok(j[k], `${lang}: ${k}`);
+  }
+});

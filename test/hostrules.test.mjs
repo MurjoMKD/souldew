@@ -238,6 +238,82 @@ test('a change that isn’t the host’s is dropped by every app – a partner�
   assert.equal(host.get('enc:r29:p2').species, 1);
 });
 
+test('clocks a day or more apart: the host’s changes still reach everyone, and a partner’s far-future clock can’t make them lose', async () => {
+  const DAY = 86400000;
+  const m = await build({ rules: MINE });
+  const docs = (n) => Array.from({ length: n }, (_, i) => {
+    const d = mkDoc(['hostdev', 'partnerdev', 'thirddev'][i], m.id);
+    WH.initRules(d, m);
+    d.hostKey = m.hostKey;
+    d.guard = WH.hostGuard(d, m.id);
+    return d;
+  });
+  // a third player's clock runs two days ahead: their ordinary entries pull the host's doc clock a day ahead …
+  const [host, partner] = docs(2);
+  host.merge({ 'hp:p3': { v: 1, t: Date.now() + 2 * DAY, by: 'thirddev' } });
+  assert.ok(host.clock > Date.now() + DAY - 60000, 'the doc clock follows (clamped to a day)');
+  // … the host's next change is signed for that clock – the partner, whose clock is right, still takes it
+  const s1 = signRules(structuredClone(m), { ...MINE, dupes: 'off' }, { after: host.clock });
+  assert.ok(s1.rev > Date.now() + DAY - 60000);
+  host.setAt('rules', s1, s1.rev);
+  partner.merge(host.entries);
+  await settle();
+  assert.equal(R.rules(partner, m).dupes, 'off');
+  assert.equal(partner.entries.rules.t, s1.rev, 'kept at the signed timestamp');
+  assert.ok(partner.clock <= Date.now() + DAY, 'the partner’s own clock is not dragged past a day');
+
+  // the host's clock runs two days ahead
+  const [host2, partner2] = docs(2);
+  const s2 = signRules(structuredClone(m), { ...MINE, cheats: false }, { after: host2.clock, now: Date.now() + 2 * DAY });
+  host2.setAt('rules', s2, s2.rev);
+  partner2.merge(host2.entries);
+  await settle();
+  assert.equal(R.rules(partner2, m).cheats, false);
+  // the host's clock is put right: its next change is still newer than the one signed two days ahead
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (u, o) => {
+    const { rules, after } = JSON.parse(o.body);
+    const v = signRules(structuredClone(m), rules, { after });
+    return Promise.resolve(new Response(JSON.stringify({ rules: v, host: 'p1', hostKey: m.hostKey }), { headers: { 'content-type': 'application/json' } }));
+  };
+  try {
+    await WH.writeHostRules(host2, m, { ...MINE, cheats: false, dupes: 'player' }, 'p1');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  partner2.merge(host2.entries);
+  await settle();
+  assert.equal(R.rules(partner2, m).dupes, 'player');
+
+  // a far-future entry that isn't the host's: dropped, and the host's clock stays where it was
+  const before = host.clock;
+  const t = Date.now() + 30 * DAY;
+  host.merge({ rules: { v: { ...MINE, dupes: 'player' }, t, by: 'thirddev' } });
+  host.merge({ rules: { v: { ...MINE, rev: t, sig: randomBytes(64).toString('base64url') }, t, by: 'hostdev' } });
+  await settle();
+  assert.equal(host.clock, before);
+  assert.equal(R.rules(host, m).dupes, 'off');
+  const s3 = signRules(structuredClone(m), { ...MINE, dupes: 'both' }, { after: host.clock });
+  host.setAt('rules', s3, s3.rev);
+  partner.merge(host.entries);
+  await settle();
+  assert.equal(R.rules(partner, m).dupes, 'both', 'the host’s next change still wins');
+
+  // stored and loaded again (the server’s copy, the browser’s copy): the signed timestamp stays as it is
+  const { mergeDocEntries } = await import('../server/lib/build.mjs');
+  const far = { rules: { v: s2, t: s2.rev, by: 'hostdev' }, x: { v: 1, t: Date.now() + 5 * DAY, by: 'thirddev' } };
+  const stored = mergeDocEntries({}, far);
+  assert.equal(stored.rules.t, s2.rev);
+  assert.ok(stored.x.t <= Date.now() + DAY, 'other entries are still clamped');
+  const reloaded = mkDoc('partnerdev', m.id);
+  reloaded.merge(stored, null, { own: true });
+  assert.equal(reloaded.entries.rules.t, s2.rev);
+  // (from the link, without the guard having checked it, a far-future timestamp is clamped as before)
+  const unguarded = mkDoc('partnerdev', m.id);
+  unguarded.merge(far);
+  assert.ok(unguarded.entries.rules.t <= Date.now() + DAY);
+});
+
 test('the server signs only on the host’s computer; a joined run learns a key once, never another', async () => {
   const { startServer } = await import('../server/app.mjs');
   const { server, url } = await startServer({ port: 0, background: false });
@@ -275,6 +351,50 @@ test('the server signs only on the host’s computer; a joined run learns a key 
     assert.equal(readManifest(m.id).hostKey, m.hostKey);
   } finally {
     server.close();
+  }
+});
+
+test('a run from before 2.8.2: the partner learns the host key only from an announcement that can be the host’s', async () => {
+  const realFetch = globalThis.fetch;
+  const metaCalls = [];
+  globalThis.fetch = (u, o) => {
+    metaCalls.push([u, JSON.parse(o.body)]);
+    return Promise.resolve(new Response('{}', { headers: { 'content-type': 'application/json' } }));
+  };
+  try {
+    const built = await build();
+    const legacy = { ...structuredClone(built), imported: true, rules: { lives: 0 } };
+    delete legacy.hostKey;
+    delete legacy.host;
+    const key = built.hostKey;
+    const other = (await build()).hostKey;
+    const t = Date.now();
+    const setup = () => {
+      const d = mkDoc('me-dev', legacy.id);
+      WH.setupHostRules(d, legacy, { me: 'p2' });
+      return d;
+    };
+    // another player announcing themselves as the host (their own slot), or for this computer's player: ignored
+    let d = setup();
+    d.merge({ [H.HOST_DOC_KEY]: { v: { slot: 'p2', key: other }, t, by: 'partner-dev' } });
+    assert.equal(d.hostKey, null, 'not the run’s host player (p1, the creator)');
+    // from this very device (a copy of an old doc): ignored
+    d = setup();
+    d.merge({ [H.HOST_DOC_KEY]: { v: { slot: 'p1', key: other }, t, by: 'me-dev' } });
+    assert.equal(d.hostKey, null);
+    // a device that isn't the one playing the host's player: ignored – the one that is: taken
+    d = setup();
+    d.merge({ 'live:p1': { v: { party: [] }, t, by: 'host-dev' } });
+    d.merge({ [H.HOST_DOC_KEY]: { v: { slot: 'p1', key: other }, t, by: 'p3-dev' } });
+    assert.equal(d.hostKey, null, 'p1 is played on another device');
+    d.merge({ [H.HOST_DOC_KEY]: { v: { slot: 'p1', key }, t: t + 1, by: 'host-dev' } });
+    assert.equal(d.hostKey, key);
+    // learned once: never another
+    d.merge({ [H.HOST_DOC_KEY]: { v: { slot: 'p1', key: other }, t: t + 2, by: 'host-dev' } });
+    assert.equal(d.hostKey, key);
+    assert.deepEqual(metaCalls.map(([, b]) => b), [{ hostKey: key, host: 'p1' }]);
+  } finally {
+    globalThis.fetch = realFetch;
   }
 });
 

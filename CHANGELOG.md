@@ -22,9 +22,12 @@
   on or off, changed its speed, loaded a state, paused or changed the turbo sound setting, the 3DS player's sound fell a
   little further behind the picture – after a few switches a quarter of a second, so sound effects came clearly late,
   and it took minutes of play to catch up. Now the sound is back to about 60 ms behind the picture right after each of
-  these, and after a real hiccup of the computer within a few seconds. The sped-up sound with “Sped-up original” or
+  these, and after a real hiccup of the computer within seconds. A computer whose sound stalls again and again (every
+  few seconds) keeps a slightly bigger buffer while that goes on, so the sound doesn't break up at every stall – back
+  down within a minute once it stops. The sped-up sound with “Sped-up original” or
   “Plain” also comes sooner: about an eighth of a second behind the picture when the game holds its speed, instead of
-  almost half a second.
+  almost half a second, and never more than about a third of a second – when the game gets faster, it catches up within
+  a moment instead of trailing the picture by seconds.
 - **Fast-forward at Max sounds clean** (thanks to a player on Discord). With “Sped-up original” or “Plain” the sound at
   Max turned into a harsh, garbled mush. It still sounds like fast-forward, but clean now – in the 3DS player and in
   the fast player (DS and the other games there).
@@ -52,7 +55,8 @@
   “Sped-up original” or “Plain” the sound jumped in pitch four times a second and left out bits whenever the computer
   didn't hold the turbo speed exactly, so it seemed to drift away from the game. It now uses the same steady method as
   the 3DS player: the pitch follows the speed the game holds over a few seconds, no bits are dropped any more, and the
-  sound stays at most a quarter of a second behind the picture. With “Music continues” a song souldew hadn't heard at normal
+  sound stays about an eighth of a second behind the picture – at most about a third of a second, also right after the
+  game gets faster. With “Music continues” a song souldew hadn't heard at normal
   speed yet also no longer turns into a few seconds on repeat – the game's own music and sounds go on.
 - **Adding a 3DS game no longer freezes souldew, and an interrupted copy can't end up as a black screen** (thanks to a
   player on Discord). A 3DS game is up to 4 GB, and souldew copied it into the library in one go – the window froze
