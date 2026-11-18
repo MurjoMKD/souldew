@@ -49,7 +49,10 @@
 // – applied when the sound that came after it plays, so it lines up with the game's sound to the sample). The track then
 // plays along silently at 1× (romvoice.mjs), and in fast-forward it is the music – ahead of everything else: the real
 // track at its normal speed and pitch, its own loop, the next track crossfaded in when the game starts one. When
-// fast-forward ends it jumps to where the game is now and crossfades back into the game's own sound. Without it
+// fast-forward ends it jumps to where the game is now and crossfades back into the game's own sound. The game's sound
+// effects go on over it: the core leaves the voices that play the music out of its fast-forward sound ({ type: 'sfx' },
+// native/azahar-patch/souldew-sfx.patch) and says where each new sound begins – each one plays at its normal speed and
+// pitch the moment it happens, never piling up (sfxplayer.mjs). Without it
 // (another system, an unpatched core, a game whose music isn't a stream file) everything below applies.
 //
 // Plain DSP without Web Audio types: it runs in the AudioWorklet (turboaudio-worklet.mjs), in the
@@ -58,6 +61,7 @@
 
 import { SdatSynth } from './sdat-synth.mjs';
 import { RomVoice, alignLag } from './romvoice.mjs';
+import { SfxPlayer } from './sfxplayer.mjs';
 
 export const HOP = 1024; // samples per analysis frame
 export const TURBO_MODES = ['music', 'mute', 'original'];
@@ -494,6 +498,14 @@ export class TurboMixer {
     this.romHand = 0; // samples left: after fast-forward the voice is lined up with the game's sound, then handed back
     this.k.romHand = S(0.6);
     this.romJumps = 0;
+    // …and the game's sound effects on top of the track while it fast-forwards: the core leaves the music voices out of
+    // its sound ({ type: 'sfx' }, ctrhost.c message 11) and says where new sounds begin – each plays at its normal speed
+    // and pitch the moment it happens (sfxplayer.mjs), only while the ROM track is the music
+    this.sfx = new SfxPlayer(sampleRate);
+    this.sv = { v: 0, t: 0, s: 0 };
+    this.sfxSolo = null; // { l, r, n }: the sound effects' own share of the last block (diagnostics, the worklet's tap)
+    this.k.sfxIn = S(0.005);
+    this.k.sfxOut = S(0.03);
     this.quanta = 0; // render blocks processed (diagnostics: is the audio thread running this mixer at all?)
   }
 
@@ -539,6 +551,7 @@ export class TurboMixer {
       rom: this.rom.id, // the ROM track playing (or along) – and how loud
       romLevel: +this.rv.t.toFixed(2),
       romAlign: this.al.last ? { d: this.al.last.d, score: +this.al.last.score.toFixed(3) } : null,
+      sfx: this.sv.t > 0 || this.sfx.stats.onsets ? { level: +this.sv.t.toFixed(2), ...this.sfx.stats } : null,
     };
   }
 
@@ -625,6 +638,7 @@ export class TurboMixer {
       this.romWant = null;
       this.romResync = 0;
       this.romHand = 0;
+      this.sfx.reset();
       this.al.target = null;
       this.al.n = 0;
       this.song++;
@@ -954,6 +968,7 @@ export class TurboMixer {
     if (on) {
       this.hold = 0;
       this.romHand = this.romResync = 0; // (fast-forward again before the hand-back: the track simply goes on)
+      this.sfx.reset();
       this.al.target = null;
       this.al.n = 0;
       const loop = this.chooseLoop();
@@ -1309,13 +1324,16 @@ export class TurboMixer {
   retarget(back = this.k.fade) {
     const ff = this.turbo || this.hold > 0; // sped-up sound may still be coming out of OpenAL
     if ((ff || this.romResync > 0 || this.romHand > 0) && this.mode === 'music' && !this.paused && this.romReady) {
-      // the game's own track: game sound, loops and the synth fade out
+      // the game's own track: game sound, loops and the synth fade out – its sound effects play on top while it
+      // fast-forwards (not while the track is handed back at 1×)
       this.ramp(this.live, 0);
       this.ramp(this.loop, 0);
       this.ramp(this.syn, 0);
       this.ramp(this.rv, 1);
+      this.ramp(this.sv, this.turbo ? 1 : 0, this.turbo ? this.k.sfxIn : this.k.sfxOut);
       return;
     }
+    this.ramp(this.sv, 0, this.k.sfxOut);
     // (back from the ROM track: both over `back`, the game's sound and the track are the same music there)
     const fromRom = this.rv.t > 0;
     this.ramp(this.rv, 0, back);
@@ -1394,6 +1412,17 @@ export class TurboMixer {
    * sound's did. Nothing else changes – the sped-up sound still plays in "original" and is listened to for silences
    * while a loop plays.
    */
+  /**
+   * The game's sound effects while it fast-forwards (ctrhost.c message 11, handed over by native-audio-worklet.mjs as it
+   * arrives): the core's sound without the voices that play the music track, at the game's pace, `onsets` where new
+   * sounds began; `ok` false where the core kept the music in (unsure) – never played. Only while the ROM track is the
+   * music ("Music continues").
+   */
+  sfxSound(l, r, n, onsets, ok) {
+    if (!this.turbo || this.paused || this.mode !== 'music' || !n) return;
+    this.sfx.push(l, r, n, onsets, ok);
+  }
+
   ffSound(l, r, n = l.length) {
     if (!this.turbo || this.paused || this.mode !== 'music' || this.skip || !n) return;
     if (!this.own) {
@@ -1706,6 +1735,7 @@ export class TurboMixer {
   mix(inL, inR, outL, outR, n) {
     this.mixGame(inL, inR, outL, outR, n);
     this.mixRom(outL, outR, n);
+    this.mixSfx(outL, outR, n);
     const sy = this.syn;
     if (!this.synth || (this.paused && sy.v === 0)) return; // (paused: the song waits with the game)
     if (sy.v === sy.t && sy.v === 0) return this.synth.render(outL, outR, n, 0); // plays along silently, in time
@@ -1734,6 +1764,32 @@ export class TurboMixer {
       return;
     }
     this.rom.render(outL, outR, n, from * k, r.v * k);
+  }
+
+  /** The sound effects over the ROM track (fast-forward), at their fade's level. */
+  mixSfx(outL, outR, n) {
+    const f = this.sv;
+    if (f.v === 0 && f.t === 0) {
+      if (this.sfx.active) this.sfx.reset();
+      return;
+    }
+    const from = f.v;
+    if (f.v !== f.t) {
+      f.v += f.s * n;
+      if ((f.s > 0 && f.v >= f.t) || (f.s < 0 && f.v <= f.t)) f.v = f.t;
+    }
+    if (!this.sfxSolo) return this.sfx.render(outL, outR, n, from, f.v);
+    // (diagnostics: what the sound effects alone add – the worklet's tap { part: 'sfx' } records it)
+    const a = (this.sfxSolo.l = this.sfxSolo.l?.length >= n ? this.sfxSolo.l : new Float32Array(n));
+    const b = (this.sfxSolo.r = this.sfxSolo.r?.length >= n ? this.sfxSolo.r : new Float32Array(n));
+    a.fill(0, 0, n);
+    b.fill(0, 0, n);
+    this.sfx.render(a, b, n, from, f.v);
+    for (let i = 0; i < n; i++) {
+      outL[i] += a[i];
+      if (outR !== outL) outR[i] += b[i];
+    }
+    this.sfxSolo.n = n;
   }
 
   romSink(n) {

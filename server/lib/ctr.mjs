@@ -26,8 +26,10 @@ const CORE = process.platform === 'win32' ? 'azahar_libretro.dll' : process.plat
 const VULKAN = { darwin: 'libMoltenVK.dylib', win32: 'vulkan-1.dll', linux: 'libvulkan.so.1' }[process.platform];
 
 /** Message types of the protocol (ctrhost.c). */
-export const MSG = { HELLO: 1, VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7, FFSOUND: 8, ROMFS: 9, ROMDATA: 10 };
-export const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9, ROMREAD: 10 };
+export const MSG = { HELLO: 1, VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7, FFSOUND: 8, ROMFS: 9, ROMDATA: 10, SFX: 11 };
+export const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9, ROMREAD: 10, MUSIC: 11, SFX: 12 };
+/** The most music streams a MUSIC command names (ctrhost.c MAX_MUSIC_RANGES). */
+export const CTR_MUSIC_MAX = 8192;
 /** The most RomFS bytes one ROMREAD may ask for (ctrhost.c ROMREAD_MAX). */
 export const CTR_ROMREAD_MAX = 1024 * 1024;
 
@@ -215,12 +217,15 @@ export function command(type, payload = Buffer.alloc(0)) {
 export function checkCommands(body) {
   const { messages, rest } = splitMessages(body);
   if (rest.length || !messages.length) throw httpError(400, 'Invalid command', 'badCommand');
-  const limits = { [CMD.INPUT]: 32, [CMD.SPEED]: 4, [CMD.SAVE]: 0, [CMD.LOAD]: 256 * 1024 * 1024, [CMD.WATCH]: 4 + 16 * 8, [CMD.QUIT]: 0, [CMD.RESET]: 0, [CMD.FRAMESKIP]: 4, [CMD.WRITE]: 12 + 2 * CTR_WRITE_MAX, [CMD.ROMREAD]: 20 };
+  const limits = { [CMD.INPUT]: 32, [CMD.SPEED]: 4, [CMD.SAVE]: 0, [CMD.LOAD]: 256 * 1024 * 1024, [CMD.WATCH]: 4 + 16 * 8, [CMD.QUIT]: 0, [CMD.RESET]: 0, [CMD.FRAMESKIP]: 4, [CMD.WRITE]: 12 + 2 * CTR_WRITE_MAX, [CMD.ROMREAD]: 20, [CMD.MUSIC]: 8 + 16 * CTR_MUSIC_MAX, [CMD.SFX]: 4 };
   for (const m of messages) {
     if (!(m.type in limits) || m.payload.length > limits[m.type]) throw httpError(400, 'Invalid command', 'badCommand');
     if (m.type === CMD.WRITE && !ctrWriteOk(m.payload)) throw httpError(400, 'Invalid command', 'badCommand');
     // (a RomFS read for the music from the ROM: id, tag, offset, length – the host reads only the game's own RomFS)
     if (m.type === CMD.ROMREAD && (m.payload.length !== 20 || m.payload.readUInt32LE(16) > CTR_ROMREAD_MAX)) throw httpError(400, 'Invalid command', 'badCommand');
+    // (sound effects in fast-forward: where the music streams are – tag, count, count × [start, end) – and on / off)
+    if (m.type === CMD.MUSIC && (m.payload.length < 8 || m.payload.length !== 8 + 16 * m.payload.readUInt32LE(4))) throw httpError(400, 'Invalid command', 'badCommand');
+    if (m.type === CMD.SFX && m.payload.length !== 4) throw httpError(400, 'Invalid command', 'badCommand');
   }
   return body;
 }

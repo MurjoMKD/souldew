@@ -40,6 +40,13 @@
   finds the exact spot the game is at and fades back into the game's sound without a seam. It works from the game's own
   files, so other languages, updates, ROM hacks with new or renamed tracks and mods work the same way; where it finds
   no music file, fast-forward sounds as before.
+- **3DS: the game's sounds during fast-forward – at their normal speed, right when they happen.** With “Music
+  continues” the music from the game used to replace everything, so menu clicks, cries and attack sounds were gone while
+  you fast-forwarded. Now souldew tells the game's music apart from its other sounds inside the emulator and plays those
+  sounds over the music: each one starts the moment it happens on screen and plays at its normal pitch – no chipmunk
+  sounds, and nothing piles up or comes late, however long you fast-forward (a sound that goes on and on is cut to what
+  fits). Where souldew can't tell the music apart for sure, fast-forward sounds as before. “Sped-up original”, “Plain”
+  and “Mute” are unchanged, and nothing changes at normal speed.
 - **DS and the other games in the fast player: steady fast-forward sound** (thanks to a player on Discord). With
   “Sped-up original” or “Plain” the sound jumped in pitch four times a second and left out bits whenever the computer
   didn't hold the turbo speed exactly, so it seemed to drift away from the game. It now uses the same steady method as

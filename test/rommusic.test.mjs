@@ -864,3 +864,81 @@ test('the music log: a stream that restarts on every read is told once, then sum
   rm.onTrack({ type: 'start', key: '1:9', path: 'sound/b.aac', at: 0, frame: 5000 });
   assert.equal(logs.at(-1).type, 'rom-start');
 });
+
+// ---- AAC calibration with real AAC frames --------------------------------------------------------------------------
+// test/fixtures/rommusic-music.aac: 6 s of synthetic music (plucked chords, stereo, 48 kHz), encoded to ADTS AAC-LC with
+// macOS' encoder (afconvert -f adts -d aac -b 96000) – encoder delay and all. Decoded with ffmpeg (as Chromium does, and
+// FAAD in the core, both keep the 1024-sample priming): the game's path is Azahar's DSP voice playing the 48 kHz PCM at
+// 32728 Hz with linear interpolation, the page's path the browser's decode resampled to the context's rate (soxr here)
+// with the priming taken off (decodeAac).
+const ffmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
+function aacPaths() {
+  const src = new URL('./fixtures/rommusic-music.aac', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+  const dec = (args) => {
+    const r = spawnSync('ffmpeg', ['-v', 'error', '-i', src, ...args, '-f', 'f32le', '-ac', '2', '-'], { maxBuffer: 64 << 20 });
+    assert.equal(r.status, 0, String(r.stderr));
+    return new Float32Array(r.stdout.buffer, r.stdout.byteOffset, r.stdout.length >> 2);
+  };
+  const d48 = dec([]);
+  const d32 = dec(['-af', 'aresample=32728:resampler=soxr']);
+  const SR = 32728;
+  const step = 48000 / SR;
+  const gameN = Math.floor((d48.length / 2 - 2) / step);
+  const game = new Float32Array(gameN * 2);
+  for (let i = 0; i < gameN; i++) {
+    const x = i * step;
+    const k = Math.floor(x);
+    const f = x - k;
+    for (let c = 0; c < 2; c++) game[2 * i + c] = d48[2 * k + c] * (1 - f) + d48[2 * (k + 1) + c] * f;
+  }
+  const skip = Math.round(1024 / step);
+  const n = d32.length / 2 - skip;
+  const l = new Int16Array(n);
+  const r = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    l[i] = Math.round(d32[2 * (i + skip)] * 32767);
+    r[i] = Math.round(d32[2 * (i + skip) + 1] * 32767);
+  }
+  return { SR, step, game, gameN, track: { pcm: { l, r }, ratio: SR / 48000, voicePos: (x) => (x * SR) / 48000 } };
+}
+
+test('AAC calibration with real AAC frames: near the line, and far off it (wide search, taken when two agree)', { skip: !ffmpeg && 'no ffmpeg' }, async () => {
+  const { SR, step, game, gameN, track } = aacPaths();
+  const bytes = new Uint8Array(readFileSync(new URL('./fixtures/rommusic-music.aac', import.meta.url)));
+  const frames = adtsFrames(bytes);
+  assert.equal(frames.rate, 48000);
+  const rm = new RomMusic({ send: () => {}, tell: () => {}, rate: SR });
+  const end = Math.min(gameN, SR * 4 - 1);
+  rm.onGameSound(game.subarray(0, end * 2));
+  rm.game.frameAt = end;
+  // the game's sample `end` is the track's (48 kHz, priming off) end·step − 1024
+  const truth = end * step - 1024;
+  const info = { codec: 'adts', rate: 48000 };
+  for (const offMs of [0, 120, -300]) {
+    const r = rm.calibrate({ pos: truth + (offMs / 1000) * 48000, info, u: truth }, track, { end, range: 0.4 });
+    assert.ok(r.score >= 0.95, `score ${r.score} at ${offMs} ms`);
+    assert.ok(Math.abs(r.err + (offMs / 1000) * 48000) < 2 * step, `err ${r.err} for ${offMs} ms`);
+  }
+  // 1.4 s off: the near search finds nothing; the wide one finds it – nudged only once a second wide search agrees
+  const off = 1.4 * 48000;
+  const nudges = [];
+  rm.tracker.cur = { anchor: { guess: false } };
+  rm.tracker.nudge = (e) => nudges.push(e);
+  rm.tracker.playing = () => null;
+  const p = { pos: truth + off, info, u: truth };
+  const logs = [];
+  rm.log = (e) => logs.push(e);
+  rm.game.at = SR * 4; // (enough of the game's sound)
+  rm.game.frameAt = end;
+  for (let i = 0; i < 2; i++) {
+    rm.cal.get('adts') && (rm.cal.get('adts').next = 0);
+    rm.maybeCalibrate(p, track);
+    await new Promise((res) => setTimeout(res, 20));
+  }
+  const cal = logs.filter((e) => e.type === 'rom-calibrated');
+  assert.equal(cal.length, 2);
+  assert.ok(cal.every((e) => e.wide && e.score >= 0.95 && e.margin >= 0.08), JSON.stringify(cal));
+  assert.deepEqual(cal.map((e) => e.taken), [false, true]);
+  assert.equal(nudges.length, 1);
+  assert.ok(Math.abs(nudges[0] + off) < 2 * step, `nudged by ${nudges[0]}`);
+});

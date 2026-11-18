@@ -12,14 +12,15 @@ import { CTR_LAYOUTS, ctrLayout, ctrTouchAt, blackPicture } from '/shared/ctrlay
 import { RomMusic } from '/lib/rommusic.mjs';
 
 const q = new URLSearchParams(location.search);
-const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7, FFSOUND: 8, ROMFS: 9, ROMDATA: 10 };
-const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9, ROMREAD: 10 };
+const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7, FFSOUND: 8, ROMFS: 9, ROMDATA: 10, SFX: 11 };
+const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9, ROMREAD: 10, MUSIC: 11, SFX: 12 };
 const post = (m) => window.parent?.postMessage(m, location.origin);
 
 const st = {
   id: null, ready: false, paused: false, speed: 1, volume: 1, frames: 0, fps: 0, title: null, width: 400, height: 480,
   mem: [], watching: '', liveMemory: false, error: null, log: [], renderer: null, turboAudio: 'music',
   hostFrame: 0, hostFrames: false, hostSpeed: 0, // the host's count of emulated frames and its real speed (stats event)
+  sfxCore: false, sfxWant: false, // the core can leave the music out of its sound (sound effects in fast-forward) / asked
 };
 const waiters = { state: [], loaded: [], written: new Map() }; // written: write id → resolve
 
@@ -340,6 +341,18 @@ function startRomMusic(rate) {
     // the server's index of the game file's streams, and its bytes straight from the file (server/app.mjs /api/ctr/music)
     index: fetch(`/api/ctr/music?id=${id}`).then((r) => (r.ok ? r.json() : null)).then((j) => j?.music || null).catch(() => null),
     fetchBytes: (off, len) => fetch(`/api/ctr/romfs?id=${id}&off=${off}&len=${len}`).then((r) => (r.ok ? r.arrayBuffer() : null)).then((b) => (b && b.byteLength === len ? new Uint8Array(b) : null)),
+    ranges: (tag, pairs) => {
+      if (!st.sfxCore) return;
+      const b = new Uint8Array(8 + pairs.length * 16);
+      const v = new DataView(b.buffer);
+      v.setUint32(0, tag, true);
+      v.setUint32(4, pairs.length, true);
+      pairs.forEach(([a, e], i) => {
+        v.setBigUint64(8 + i * 16, BigInt(a), true);
+        v.setBigUint64(16 + i * 16, BigInt(e), true);
+      });
+      cmd(CMD.MUSIC, b);
+    },
     tell: (m) => {
       if (audio.node) audio.node.port.postMessage(m, transfer(m));
       else if (m.type === 'rom-track' || audio.romQueue.length < 64) audio.romQueue.push([m, transfer(m)]);
@@ -377,6 +390,31 @@ function onAudio(p) {
   const f = floats(p);
   if (audio.rom && st.speed === 1) audio.rom.onGameSound(f); // (the game's 1× sound: the music's lead is measured on it)
   audio.node.port.postMessage(f, [f.buffer]);
+}
+/**
+ * Sound effects in fast-forward: with "Music continues" and a music track from the ROM, the host leaves the voices that
+ * play the game's music out of its fast-forward sound (ctrhost.c SFX, native/azahar-patch/souldew-sfx.patch) – asked
+ * for at 1× already, the host only does it while it fast-forwards. Message 11 then brings the rest (the sound effects)
+ * with the places new sounds began; the mixer plays each one at its normal speed over the track (lib/sfxplayer.mjs).
+ */
+function updateSfx() {
+  const want = st.sfxCore && st.turboAudio === 'music' && !!audio.rom?.enabled && !!audio.rom?.hasTrack && !!audio.node;
+  if (want === st.sfxWant) return;
+  st.sfxWant = want;
+  cmd(CMD.SFX, new Uint8Array([want ? 1 : 0, 0, 0, 0]));
+}
+function onSfx(p) {
+  if (p.length < 8) return;
+  const v = new DataView(p.buffer, p.byteOffset, p.length);
+  const flags = v.getUint32(0, true);
+  const n = v.getUint32(4, true);
+  if (8 + n * 4 > p.length) return;
+  if (!audio.node || st.paused || st.turboAudio !== 'music') return;
+  const onsets = [];
+  for (let i = 0; i < n; i++) onsets.push(v.getUint32(8 + i * 4, true));
+  const f = floats(p.subarray(8 + n * 4));
+  // (flags 4: somewhere in it the core kept the music in – it isn't played)
+  audio.node.port.postMessage({ type: 'sfx', f, onsets, ok: !(flags & 4) }, [f.buffer]);
 }
 /** Fast-forward: the core's own sound (message 8) – only "Music continues" records it, the other modes never use it. */
 function onFfSound(p) {
@@ -469,7 +507,10 @@ function onEvent(p) {
   }
   if (e.event === 'loaded') {
     st.liveMemory = !!e.memory;
+    st.sfxCore = !!e.sfx && q.get('sfx') !== '0';
+    st.sfxWant = false; // (a new host: it knows nothing yet)
     if (e.romfs && !audio.rom && q.get('rommusic') !== '0') startRomMusic(e.sampleRate);
+    else if (audio.rom) for (const tag of audio.rom.streamRanges.keys()) audio.rom.tellRanges(tag); // (a new host)
     startAudio(e.sampleRate);
     // a second "loaded" with another renderer: the server started the host again with a safer one (renderer "auto",
     // server/lib/ctrrenderer.mjs) – the play view says so
@@ -547,7 +588,11 @@ async function pump() {
       if (type === MSG.VIDEO) onVideo(p.slice());
       else if (type === MSG.AUDIO) onAudio(p);
       else if (type === MSG.FFSOUND) onFfSound(p);
-      else if (type === MSG.ROMFS) audio.rom?.onRomfs(p); // (before that frame's AUDIO: the position goes in band)
+      else if (type === MSG.SFX) onSfx(p);
+      else if (type === MSG.ROMFS) {
+        audio.rom?.onRomfs(p); // (before that frame's AUDIO: the position goes in band)
+        updateSfx();
+      }
       else if (type === MSG.ROMDATA) audio.rom?.onRomData(p);
       else if (type === MSG.MEM) onMem(p);
       else if (type === MSG.EVENT) onEvent(p);
@@ -833,6 +878,7 @@ window.__emu = {
     st.turboAudio = mode;
     tellAudio({ type: 'mode', mode });
     if (audio.rom) audio.rom.enabled = mode === 'music';
+    updateSfx();
   },
   /** The music the game plays now (location.mjs musicKey), when the live reader knows it: the turbo mixer follows it. */
   songKey(key) {
@@ -858,13 +904,14 @@ window.__emu = {
   },
   /**
    * Tests, diagnostics: a recording of what the sound worklet plays over the next `seconds` (before the volume) –
-   * { sampleRate, l, r, ring } (ring: the buffer's numbers, lib/jitterring.mjs) – or null without sound.
+   * { sampleRate, l, r, ring } (ring: the buffer's numbers, lib/jitterring.mjs) – or null without sound. `part` 'sfx':
+   * only what the sound effects add while fast-forwarding (lib/sfxplayer.mjs).
    */
-  audioTap(seconds = 10) {
+  audioTap(seconds = 10, part = null) {
     if (!audio.node) return Promise.resolve(null);
     return new Promise((res) => {
       audio.taps.push(res);
-      tellAudio({ type: 'tap', frames: Math.round(audio.ctx.sampleRate * seconds) });
+      tellAudio({ type: 'tap', frames: Math.round(audio.ctx.sampleRate * seconds), part });
       setTimeout(() => res(null), seconds * 1000 + 5000);
     });
   },
