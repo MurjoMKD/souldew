@@ -12,7 +12,7 @@
 //
 // Plain JS (no Web Audio types): runs in the AudioWorklet and in node --test.
 
-import { cstmDecodeBlock, cstmSeekHist } from '../../shared/ctr/streams.mjs';
+import { cstmDecodeBlock, cstmSeekHist, cstmSane } from '../../shared/ctr/streams.mjs';
 
 const Q = 1 / 32768;
 
@@ -207,7 +207,8 @@ export class RomVoice {
   /** A track's data from the page: { id, kind: 'cstm', file, info } or { id, kind: 'pcm', l, r, rate, loop }. */
   add(m) {
     let src = null;
-    if (m.kind === 'cstm' && m.file && m.info) src = new CstmSource(m.file, m.info);
+    // (sizes checked again here: what they say is allocated per block in the audio thread)
+    if (m.kind === 'cstm' && m.file && cstmSane(m.info, m.file.length)) src = new CstmSource(m.file, m.info);
     else if (m.kind === 'pcm' && m.l) src = new PcmSource(m);
     if (!src) return false;
     this.tracks.delete(m.id);
