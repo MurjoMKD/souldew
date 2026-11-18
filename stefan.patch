@@ -1211,7 +1211,7 @@ index 792b343..ab75f80 100644
  export function logCheatRule(doc, manifest, by, allowed) {
    const solo = slotsOf(manifest).length === 1;
 diff --git a/web/styles.css b/web/styles.css
-index 86b58de..0374909 100644
+index 86b58de..e0b83b1 100644
 --- a/web/styles.css
 +++ b/web/styles.css
 @@ -1516,3 +1516,53 @@ html.pad-nav .cart:focus .cart-body { transform: translateY(-4px) rotate(-0.6deg
@@ -1248,13 +1248,19 @@ index 86b58de..0374909 100644
 +.rom-picker .rom-list { width: 100%; min-height: 120px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; padding: 4px; }
 +.rom-picker .rom-list option { padding: 4px 6px; border-radius: 4px; }
 +
-+/* ---- Stefan Mario SoulLink: fullscreen – live tracking as a slim bar on top, the place small and see-through over the game ---- */
++/* ---- Stefan Mario SoulLink: fullscreen – one slim bar above the game: the place, encounters and level cap on the left,
++   the live tracking next to it; the game below as big as it goes ---- */
 +.session.full.is-fs { padding: 4px 8px 4px; }
-+.session.is-fs .session-body, .session.is-fs .session-body.has-left { display: flex; flex-direction: column; gap: 4px; padding-left: 0; }
-+.session.is-fs .session-body > .session-stage { flex: 1; min-height: 0; gap: 4px; }
-+/* the bar on top: one line – who's live, then the linked pairs side by side */
-+.session.is-fs .session-body > .session-side { order: -1; flex: none; flex-direction: row; flex-wrap: nowrap; justify-content: center; align-items: center;
-+  gap: 8px; max-height: 92px; overflow: hidden; }
++.session.is-fs .session-body, .session.is-fs .session-body.has-left { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
++  grid-template-areas: 'left side' 'stage stage'; gap: 4px 10px; padding-left: 0; }
++.session.is-fs .session-body > .session-stage, .session.is-fs .session-body.has-left > .session-stage { grid-area: stage; min-height: 0; gap: 4px; }
++/* left part of the bar: sign, encounters and level cap side by side, scaled down */
++.session.is-fs .session-body > .session-left.fs-bar, .session.is-fs .session-body.has-left > .session-left.fs-bar { grid-area: left; display: flex; flex-direction: row;
++  align-items: center; gap: 8px; max-height: none; overflow: visible; zoom: .62; align-self: center; }
++.session.is-fs .session-left.fs-bar > * { flex: none; margin: 0; }
++/* right part: who's live, then the linked pairs side by side */
++.session.is-fs .session-body > .session-side, .session.is-fs .session-body.has-left > .session-side { grid-area: side; flex-direction: row; flex-wrap: nowrap;
++  justify-content: center; align-items: center; gap: 8px; max-height: 92px; overflow: hidden; min-width: 0; }
 +.session.is-fs .session-side > section.screen { flex-direction: row !important; align-items: center; gap: 12px !important; padding: 4px 10px; max-width: 100%; min-width: 0; }
 +.session.is-fs .session-side > section.screen > .row { flex: none; flex-wrap: nowrap; gap: 6px; }
 +.session.is-fs .session-side .pairs { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 6px; overflow-x: auto; padding: 2px; border: 0; background: none; min-width: 0; }
@@ -1262,12 +1268,6 @@ index 86b58de..0374909 100644
 +.session.is-fs .session-side .pair-row, .session.is-fs .session-side .grp-row { flex: none; min-width: 200px; margin: 0; }
 +.session.is-fs .session-side .pairs > p { margin: 0; white-space: nowrap; }
 +.session.is-fs .side-partner { max-height: 84px; overflow: hidden; }
-+/* the place, encounters and level cap: small and see-through over the game's left edge, clear on hover */
-+.session.is-fs .session-left.fs-overlay { position: absolute; top: 6px; left: 6px; z-index: 4; width: 230px; max-height: calc(100% - 60px); overflow: hidden;
-+  display: flex; flex-direction: column; gap: 4px; opacity: .35; transform: scale(.8); transform-origin: top left; transition: opacity .15s; pointer-events: none; }
-+.session.is-fs .session-left.fs-overlay > * { pointer-events: auto; background-color: rgb(0 0 0 / .25) !important; box-shadow: none !important; }
-+.session.is-fs .session-left.fs-overlay:hover { opacity: 1; }
-+.session.is-fs .session-left.fs-overlay:hover > * { background-color: rgb(10 10 14 / .8) !important; }
 diff --git a/web/views/archeats.mjs b/web/views/archeats.mjs
 new file mode 100644
 index 0000000..c19d505
@@ -1445,7 +1445,7 @@ index 0000000..c19d505
 +  </div>`;
 +}
 diff --git a/web/views/play.mjs b/web/views/play.mjs
-index 02947f9..0461a11 100644
+index 02947f9..dcabf4e 100644
 --- a/web/views/play.mjs
 +++ b/web/views/play.mjs
 @@ -8,9 +8,10 @@ import { t, ago } from '../lib/i18n.mjs';
@@ -1488,8 +1488,8 @@ index 02947f9..0461a11 100644
      side=${panelSide} collapsed=${panelPrefs.collapsed} onPrefs=${setPanelPrefs} hitsOpen=${panelPrefs.hits} noMoves=${features?.moves === 'no'} />`;
    const hasLeft = !!(isRun || here || (battle?.enemy && panelSide === 'left'));
 -  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${isDs ? 'ds' : ''}`} data-v=${docVersion}>
-+  // Fullscreen (this build): the game as big as it goes – live tracking above it, the place, encounters and level cap
-+  // see-through over the game's left edge
++  // Fullscreen (this build): the game as big as it goes – the place, encounters and level cap and the live tracking in
++  // one slim bar above it
 +  const fsOverlay = fs && mode === 'full';
 +  const leftAside = (cls) => html`<aside class=${`session-left ${cls}`}>
 +        <${LocationSign} here=${here} live=${liveState.status === 'live'} isRun=${isRun} game=${liveRef.current?.entry} />
@@ -1500,7 +1500,7 @@ index 02947f9..0461a11 100644
      <div class="mini-head">
        <${Led} on=${phase === 'running' && !paused} color="green" /><span class="grow ellipsis">${target.label}</span>
        ${btn('close', t('play.close', 'Close game'), actions.close)}
-@@ -1403,12 +1421,9 @@ export function GameSession({ session, mode }) {
+@@ -1403,11 +1421,7 @@ export function GameSession({ session, mode }) {
        <button class="btn small ghost" onClick=${actions.close}><${Icon} name="close" size=${14} />${t('play.close', 'Close game')}</button>
      </div>
      <div class=${`session-body ${hasLeft ? 'has-left' : ''}`}>
@@ -1509,13 +1509,11 @@ index 02947f9..0461a11 100644
 -        ${isRun && names && html`<${RunStrip} mine=${myParty} onRules=${() => setRulesOpen(true)} />`}
 -        ${panelSide === 'left' && battlePanel}
 -      </aside>`}
-+      ${hasLeft && !fsOverlay && leftAside('')}
++      ${hasLeft && leftAside(fsOverlay ? 'fs-bar' : '')}
        <div class="session-stage">
-+        ${hasLeft && fsOverlay && leftAside('fs-overlay')}
          <div class="session-screen" onClick=${focusGame}>
            <div class="console-screen" style=${`--arn:${arn}`}>
-             <iframe ref=${frame} src=${src} title=${t('play.screenTitle', 'Game screen')} allow="autoplay; fullscreen; gamepad"
-@@ -1465,8 +1480,9 @@ export function GameSession({ session, mode }) {
+@@ -1465,8 +1479,9 @@ export function GameSession({ session, mode }) {
            ${btn('camera', t('keys.screenshot', 'Screenshot') + hint('screenshot'), actions.screenshot)}
            <span class="cheat-wrap">
              ${btn('candy', t('cheat.title', 'Cheats'), () => setCheatOpen(!cheatOpen), { 'aria-expanded': cheatOpen, 'aria-haspopup': 'dialog' })}
@@ -1526,7 +1524,7 @@ index 02947f9..0461a11 100644
                <button class="btn small" disabled=${!!cheatWhy} onClick=${() => { setCheatOpen(false); setConfirmCheat(true); }}>
                  <${Icon} name="candy" size=${14} />${t('cheat.rareCandy', 'Add 99 Rare Candies')}</button>
                <span class="tiny faint">${cheatWhy || (isRun && !solo ? t('cheat.hintRun', 'Everyone in the run sees it in the log. Save in the game to keep them.')
-@@ -1498,6 +1514,7 @@ export function GameSession({ session, mode }) {
+@@ -1498,6 +1513,7 @@ export function GameSession({ session, mode }) {
                  onClick=${() => saveDiagnostics({ turboAudio, speed: speed === MAX ? 'max' : speed, reach, steps: steps.map((x) => (x === MAX ? 'max' : x)), volume, perf: emu()?.perf?.() ?? null, audioGraph: emu()?.audioGraph?.() ?? null, pad: emu()?.padInfo?.() ?? null })}><${Icon} name="save" size=${14} />${t('play.diag', 'Save diagnostics')}</button>
              </div>`}
            </span>
