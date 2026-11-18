@@ -25,6 +25,15 @@ const LOG_EVERY = 10000; // ms: repeated restarts of one stream are summed up th
 const CAL_DECIM = 8; // the calibration compares the sound at a eighth of the rate (~4 kHz), then refines at full rate
 const CAL_WIN = 1.0; // seconds of the game's sound compared
 const CAL_RANGE = 0.4; // ± seconds searched around the tracker's position (0.8 while it is only placed by the start)
+// When nothing in that range matches, the line may be off by more than it (a reader whose lead isn't the default – X/Y's
+// AAC reader reads seconds ahead, and its calibration never took: every score 0.1–0.4 at random offsets, while the game's
+// sound matched the decoded track at 0.97–0.99 elsewhere). Then a wide search: a longer stretch of the game's sound
+// (less likely to match a repeated bar), ± CAL_WIDE seconds, coarse first (every 32nd sample), taken only when its peak
+// stands out from every other place by CAL_MARGIN and two wide searches in a row agree.
+const CAL_WIDE = 3.5;
+const CAL_WIDE_WIN = 2.5;
+const CAL_WIDE_DECIM = 32;
+const CAL_MARGIN = 0.08;
 /**
  * How alike the game's sound and the track must be to take the measurement. The score is the better of the full-band
  * correlation and the one below ~2 kHz: the game's AAC decoder and resampler (Azahar's) and the browser's don't give the
@@ -316,6 +325,7 @@ export class RomMusic {
         const ratio = this.rate / info.rate;
         const loop = info.loop ? { start: Math.round(info.loop.start * ratio), end: Math.round(info.loop.end * ratio) } : null;
         t.pcm = pcm; // (kept for calibrate)
+        t.loop = loop;
         t.ratio = ratio;
         t.voicePos = (x) => x * ratio;
         this.tell({ type: 'rom-track', id: key, kind: 'pcm', l: pcm.l.slice(), r: pcm.r.slice(), rate: this.rate, loop });
@@ -431,7 +441,7 @@ export class RomMusic {
     if (!st || this.busy || performance.now() < c.next) return;
     // (a line placed only by the start is measured until it is heard right – whatever the codec's state)
     if ((c.done || c.tries >= 20) && !st.anchor?.guess) return;
-    if (p.u < this.rate * CAL_WIN || this.game.at < this.rate * (CAL_WIN + CAL_RANGE) * 2) return;
+    if (p.u < this.rate * CAL_WIN || this.game.at < this.rate * Math.max((CAL_WIN + CAL_RANGE) * 2, CAL_WIDE_WIN + 0.5)) return;
     c.tries++;
     c.next = performance.now() + 3000;
     this.busy = true;
@@ -440,12 +450,28 @@ export class RomMusic {
     const range = st.anchor?.guess ? 2 * CAL_RANGE : CAL_RANGE;
     setTimeout(() => {
       try {
-        const r = this.calibrate(p, t, { end, range });
+        const need = CAL_SCORE[p.info.codec] ?? 0.85;
+        let r = this.calibrate(p, t, { end, range });
+        let ok = !!r && r.score >= need;
+        let wide = false;
+        if (!ok) {
+          // nothing near the line: look further (see CAL_WIDE) – taken when it stands out and agrees with the last one
+          const w = this.calibrate(p, t, { end, range: CAL_WIDE, win: CAL_WIDE_WIN, decim: CAL_WIDE_DECIM, margin: true });
+          if (w && w.score >= need && w.margin >= CAL_MARGIN) {
+            wide = true;
+            r = w;
+            ok = c.wide != null && Math.abs(c.wide - w.err) < 0.02 * p.info.rate;
+            c.wide = ok ? null : w.err;
+          } else if (w) {
+            c.wide = null;
+            if (!r || w.score > r.score) r = w;
+          }
+        } else c.wide = null;
         if (r) {
-          const ok = r.score >= (CAL_SCORE[p.info.codec] ?? 0.85);
-          this.log({ type: 'rom-calibrated', codec: p.info.codec, offsetMs: Math.round((r.err / p.info.rate) * 1000), score: +r.score.toFixed(3), full: +r.full.toFixed(3), band: +r.band.toFixed(3), taken: ok });
+          this.log({ type: 'rom-calibrated', codec: p.info.codec, offsetMs: Math.round((r.err / p.info.rate) * 1000), score: +r.score.toFixed(3), full: +r.full.toFixed(3), band: +r.band.toFixed(3), taken: ok, ...(r.margin != null ? { wide: true, margin: +r.margin.toFixed(3) } : {}) });
           if (ok && this.tracker.cur === st) {
             this.tracker.nudge(r.err, { codec: p.info.codec });
+            if (wide) c.next = performance.now() + 500; // (measure again soon, near the line now)
             if (Math.abs(r.err) < 0.01 * p.info.rate && ++c.good >= 2) c.done = true; // (agrees twice: no more tries)
           }
         }
@@ -460,11 +486,12 @@ export class RomMusic {
    * Where the game's sound really is in the track: the last CAL_WIN seconds of the game's 1× sound against the track
    * around the tracker's position. { err (track samples: true − tracker), score } or null.
    */
-  calibrate(p, t, { end = this.game.frameAt, range: rangeSec = CAL_RANGE } = {}) {
+  calibrate(p, t, { end = this.game.frameAt, range: rangeSec = CAL_RANGE, win: winSec = CAL_WIN, decim = CAL_DECIM, margin = false } = {}) {
     const g = this.game;
     const cap = g.l.length;
     const rate = this.rate; // the game's sound is at the context's rate (= the core's)
-    const win = Math.round(CAL_WIN * rate);
+    const win = Math.round(winSec * rate);
+    if (win > cap) return null;
     if (end < win + 16) return null;
     const game = new Float32Array(win);
     for (let i = 0; i < win; i++) game[i] = g.l[(end - win + i) % cap];
@@ -474,11 +501,11 @@ export class RomMusic {
     const from = Math.round(posAtEnd - win - range);
     const track = this.trackSamples(t, p, from, win + 2 * range);
     if (!track) return null;
-    const r = bestLag(game, track, CAL_DECIM);
+    const r = bestLag(game, track, decim, margin ? Math.round(0.05 * rate) : 0);
     if (!r) return null;
     // track[r.lag] lines up with game[0]: the game's sound started at track position from + lag (voice samples)
     const truth = from + r.lag + win;
-    return { err: (truth - posAtEnd) / t.ratio, score: Math.max(r.score, r.band), full: r.score, band: r.band };
+    return { err: (truth - posAtEnd) / t.ratio, score: Math.max(r.score, r.band), full: r.score, band: r.band, ...(margin ? { margin: r.margin } : {}) };
   }
 
   /** Mono samples [from, from + n) of a track (voice samples), loop taken into account; null when not decodable. */
@@ -487,8 +514,10 @@ export class RomMusic {
     if (t.pcm) {
       const L = t.pcm.l;
       const R = t.pcm.r;
+      const lp = t.loop; // (voice samples)
       for (let i = 0; i < n; i++) {
-        const k = from + i;
+        let k = from + i;
+        if (lp && k >= lp.end) k = lp.start + ((k - lp.start) % (lp.end - lp.start));
         out[i] = k >= 0 && k < L.length ? (L[k] + R[k]) / 65536 : 0;
       }
       return out;
@@ -528,7 +557,7 @@ function primingOf(buf, info) {
  * The lag where `a` (shorter) matches `b` best: a coarse search on every `decim`-th sample's average, then exact around
  * it. { lag, score } (normalized correlation) or null.
  */
-export function bestLag(a, b, decim = 8) {
+export function bestLag(a, b, decim = 8, apart = 0) {
   const W = a.length;
   const L = b.length - W;
   if (L < 1) return null;
@@ -540,6 +569,7 @@ export function bestLag(a, b, decim = 8) {
   let ea = 0;
   for (let i = 0; i < w; i++) ea += da[i] * da[i];
   if (ea < 1e-9) return null; // (the game was quiet: nothing to compare)
+  const coarse = apart ? new Float32Array(db.length - w + 1) : null;
   for (let o = 0; o + w <= db.length; o++) {
     let num = 0;
     let eb = 0;
@@ -549,8 +579,12 @@ export function bestLag(a, b, decim = 8) {
       eb += y * y;
     }
     const c = num / Math.sqrt(ea * eb + 1e-12);
+    if (coarse) coarse[o] = c;
     if (c > best) [best, lag] = [c, o * decim];
   }
+  // (`apart` samples: how far the best place stands out from the best one at least that far from it – a repeated bar)
+  let second = -2;
+  if (coarse) for (let o = 0; o < coarse.length; o++) if (Math.abs(o * decim - lag) >= apart && coarse[o] > second) second = coarse[o];
   // exact, ± decim samples
   let fine = -2;
   let at = lag;
@@ -568,7 +602,7 @@ export function bestLag(a, b, decim = 8) {
     if (c > fine) [fine, at] = [c, o];
   }
   // the same place below ~2 kHz (every `decim` samples averaged): decoders that differ in the top end still agree here
-  return { lag: at, score: fine, band: corrAt(da, db, Math.round(at / decim)) };
+  return { lag: at, score: fine, band: corrAt(da, db, Math.round(at / decim)), ...(coarse ? { margin: best - second } : {}) };
 }
 
 function corrAt(a, b, o) {
