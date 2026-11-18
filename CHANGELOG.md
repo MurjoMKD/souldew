@@ -39,7 +39,8 @@
   track faded in when the game changes music (a new route, a battle), short fanfares left out. When fast-forward ends it
   finds the exact spot the game is at and fades back into the game's sound without a seam. It works from the game's own
   files, so other languages, updates, ROM hacks with new or renamed tracks and mods work the same way; where it finds
-  no music file, fast-forward sounds as before.
+  no music file, fast-forward sounds as before. A track that can't be read for a moment is tried again a little later
+  (meanwhile fast-forward sounds as before), and damaged or unusual game files can't slow down or freeze the player.
 - **3DS: the game's sounds during fast-forward – at their normal speed, right when they happen.** With “Music
   continues” the music from the game used to replace everything, so menu clicks, cries and attack sounds were gone while
   you fast-forwarded. Now souldew tells the game's music apart from its other sounds inside the emulator and plays those

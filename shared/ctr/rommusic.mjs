@@ -35,6 +35,14 @@ const START_FRAMES = 5;
 const KEEP = 7;
 /** A disagreement above this many seconds is no drift but a jump the read didn't explain: re-anchored instead. */
 const JUMP_SEC = 1.5;
+/**
+ * RomFS readers (tags) whose tables are kept: the one being read and the one before. Every reset or new reader gives a
+ * new tag (the core counts on), and each one's file list is megabytes – an older one goes once it hasn't been read for
+ * TAG_IDLE_SEC (more are kept while they are all read – a game that reads several at once – but never above TAG_HARD).
+ */
+export const MAX_TAGS = 2;
+const TAG_IDLE_SEC = 10;
+const TAG_HARD = 4;
 
 /** The default lead (see above) for a stream: 4 blocks + 226 samples at 32728 Hz for BCSTM, about as long for others. */
 export function defaultLead(info) {
@@ -73,10 +81,11 @@ export function wrap(info, u) {
 }
 
 export class RomMusicTracker {
-  constructor({ frameSec = FRAME_SEC, onEvent = null } = {}) {
+  constructor({ frameSec = FRAME_SEC, onEvent = null, onForget = null } = {}) {
     this.frameSec = frameSec;
     this.onEvent = onEvent;
-    this.tags = new Map(); // tag → { files: [] | null (asked), infos: Map(start → info | null | undefined) , pending: Map(start → reads[]) }
+    this.onForget = onForget; // (tag) – a tag's state was let go (MAX_TAGS): what the page keeps for it can go too
+    this.tags = new Map(); // tag → { files: [] | null (asked), infos: Map(start → info | null | undefined) , pending: Map(start → reads[]), last (frame of its latest read) }
     this.streams = new Map(); // key `${tag}:${start}` → stream state
     this.leads = new Map(); // codec → measured lead in seconds
     this.cur = null; // the stream state of the music playing now
@@ -94,8 +103,31 @@ export class RomMusicTracker {
 
   tag(t) {
     let x = this.tags.get(t);
-    if (!x) this.tags.set(t, (x = { files: undefined, infos: new Map(), pending: new Map(), early: [] }));
+    if (!x) this.tags.set(t, (x = { files: undefined, infos: new Map(), pending: new Map(), early: [], last: this.frame }));
     return x;
+  }
+
+  /** Lets go of the tags not read for a while beyond the newest MAX_TAGS (never the playing music's). */
+  prune() {
+    if (this.tags.size <= MAX_TAGS) return;
+    const keep = this.cur?.tag;
+    const old = [...this.tags].filter(([t]) => t !== keep).sort((a, b) => a[1].last - b[1].last);
+    for (const [t, x] of old) {
+      if (this.tags.size <= MAX_TAGS) break;
+      if ((this.frame - x.last) * this.frameSec < TAG_IDLE_SEC && this.tags.size <= TAG_HARD) break;
+      this.forget(t);
+    }
+  }
+
+  /** Forgets everything about RomFS `tag` (read again from scratch should the game read it again). */
+  forget(t) {
+    if (!this.tags.delete(t)) return;
+    for (const [k, st] of this.streams) if (st.tag === t && st !== this.cur) this.streams.delete(k);
+    try {
+      this.onForget?.(t);
+    } catch {
+      // the listener's problem
+    }
   }
 
   /**
@@ -144,6 +176,7 @@ export class RomMusicTracker {
     for (const r of list) {
       if (r.frame > this.frame) this.frame = r.frame;
       const x = this.tag(r.tag);
+      if (r.frame > x.last) x.last = r.frame;
       if (x.files === undefined) {
         x.files = null; // asked
         needs.push({ type: 'files', tag: r.tag });
@@ -169,6 +202,7 @@ export class RomMusicTracker {
       this.readStream(r.tag, f, info, r);
     }
     this.choose();
+    this.prune();
     return needs;
   }
 

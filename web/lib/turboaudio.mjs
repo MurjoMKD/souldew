@@ -617,9 +617,10 @@ export class TurboMixer {
       this.romSync(m);
     } else if (m.type === 'rom-none') {
       // no music stream plays (the game stopped it, or there is none): at 1× the voice stops; while fast-forwarding the
-      // music that played goes on ("Music continues")
+      // music that played goes on ("Music continues"). `drop`: the game plays a track the page couldn't load – the one
+      // before isn't this place's music: the voice stops in fast-forward too, and the mixer's own music takes over
       this.romWant = null;
-      if (!this.turbo && !this.romResync) this.rom.stop();
+      if (m.drop || (!this.turbo && !this.romResync)) this.rom.stop();
       this.retarget();
     } else if (m.type === 'export') {
       this.emit({ type: 'export', ...this.exportMemory() });
@@ -664,7 +665,7 @@ export class TurboMixer {
    * the voice itself goes on at normal speed); right after fast-forward it jumps there and hands back to the game.
    */
   romSync(m) {
-    if (m.id == null) return this.cmd({ type: 'rom-none' });
+    if (m.id == null) return this.cmd({ type: 'rom-none', drop: !!m.drop });
     if (!this.rom.has(m.id)) {
       // (not here: still on its way – or let go to make room: the page sends it again)
       if (this.romWant?.id !== m.id) this.emit({ type: 'rom-missing', id: m.id });
