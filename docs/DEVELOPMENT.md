@@ -105,7 +105,14 @@ applied in name order. `native/azahar-patch/souldew-romfs.patch` logs every RomF
 which RomFS – a lock-free ring in `IVFCFile::Read`) and adds `souldew_romfs_reads`, `souldew_romfs_read` and
 `souldew_romfs_size`: ctrhost sends the reads to the page (message 9) and reads RomFS bytes for it (ROMREAD/ROMDATA), so
 "music from the ROM" (`shared/ctr/rommusic.mjs`, `web/lib/rommusic.mjs`, `web/lib/romvoice.mjs`) knows which stream the
-game plays and where. `native/azahar-patch/souldew-memory.patch`
+game plays and where. `native/azahar-patch/souldew-sfx.patch` (`src/common/souldew_music.h`) recognises the DSP voices
+that play the game's streamed music – the page names the stream files (MUSIC), the core fingerprints the game's reads
+of them and matches the bytes a voice starts playing (DSP-ADPCM; X/Y's AAC through the DSP's AAC decoder's output) – and,
+while the page asks (SFX) and the game fast-forwards, leaves them out of the frames it hands to the audio callback (the
+game's own DSP state and final mix stay as they are). `souldew_audio_frame_flags` says per DSP frame whether a new sound
+began (key-on) and whether the music was left out; ctrhost sends that sound as message 11 and the turbo mixer plays each
+sound at 1× over the ROM track (`web/lib/sfxplayer.mjs`). An unknown voice streaming queued buffers for half a second
+makes the core leave everything in (the page then plays no sound effects). `native/azahar-patch/souldew-memory.patch`
 adds `souldew_read_memory`, `souldew_write_memory` and `souldew_title_id` to the core: the libretro memory map only has
 what exists when the game loads, not the heaps where the Pokémon games keep their party, so without the patch the game
 runs but has no live data (the status says `liveMemory: false`). `souldew_write_memory` is the Rare Candy cheat's

@@ -1,7 +1,8 @@
 // Builds souldew's 3DS part into tools/ctr/<platform>-<arch>/ (bundled with the app like the JRE, see package.json):
 //   ctrhost[.exe]            native/ctr-host/ctrhost.c – the host that runs the core with Vulkan (needs the Vulkan headers)
 //   azahar_libretro.*        Azahar's libretro core with native/azahar-patch/*.patch applied (live data: reading game
-//                            memory; music from the ROM: the game's RomFS reads)
+//                            memory; music from the ROM: the game's RomFS reads; sound effects in fast-forward: the
+//                            game's sound without the voices that play its streamed music)
 //   libMoltenVK.dylib        macOS only – Vulkan on Metal, from Azahar's own macOS release
 //   SOULDEW_CORE             marker: the core has the souldew patch
 //
@@ -35,7 +36,8 @@ const [os] = plat.split('-');
 const cross = plat !== `${process.platform}-${process.arch}`;
 const out = join(root, 'tools', 'ctr', plat);
 const ext = os === 'win32' ? 'dll' : os === 'darwin' ? 'dylib' : 'so';
-// native/azahar-patch/*.patch, applied in name order: souldew-memory (live data), souldew-romfs (music from the ROM)
+// native/azahar-patch/*.patch, applied in name order: souldew-memory (live data), souldew-romfs (music from the ROM),
+// souldew-sfx (the sound effects without the music while fast-forwarding)
 const PATCH_NAMES = readdirSync(join(root, 'native', 'azahar-patch')).filter((n) => n.endsWith('.patch')).sort();
 const PATCHES = PATCH_NAMES.map((n) => join(root, 'native', 'azahar-patch', n));
 if (has('check')) {
