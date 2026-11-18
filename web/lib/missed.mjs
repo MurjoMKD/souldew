@@ -113,3 +113,35 @@ export function openQuestions(list, { caughtAt = () => 0, stillOpen = () => true
     return true;
   });
 }
+
+/** At most this many questions wait in the play view at once (one per area – MissedTracker keeps a few more records). */
+export const MAX_WAITING = 4;
+
+/**
+ * The play view's question list after a tick: the questions in `qs` still open (`stillOpen`), then the battles `add`
+ * that just became due – but one per area (`areaOf`, the oldest: the first encounter there; a question without a known
+ * area counts on its own) and `max` at most (the oldest stay). A route full of grass no longer piles up a question per
+ * fled battle that "No" then has to answer one by one.
+ */
+export function queueQuestions(qs, add, { stillOpen = () => true, areaOf = () => null, max = MAX_WAITING } = {}) {
+  const seen = new Set();
+  const out = [];
+  for (const q of [...qs.filter((x) => stillOpen(x)), ...add]) {
+    const k = areaOf(q);
+    if (k) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+    }
+    if (out.length < max) out.push(q);
+  }
+  return out;
+}
+
+/**
+ * "No – doesn't count" for question `q`: it goes, and every other question waiting for its area with it (they ask the
+ * same thing). The area stays open – a battle that gets away there later is asked about again.
+ */
+export function dropQuestion(qs, q, { areaOf = () => null } = {}) {
+  const k = areaOf(q);
+  return qs.filter((x) => x !== q && !(k && areaOf(x) === k));
+}

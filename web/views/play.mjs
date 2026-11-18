@@ -27,7 +27,7 @@ import { CartInsert } from './cartinsert.mjs';
 import { play as playCue } from '../lib/sound.mjs';
 import { addSample, typicalReach, offeredSteps, beyondReach, HELD } from '../lib/reach.mjs';
 import { SlowWatch, slowTips } from '../lib/slowdown.mjs';
-import { MissedTracker, openQuestions } from '../lib/missed.mjs';
+import { MissedTracker, openQuestions, queueQuestions, dropQuestion } from '../lib/missed.mjs';
 import { gpuBackends } from '/shared/gpu.mjs';
 import { GPU_LABELS } from './settings.mjs';
 import { CTR_LAYOUTS, ctrLayoutAspect } from '/shared/ctrlayout.mjs';
@@ -1096,6 +1096,9 @@ export function GameSession({ session, mode }) {
     const seen = liveRead.current;
     return missedQuestion(doc, manifest, runData, me, { foe: q.foe, wild: true, from: q.from, newMonAt: missedTr.current.caughtAt(q), boxes: seen.boxes, partySize: seen.party, here: q.here });
   };
+  // the area a question is about (the place sign's), or null
+  const areaRef = useRef(null);
+  areaRef.current = (q) => (q.here && doc && manifest ? areaOfHere(doc, manifest, genOfRun(manifest, runData), q.here) : null);
   // not asked because it's a dupe: said in passing, where the place's first encounter is still open – so nobody wonders
   // why fleeing there "didn't count"
   const dupeRef = useRef(null);
@@ -1122,15 +1125,14 @@ export function GameSession({ session, mode }) {
       const dupe = due.find((q) => !add.includes(q) && dupeRef.current(q));
       if (dupe && modeRef.current === 'full') flash(t('play.missedDupe', 'Wild {species} got away – dupes clause, it doesn’t count.', { species: speciesName(dupe.foe.species) }), 3500);
       setQuestions((qs) => {
-        const next = [...qs.filter((q) => askRef.current(q)), ...add];
+        const next = queueQuestions(qs, add, { stillOpen: (q) => askRef.current(q), areaOf: (q) => areaRef.current(q) });
         return next.length === qs.length && next.every((q, i) => q === qs[i]) ? qs : next;
       });
     }, 1000);
     return () => clearInterval(id);
   }, [isRun]);
-  const runGen = genOfRun(manifest, runData);
   const asked = !battle && mode === 'full' && !pendingLoad && !confirmReset && doc && manifest
-    ? openQuestions(questions, { caughtAt: (q) => missedTr.current.caughtAt(q), stillOpen: (q) => askRef.current(q), areaOf: (q) => (q.here ? areaOfHere(doc, manifest, runGen, q.here) : null) })[0] || null
+    ? openQuestions(questions, { caughtAt: (q) => missedTr.current.caughtAt(q), stillOpen: (q) => askRef.current(q), areaOf: (q) => areaRef.current(q) })[0] || null
     : null;
 
   // Fast-forward sound: keep the music going at 1× (default), mute it, or play the sped-up original.
@@ -1404,7 +1406,7 @@ export function GameSession({ session, mode }) {
               <button class="btn small primary" onClick=${() => { actions.confirmLoad(); focusGame(); }}>${t('play.loadConfirmYes', 'Load')}</button>
               <button class="btn small ghost" data-pad-back onClick=${() => { actions.cancelLoad(); focusGame(); }}>${t('common.cancel', 'Cancel')}</button>
             </div>`}
-            ${asked && html`<${MissedPrompt} key=${asked.id} missed=${asked.foe} here=${asked.here} onDone=${() => { setQuestions((qs) => qs.filter((q) => q !== asked)); focusGame(); }} />`}
+            ${asked && html`<${MissedPrompt} key=${asked.id} missed=${asked.foe} here=${asked.here} onDone=${(no) => { setQuestions((qs) => (no ? dropQuestion(qs, asked, { areaOf: (q) => areaRef.current(q) }) : qs.filter((q) => q !== asked))); focusGame(); }} />`}
             ${confirmReset && html`<div class="screen-confirm" role="alertdialog" aria-live="assertive">
               <span class="grow">${t('play.resetConfirm', 'Reset the game? Unsaved progress is lost.')}</span>
               <button class="btn small primary" onClick=${() => { setConfirmReset(false); emu()?.restart(); focusGame(); }}>${t('play.resetYes', 'Reset')}</button>
@@ -1573,7 +1575,7 @@ function MissedPrompt({ missed, here, onDone }) {
       doc.set(`area:${key}`, { name: name.trim(), order: Date.now() });
     }
     markMissed(doc, manifest, key, me, { species: missed.species, by: me });
-    onDone();
+    onDone(false);
   };
   return html`<div class="screen-confirm" role="group" data-pad-layer aria-live="polite" aria-label=${t('play.missedAria', 'Missed encounter')}>
     <span>${t('play.missedAsk', 'Wild {species} not caught – mark an area as spent?', { species: speciesName(missed.species) })}</span>
@@ -1585,7 +1587,7 @@ function MissedPrompt({ missed, here, onDone }) {
     ${area === 'new' && html`<input type="text" maxLength="40" value=${name} placeholder=${t('play.missedName', 'Name of the area')} aria-label=${t('play.missedName', 'Name of the area')}
       onInput=${(e) => setName(e.target.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && name.trim()) mark(); }} />`}
     <button class="btn small primary" disabled=${!area || (area === 'new' && !name.trim())} onClick=${mark}>${t('play.missedMark', 'Mark as spent')}</button>
-    <button class="btn small ghost" data-pad-back onClick=${onDone}>${t('play.missedNo', 'No – doesn’t count')}</button>
+    <button class="btn small ghost" data-pad-back onClick=${() => onDone(true)}>${t('play.missedNo', 'No – doesn’t count')}</button>
   </div>`;
 }
 
