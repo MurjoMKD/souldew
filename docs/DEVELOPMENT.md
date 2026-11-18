@@ -118,7 +118,8 @@ what exists when the game loads, not the heaps where the Pokémon games keep the
 runs but has no live data (the status says `liveMemory: false`). `souldew_write_memory` is the Rare Candy cheat's
 write – through the core's own page table, only into the game's heaps (a core without it falls back to ctrhost's page
 scan). MoltenVK comes from Azahar's macOS release. `npm run dist` checks the
-folder (`build-ctr.mjs --check`) and stops when it's incomplete; `SLS_NO_3DS=1 npm run dist` builds without it – 3DS
+folder (`build-ctr.mjs --check`) and stops when it's incomplete or its core is out of date (`SOULDEW_CORE` names and
+hashes the patches it was built with – a patch added or changed since means `npm run ctr` again); `SLS_NO_3DS=1 npm run dist` builds without it – 3DS
 games then open in the Azahar app.
 
 Windows and Linux: `.github/workflows/ctr.yml` builds host and core (Linux with gcc 12 on Ubuntu 22.04, Windows

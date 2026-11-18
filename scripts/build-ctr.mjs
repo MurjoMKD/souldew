@@ -18,7 +18,8 @@
 // skips building the core (copies a built one). Needs git, cmake, ninja, a C/C++ compiler, the Vulkan headers and – on
 // macOS – spirv-tools (as Azahar's own CI: brew install cmake ninja spirv-tools vulkan-headers).
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, chmodSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, chmodSync, readFileSync } from 'node:fs';
+import { coreStamp as stampOf, staleCore } from './ctrstamp.mjs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -40,14 +41,17 @@ const ext = os === 'win32' ? 'dll' : os === 'darwin' ? 'dylib' : 'so';
 // souldew-sfx (the sound effects without the music while fast-forwarding)
 const PATCH_NAMES = readdirSync(join(root, 'native', 'azahar-patch')).filter((n) => n.endsWith('.patch')).sort();
 const PATCHES = PATCH_NAMES.map((n) => join(root, 'native', 'azahar-patch', n));
+const coreStamp = () => stampOf(TAG, PATCH_NAMES, (n) => readFileSync(join(root, 'native', 'azahar-patch', n), 'utf8'));
 if (has('check')) {
   const need = [os === 'win32' ? 'ctrhost.exe' : 'ctrhost', `azahar_libretro.${ext}`, 'SOULDEW_CORE', ...(os === 'darwin' ? ['libMoltenVK.dylib'] : [])];
   const missing = need.filter((f) => !existsSync(join(out, f)));
-  if (!missing.length) {
+  const stale = !missing.length && staleCore(readFileSync(join(out, 'SOULDEW_CORE'), 'utf8'), coreStamp());
+  if (!missing.length && !stale) {
     console.log(`3DS part: ${out} ✓`);
     process.exit(0);
   }
-  const msg = `3DS part incomplete in ${out} (missing: ${missing.join(', ')}). Build it with \`npm run ctr\` (see docs/DEVELOPMENT.md › "Nintendo 3DS").`;
+  const msg = stale ? `3DS part in ${out} is out of date: its core was ${stale}. Rebuild it with \`npm run ctr\` (see docs/DEVELOPMENT.md › "Nintendo 3DS").`
+    : `3DS part incomplete in ${out} (missing: ${missing.join(', ')}). Build it with \`npm run ctr\` (see docs/DEVELOPMENT.md › "Nintendo 3DS").`;
   if (process.env.SLS_NO_3DS) {
     console.warn(`${msg}\nSLS_NO_3DS is set: building without it – 3DS games open in Azahar itself.`);
     process.exit(0);
@@ -107,7 +111,7 @@ function buildCore() {
     if (!found) throw new Error('built core not found');
     copyFileSync(found, target);
   }
-  writeFileSync(join(out, 'SOULDEW_CORE'), `Azahar ${TAG} libretro core with ${PATCH_NAMES.map((n) => `native/azahar-patch/${n}`).join(', ')}\n`);
+  writeFileSync(join(out, 'SOULDEW_CORE'), coreStamp());
 }
 
 // ---- MoltenVK (macOS) -----------------------------------------------------------------------------------------------
